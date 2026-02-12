@@ -1,0 +1,56 @@
+# 测试用有效配置文件
+database:
+  host: test-db-host
+  port: 3306
+  username: test_user
+  password: test_password
+  schema: test_schema
+  tables:
+    - test_table1
+    - test_table2
+  connectionTimeout: 30
+  reconnectInterval: 30
+
+datahub:
+  endpoint: https://test-datahub.aliyuncs.com
+  accessId: test_access_id
+  accessKey: test_access_key
+  project: test_project
+  topic: test_topic
+  consumerGroup: test_consumer_group
+  startPosition: EARLIEST
+  maxRetries: 3
+  retryBackoff: 2
+
+flink:
+  parallelism: 2
+  checkpointInterval: 60000
+  checkpointTimeout: 120000
+  minPauseBetweenCheckpoints: 30000
+  maxConcurrentCheckpoints: 1
+  retainedCheckpoints: 3
+  stateBackendType: hashmap
+  checkpointDir: file:///tmp/test-checkpoints
+  tolerableCheckpointFailures: 3
+  restartStrategy: fixed-delay
+  restartAttempts: 3
+  restartDelay: 10000
+
+output:
+  path: /tmp/test-output
+  format: json
+  rollingSizeBytes: 1048576
+  rollingIntervalMs: 60000
+  compression: none
+  maxRetries: 3
+  retryBackoff: 2
+
+monitoring:
+  enabled: true
+  metricsInterval: 30
+  latencyThreshold: 30000
+  checkpointFailureRateThreshold: 0.1
+  loadThreshold: 0.8
+  backpressureThreshold: 0.8
+  healthCheckPort: 8081
+  alertMethod: log

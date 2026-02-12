@@ -1,0 +1,66 @@
+# 高可用性配置示例 - Kubernetes模式
+# High Availability Configuration Example - Kubernetes Mode
+
+database:
+  host: localhost
+  port: 2883
+  username: root@oracle
+  password: password
+  schema: test_schema
+  tables:
+    - users
+    - orders
+
+datahub:
+  endpoint: https://datahub.aliyuncs.com
+  accessId: your_access_id
+  accessKey: your_access_key
+  project: your_project
+  topic: your_topic
+  consumerGroup: flink_consumer_group
+  startPosition: LATEST
+
+flink:
+  parallelism: 4
+  checkpointInterval: 300000  # 5分钟
+  checkpointTimeout: 600000   # 10分钟
+  minPauseBetweenCheckpoints: 60000  # 1分钟
+  maxConcurrentCheckpoints: 1
+  retainedCheckpoints: 3
+  stateBackendType: hashmap
+  checkpointDir: /opt/flink/checkpoints
+  tolerableCheckpointFailures: 3
+  restartStrategy: fixed-delay
+  restartAttempts: 3
+  restartDelay: 10000
+  checkpointingMode: at-least-once
+
+# 高可用性配置 - Kubernetes模式
+# 需求 5.1: THE System SHALL 支持Flink JobManager的高可用配置
+# 需求 5.2: THE System SHALL 支持至少2个JobManager实例
+# 需求 5.3: WHEN 主JobManager失败 THEN THE System SHALL 在30秒内切换到备用JobManager
+highAvailability:
+  enabled: true
+  mode: kubernetes
+  kubernetesNamespace: flink
+  kubernetesClusterId: flink-cluster-1
+  storageDir: /opt/flink/ha
+  jobManagerCount: 2  # 至少2个JobManager实例
+  failoverTimeout: 30000  # 30秒内完成故障切换
+
+output:
+  path: /opt/flink/output
+  format: json
+  rollingSizeBytes: 1073741824  # 1GB
+  rollingIntervalMs: 3600000    # 1小时
+  compression: none
+  maxRetries: 3
+
+monitoring:
+  enabled: true
+  metricsPort: 9090
+  healthCheckPort: 8080
+  alertThresholds:
+    latencyMs: 60000
+    checkpointFailureRate: 0.1
+    cpuUsage: 0.8

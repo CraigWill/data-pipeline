@@ -1,0 +1,111 @@
+# 实时数据管道系统配置文件
+# 所有配置项都可以通过环境变量覆盖，格式为: PIPELINE_<SECTION>_<KEY>
+# 例如: PIPELINE_DATABASE_HOST, PIPELINE_FLINK_PARALLELISM
+
+# 数据库配置
+database:
+  # OceanBase数据库主机地址
+  host: localhost
+  # 数据库端口
+  port: 2881
+  # 数据库用户名
+  username: root
+  # 数据库密码
+  password: password
+  # 要监控的Schema
+  schema: test_schema
+  # 要监控的表列表
+  tables:
+    - users
+    - orders
+    - products
+  # 连接超时时间（秒）
+  connectionTimeout: 30
+  # 自动重连间隔（秒）
+  reconnectInterval: 30
+
+# DataHub配置
+datahub:
+  # DataHub服务端点
+  endpoint: https://dh-cn-hangzhou.aliyuncs.com
+  # 访问ID
+  accessId: your_access_id
+  # 访问密钥
+  accessKey: your_access_key
+  # 项目名称
+  project: your_project
+  # 主题名称
+  topic: cdc_events
+  # 消费者组名称
+  consumerGroup: flink_consumer_group
+  # 起始消费位置: EARLIEST, LATEST, TIMESTAMP
+  startPosition: LATEST
+  # 最大重试次数
+  maxRetries: 3
+  # 重试间隔（秒）
+  retryBackoff: 2
+
+# Flink配置
+flink:
+  # 默认并行度
+  parallelism: 4
+  # Checkpoint间隔（毫秒），5分钟
+  checkpointInterval: 300000
+  # Checkpoint超时时间（毫秒），10分钟
+  checkpointTimeout: 600000
+  # 两次Checkpoint之间的最小间隔（毫秒），1分钟
+  minPauseBetweenCheckpoints: 60000
+  # 最大并发Checkpoint数
+  maxConcurrentCheckpoints: 1
+  # 保留的Checkpoint数量
+  retainedCheckpoints: 3
+  # 状态后端类型: hashmap, rocksdb
+  stateBackendType: hashmap
+  # Checkpoint存储目录
+  checkpointDir: file:///tmp/flink-checkpoints
+  # 容忍的Checkpoint失败次数
+  tolerableCheckpointFailures: 3
+  # 重启策略: fixed-delay, failure-rate, none
+  restartStrategy: fixed-delay
+  # 重启尝试次数
+  restartAttempts: 3
+  # 重启延迟（毫秒）
+  restartDelay: 10000
+
+# 输出配置
+output:
+  # 输出目录路径
+  path: /data/output
+  # 输出格式: json, parquet, csv
+  format: json
+  # 文件大小阈值（字节），1GB
+  rollingSizeBytes: 1073741824
+  # 时间间隔阈值（毫秒），1小时
+  rollingIntervalMs: 3600000
+  # 压缩算法: none, gzip, snappy
+  compression: none
+  # 写入失败最大重试次数
+  maxRetries: 3
+  # 重试间隔（秒）
+  retryBackoff: 2
+
+# 监控配置
+monitoring:
+  # 是否启用监控
+  enabled: true
+  # Metrics报告间隔（秒）
+  metricsInterval: 60
+  # 延迟告警阈值（毫秒），60秒
+  latencyThreshold: 60000
+  # Checkpoint失败率告警阈值（百分比），10%
+  checkpointFailureRateThreshold: 0.1
+  # 负载告警阈值（百分比），80%
+  loadThreshold: 0.8
+  # 反压告警阈值（0-1）
+  backpressureThreshold: 0.8
+  # 健康检查端口
+  healthCheckPort: 8081
+  # 告警通知方式: log, email, webhook
+  alertMethod: log
+  # Webhook URL（当alertMethod为webhook时）
+  # webhookUrl: https://your-webhook-url.com/alert

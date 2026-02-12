@@ -1,0 +1,47 @@
+# Flink TaskManager Configuration
+# 需求: 8.6 - 支持通过环境变量配置系统参数
+
+# JobManager连接配置
+jobmanager.rpc.address: jobmanager
+jobmanager.rpc.port: 6123
+
+# TaskManager配置
+taskmanager.bind-host: 0.0.0.0
+taskmanager.host: taskmanager
+taskmanager.rpc.port: 6122
+taskmanager.data.port: 6121
+taskmanager.memory.process.size: 2048m
+taskmanager.memory.managed.fraction: 0.4
+taskmanager.numberOfTaskSlots: 4
+
+# 网络配置
+taskmanager.network.memory.fraction: 0.1
+taskmanager.network.memory.min: 64mb
+taskmanager.network.memory.max: 1gb
+
+# 高可用配置（需求 5.1）
+# 通过环境变量启用HA模式
+# high-availability: zookeeper
+# high-availability.storageDir: file:///opt/flink/ha
+# high-availability.zookeeper.quorum: zookeeper:2181
+# high-availability.zookeeper.path.root: /flink
+# high-availability.cluster-id: /realtime-pipeline
+
+# Checkpoint配置（需求 2.4, 4.2）
+state.backend: hashmap
+state.checkpoints.dir: file:///opt/flink/checkpoints
+state.savepoints.dir: file:///opt/flink/savepoints
+
+# 状态后端配置
+state.backend.incremental: true
+state.backend.local-recovery: true
+
+# 并行度配置（需求 2.2）
+parallelism.default: 4
+
+# 监控配置（需求 7.1）
+metrics.reporter.prometheus.class: org.apache.flink.metrics.prometheus.PrometheusReporter
+metrics.reporter.prometheus.port: 9249
+
+# 日志配置
+env.log.dir: /opt/flink/logs

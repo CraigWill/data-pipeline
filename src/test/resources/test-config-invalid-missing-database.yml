@@ -1,0 +1,18 @@
+# 测试用无效配置文件 - 缺少数据库配置
+datahub:
+  endpoint: https://test-datahub.aliyuncs.com
+  accessId: test_access_id
+  accessKey: test_access_key
+  project: test_project
+  topic: test_topic
+  consumerGroup: test_consumer_group
+
+flink:
+  parallelism: 2
+  checkpointInterval: 60000
+  checkpointTimeout: 120000
+  checkpointDir: file:///tmp/test-checkpoints
+
+output:
+  path: /tmp/test-output
+  format: json

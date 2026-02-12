@@ -1,0 +1,66 @@
+# 本地开发环境配置
+# 适用于 Docker Compose 部署的 Flink 集群
+
+# 数据库配置
+database:
+  host: localhost
+  port: 1521
+  username: finance_user
+  password: password
+  schema: helowin
+  tables:
+    - trans_info
+  connectionTimeout: 30
+  reconnectInterval: 30
+
+# DataHub配置（使用本地 Kafka）
+datahub:
+  endpoint: kafka://kafka:9092
+  accessId: local-dev
+  accessKey: local-dev-secret
+  project: realtime-pipeline
+  topic: cdc-events
+  consumerGroup: flink-consumer-group
+  startPosition: LATEST
+  maxRetries: 3
+  retryBackoff: 2
+
+# Flink配置
+flink:
+  parallelism: 2
+  checkpointInterval: 60000
+  checkpointTimeout: 300000
+  minPauseBetweenCheckpoints: 30000
+  maxConcurrentCheckpoints: 1
+  retainedCheckpoints: 3
+  stateBackendType: hashmap
+  checkpointDir: file:///opt/flink/checkpoints
+  tolerableCheckpointFailures: 3
+  restartStrategy: fixed-delay
+  restartAttempts: 3
+  restartDelay: 10000
+
+# 输出配置
+output:
+  path: /opt/flink/output/cdc
+  format: csv
+  rollingSizeBytes: 134217728
+  rollingIntervalMs: 300000
+  compression: none
+  maxRetries: 3
+  retryBackoff: 2
+
+# 监控配置
+monitoring:
+  enabled: true
+  metricsInterval: 30
+  latencyThreshold: 60000
+  checkpointFailureRateThreshold: 0.1
+  loadThreshold: 0.8
+  backpressureThreshold: 0.8
+  healthCheckPort: 8082
+  alertMethod: log
+
+# 高可用配置（可选）
+highAvailability:
+  enabled: false

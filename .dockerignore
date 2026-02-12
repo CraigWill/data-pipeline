@@ -1,0 +1,44 @@
+# Docker ignore file
+# Exclude unnecessary files from Docker build context
+
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.iml
+
+# Build artifacts (except target JAR)
+target/classes
+target/test-classes
+target/generated-sources
+target/generated-test-sources
+target/maven-status
+target/surefire-reports
+
+# Test files
+src/test
+
+# Documentation
+docs
+*.md
+!README.md
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Kiro specs
+.kiro

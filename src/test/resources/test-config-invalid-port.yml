@@ -1,0 +1,27 @@
+# 测试用无效配置文件 - 无效的端口号
+database:
+  host: test-db-host
+  port: 99999  # 无效端口
+  username: test_user
+  password: test_password
+  schema: test_schema
+  tables:
+    - test_table1
+
+datahub:
+  endpoint: https://test-datahub.aliyuncs.com
+  accessId: test_access_id
+  accessKey: test_access_key
+  project: test_project
+  topic: test_topic
+  consumerGroup: test_consumer_group
+
+flink:
+  parallelism: 2
+  checkpointInterval: 60000
+  checkpointTimeout: 120000
+  checkpointDir: file:///tmp/test-checkpoints
+
+output:
+  path: /tmp/test-output
+  format: json

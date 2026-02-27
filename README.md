@@ -1,6 +1,27 @@
 # 实时数据管道系统 (Realtime Data Pipeline)
 
-基于Apache Flink的流处理平台，用于从OceanBase数据库捕获变更数据（CDC），通过阿里云DataHub进行数据传输，使用Flink进行流处理，最终输出到文件系统。
+基于 Apache Flink 的流处理平台，使用 Flink CDC 3.x 从 Oracle 数据库实时捕获变更数据（CDC），通过 Kafka 进行数据传输，使用 Flink 进行流处理，最终输出到文件系统。
+
+## 快速启动
+
+### 1. 启动 Docker 容器
+```bash
+docker-compose up -d
+```
+
+### 2. 启动 Flink CDC 作业
+```bash
+./shell/start-flink-cdc.sh
+```
+
+### 3. 检查作业状态
+```bash
+./shell/check-cdc-status.sh
+```
+
+### 4. 访问 Web UI
+- Flink Web UI: http://localhost:8081
+- Kafka UI: http://localhost:8082
 
 ## 目录
 
@@ -87,7 +108,7 @@ Docker容器集群
 
 ```
 realtime-data-pipeline/
-├── src/
+├── src/                             # 源代码目录
 │   ├── main/
 │   │   ├── java/
 │   │   │   └── com/realtime/pipeline/
@@ -111,10 +132,48 @@ realtime-data-pipeline/
 │   │       ├── application.yml      # 配置文件模板
 │   │       └── log4j2.xml          # 日志配置
 │   └── test/
-│       └── java/                    # 测试代码（待实现）
-├── pom.xml                          # Maven配置
-└── README.md                        # 项目文档
+│       └── java/                    # 测试代码
+├── docs/                            # 项目文档
+│   ├── DEPLOYMENT.md               # 部署指南
+│   ├── DEVELOPMENT.md              # 开发指南
+│   └── ...
+├── docker/                          # Docker 配置
+│   ├── jobmanager/                 # JobManager 配置
+│   ├── taskmanager/                # TaskManager 配置
+│   └── cdc-collector/              # CDC Collector 配置
+├── shell/                           # Shell 脚本目录 ⭐ 新增
+│   ├── README.md                   # 脚本使用说明
+│   ├── restart-flink-cdc-job.sh   # 重启作业
+│   ├── quick-test-cdc.sh          # 快速测试
+│   ├── check-cdc-status.sh        # 检查状态
+│   └── ...                         # 其他运维脚本
+├── md/                              # Markdown 文档目录 ⭐ 新增
+│   ├── README.md                   # 文档索引
+│   ├── CURRENT_CDC_STATUS.md      # 当前状态报告
+│   ├── CDC_*.md                    # CDC 相关文档
+│   ├── CSV_*.md                    # CSV 相关文档
+│   └── ...                         # 其他状态文档
+├── sql/                             # SQL 脚本目录 ⭐ 新增
+│   ├── README.md                   # SQL 脚本说明
+│   ├── setup-oracle-cdc.sql       # Oracle CDC 配置
+│   ├── enable-archivelog.sql      # 启用归档日志
+│   ├── configure-oracle-for-cdc.sql # CDC 配置
+│   └── ...                         # 其他 SQL 脚本
+├── output/                          # 输出目录
+│   └── cdc/                        # CDC 输出文件
+├── docker-compose.yml              # Docker Compose 配置
+├── pom.xml                         # Maven 配置
+└── README.md                       # 项目文档（本文件）
 ```
+
+### 目录说明
+
+- **shell/**: 包含所有运维和管理脚本，从根目录执行 `./shell/script-name.sh`
+- **md/**: 包含所有状态报告和问题解决文档，便于查阅和维护
+- **sql/**: 包含所有 SQL 配置和测试脚本，便于数据库操作
+- **docs/**: 项目技术文档和设计文档
+- **docker/**: Docker 容器配置文件
+- **output/**: 系统输出目录，包含生成的 CSV 文件
 
 ## 核心组件
 

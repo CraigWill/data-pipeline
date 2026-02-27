@@ -141,6 +141,84 @@ echo "JobManager initialization complete"
 echo "Starting Flink JobManager process..."
 echo "=========================================="
 
-# 启动JobManager
-# 使用Flink官方的docker-entrypoint.sh
-exec /docker-entrypoint.sh jobmanager
+# 启动JobManager（后台运行）
+/docker-entrypoint.sh jobmanager &
+JOBMANAGER_PID=$!
+
+# 自动作业提交配置
+AUTO_SUBMIT_JOB=${AUTO_SUBMIT_JOB:-true}
+AUTO_SUBMIT_DELAY=${AUTO_SUBMIT_DELAY:-60}
+JOB_JAR_PATH=${JOB_JAR_PATH:-/opt/flink/usrlib/realtime-data-pipeline.jar}
+JOB_MAIN_CLASS=${JOB_MAIN_CLASS:-com.realtime.pipeline.FlinkCDC3App}
+
+# 自动提交作业（仅在主 JobManager 上执行）
+if [ "$AUTO_SUBMIT_JOB" = "true" ] && [ "$JOB_MANAGER_RPC_ADDRESS" = "jobmanager" ]; then
+    echo "=========================================="
+    echo "Auto-submit job enabled"
+    echo "  Delay: ${AUTO_SUBMIT_DELAY}s"
+    echo "  JAR: $JOB_JAR_PATH"
+    echo "  Main Class: $JOB_MAIN_CLASS"
+    echo "=========================================="
+    
+    # 后台启动自动提交脚本
+    (
+        # 等待 JobManager 完全启动
+        echo "[Auto-Submit] Waiting ${AUTO_SUBMIT_DELAY}s for JobManager to be ready..."
+        sleep $AUTO_SUBMIT_DELAY
+        
+        # 检查 JobManager 是否就绪
+        MAX_RETRIES=30
+        RETRY_COUNT=0
+        while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            if curl -s http://localhost:${REST_PORT}/overview > /dev/null 2>&1; then
+                echo "[Auto-Submit] JobManager is ready"
+                break
+            fi
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            echo "[Auto-Submit] Waiting for JobManager... ($RETRY_COUNT/$MAX_RETRIES)"
+            sleep 2
+        done
+        
+        if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "[Auto-Submit] ERROR: JobManager not ready after ${MAX_RETRIES} retries"
+            exit 1
+        fi
+        
+        # 检查是否已有运行中的作业
+        RUNNING_JOBS=$(curl -s http://localhost:${REST_PORT}/jobs/overview 2>/dev/null | grep -o '"state":"RUNNING"' | wc -l)
+        if [ "$RUNNING_JOBS" -gt 0 ]; then
+            echo "[Auto-Submit] Job already running, skipping auto-submit"
+            exit 0
+        fi
+        
+        # 检查 JAR 文件是否存在
+        if [ ! -f "$JOB_JAR_PATH" ]; then
+            echo "[Auto-Submit] ERROR: JAR file not found: $JOB_JAR_PATH"
+            exit 1
+        fi
+        
+        # 提交作业
+        echo "[Auto-Submit] Submitting job..."
+        JOB_OUTPUT=$(flink run -d -c "$JOB_MAIN_CLASS" "$JOB_JAR_PATH" 2>&1)
+        
+        if echo "$JOB_OUTPUT" | grep -q "Job has been submitted"; then
+            JOB_ID=$(echo "$JOB_OUTPUT" | grep -oP 'JobID \K[a-f0-9]+' || echo "unknown")
+            echo "[Auto-Submit] ✓ Job submitted successfully"
+            echo "[Auto-Submit]   Job ID: $JOB_ID"
+            
+            # 记录到日志文件
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Auto-submitted job: $JOB_ID" >> /opt/flink/logs/auto-submit.log
+        else
+            echo "[Auto-Submit] ✗ Job submission failed"
+            echo "$JOB_OUTPUT"
+            
+            # 记录失败到日志
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Auto-submit failed: $JOB_OUTPUT" >> /opt/flink/logs/auto-submit.log
+        fi
+    ) &
+    
+    echo "Auto-submit script started in background"
+fi
+
+# 等待 JobManager 进程
+wait $JOBMANAGER_PID

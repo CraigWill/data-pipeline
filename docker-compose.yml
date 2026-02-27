@@ -17,7 +17,7 @@
 #   docker-compose --profile ha up -d
 
 services:
-  # Zookeeper服务（Kafka依赖）
+  # Zookeeper服务（Flink HA 依赖）
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
@@ -41,116 +41,16 @@ services:
       start_period: 30s
       retries: 3
 
-  # Kafka服务（DataHub本地替代）
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: kafka
-    hostname: kafka
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-      KAFKA_LOG_RETENTION_HOURS: 168
-      KAFKA_LOG_SEGMENT_BYTES: 1073741824
-    volumes:
-      - kafka-data:/var/lib/kafka/data
-    networks:
-      - flink-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 30s
-      timeout: 10s
-      start_period: 60s
-      retries: 3
-
-  # Kafka UI（可选，用于管理和监控）
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8082:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
-    networks:
-      - flink-network
-    restart: unless-stopped
-
-  # Debezium Connect服务（Oracle CDC）
-  debezium:
-    build:
-      context: .
-      dockerfile: docker/debezium/Dockerfile
-    container_name: debezium-connect
-    hostname: debezium
-    depends_on:
-      kafka:
-        condition: service_healthy
-    ports:
-      - "8083:8083"  # Debezium Connect REST API
-    environment:
-      # Kafka配置
-      BOOTSTRAP_SERVERS: kafka:9092
-      GROUP_ID: debezium-connect-cluster
-      CONFIG_STORAGE_TOPIC: debezium_connect_configs
-      OFFSET_STORAGE_TOPIC: debezium_connect_offsets
-      STATUS_STORAGE_TOPIC: debezium_connect_statuses
-      
-      # 数据库配置
-      DATABASE_HOST: ${DATABASE_HOST:-host.docker.internal}
-      DATABASE_PORT: ${DATABASE_PORT:-1521}
-      DATABASE_USERNAME: ${DATABASE_USERNAME:-system}
-      DATABASE_PASSWORD: ${DATABASE_PASSWORD:-helowin}
-      DATABASE_SID: ${DATABASE_SID:-helowin}
-      DATABASE_SCHEMA: ${DATABASE_SCHEMA:-FINANCE_USER}
-      DATABASE_TABLES: ${DATABASE_TABLES:-TRANS_INFO}
-      
-      # Connect配置
-      KEY_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      VALUE_CONVERTER: org.apache.kafka.connect.json.JsonConverter
-      KEY_CONVERTER_SCHEMAS_ENABLE: "false"
-      VALUE_CONVERTER_SCHEMAS_ENABLE: "false"
-      
-      # 日志配置
-      CONNECT_LOG4J_ROOT_LOGLEVEL: INFO
-      CONNECT_LOG4J_LOGGERS: io.debezium=INFO
-    volumes:
-      - debezium-data:/kafka/data
-      - debezium-logs:/kafka/logs
-    networks:
-      - flink-network
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8083/"]
-      interval: 30s
-      timeout: 10s
-      start_period: 60s
-      retries: 3
-
-  # Flink JobManager服务
+  # Flink JobManager服务（主节点）
   jobmanager:
     build:
       context: .
       dockerfile: docker/jobmanager/Dockerfile
     container_name: flink-jobmanager
     hostname: jobmanager
+    depends_on:
+      zookeeper:
+        condition: service_healthy
     ports:
       - "8081:8081"  # Web UI
       - "6123:6123"  # RPC
@@ -170,10 +70,12 @@ services:
       - SAVEPOINT_DIR=file:///opt/flink/savepoints
       - STATE_BACKEND=hashmap
       
-      # 高可用配置（可选）
-      - HA_MODE=NONE
-      # - HA_ZOOKEEPER_QUORUM=zookeeper:2181
-      # - HA_CLUSTER_ID=/flink-cluster
+      # 高可用配置（启用）
+      - HA_MODE=${HA_MODE:-zookeeper}
+      - HA_ZOOKEEPER_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
+      - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+      - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+      - HA_STORAGE_DIR=${HA_STORAGE_DIR:-file:///opt/flink/ha}
       
       # 数据库配置（JdbcCDCApp需要）
       - DATABASE_HOST=${DATABASE_HOST:-localhost}
@@ -186,9 +88,16 @@ services:
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-10}
       - TZ=Asia/Shanghai
+      
+      # 自动作业提交配置
+      - AUTO_SUBMIT_JOB=${AUTO_SUBMIT_JOB:-true}
+      - AUTO_SUBMIT_DELAY=${AUTO_SUBMIT_DELAY:-60}
+      - JOB_JAR_PATH=${JOB_JAR_PATH:-/opt/flink/usrlib/realtime-data-pipeline.jar}
+      - JOB_MAIN_CLASS=${JOB_MAIN_CLASS:-com.realtime.pipeline.FlinkCDC3App}
     volumes:
       - flink-checkpoints:/opt/flink/checkpoints
       - flink-savepoints:/opt/flink/savepoints
+      - flink-ha:/opt/flink/ha
       - flink-logs:/opt/flink/logs
     networks:
       - flink-network
@@ -204,6 +113,75 @@ services:
       start_period: 60s
       retries: 3
     # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # Flink JobManager Standby（备用节点）
+  jobmanager-standby:
+    build:
+      context: .
+      dockerfile: docker/jobmanager/Dockerfile
+    container_name: flink-jobmanager-standby
+    hostname: jobmanager-standby
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "8082:8081"  # Web UI (使用不同端口)
+      - "6125:6123"  # RPC (使用不同端口)
+      - "6126:6124"  # Blob Server
+      - "9250:9249"  # Prometheus Metrics
+    environment:
+      # JobManager配置
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager-standby
+      - JOB_MANAGER_RPC_PORT=6123
+      - JOB_MANAGER_HEAP_SIZE=1024m
+      - REST_PORT=8081
+      - PARALLELISM_DEFAULT=4
+      
+      # Checkpoint配置
+      - CHECKPOINT_INTERVAL=300000
+      - CHECKPOINT_DIR=file:///opt/flink/checkpoints
+      - SAVEPOINT_DIR=file:///opt/flink/savepoints
+      - STATE_BACKEND=hashmap
+      
+      # 高可用配置（与主 JobManager 相同）
+      - HA_MODE=${HA_MODE:-zookeeper}
+      - HA_ZOOKEEPER_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
+      - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+      - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+      - HA_STORAGE_DIR=${HA_STORAGE_DIR:-file:///opt/flink/ha}
+      
+      # 数据库配置
+      - DATABASE_HOST=${DATABASE_HOST:-localhost}
+      - DATABASE_PORT=${DATABASE_PORT:-1521}
+      - DATABASE_USERNAME=${DATABASE_USERNAME:-system}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-password}
+      - DATABASE_SID=${DATABASE_SID:-helowin}
+      - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
+      - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
+      - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
+      - TZ=Asia/Shanghai
+    volumes:
+      - flink-checkpoints:/opt/flink/checkpoints
+      - flink-savepoints:/opt/flink/savepoints
+      - flink-ha:/opt/flink/ha
+      - flink-logs:/opt/flink/logs
+    networks:
+      - flink-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
     deploy:
       resources:
         limits:
@@ -243,6 +221,12 @@ services:
       - TASK_MANAGER_NETWORK_MEMORY_MIN=64m
       - TASK_MANAGER_NETWORK_MEMORY_MAX=256m
       
+      # 高可用配置（与 JobManager 保持一致）
+      - HA_MODE=${HA_MODE:-zookeeper}
+      - HA_ZOOKEEPER_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
+      - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+      - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+      
       # 数据库配置（JdbcCDCApp需要）
       - DATABASE_HOST=${DATABASE_HOST:-localhost}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
@@ -281,69 +265,6 @@ services:
           cpus: '1.0'
           memory: 1G
 
-  # CDC Collector服务
-  cdc-collector:
-    build:
-      context: .
-      dockerfile: docker/cdc-collector/Dockerfile
-    container_name: cdc-collector
-    hostname: cdc-collector
-    depends_on:
-      jobmanager:
-        condition: service_healthy
-    ports:
-      - "8080:8080"  # Health Check & Monitoring
-    environment:
-      # 数据库配置（需要根据实际环境设置）
-      - DATABASE_HOST=${DATABASE_HOST:-oceanbase}
-      - DATABASE_PORT=${DATABASE_PORT:-2881}
-      - DATABASE_USERNAME=${DATABASE_USERNAME:-root}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-password}
-      - DATABASE_SCHEMA=${DATABASE_SCHEMA:-test}
-      - DATABASE_TABLES=${DATABASE_TABLES:-*}
-      
-      # DataHub配置（需要根据实际环境设置）
-      - DATAHUB_ENDPOINT=${DATAHUB_ENDPOINT:-https://dh-cn-hangzhou.aliyuncs.com}
-      - DATAHUB_ACCESS_ID=${DATAHUB_ACCESS_ID}
-      - DATAHUB_ACCESS_KEY=${DATAHUB_ACCESS_KEY}
-      - DATAHUB_PROJECT=${DATAHUB_PROJECT:-realtime-pipeline}
-      - DATAHUB_TOPIC=${DATAHUB_TOPIC:-cdc-events}
-      - DATAHUB_CONSUMER_GROUP=${DATAHUB_CONSUMER_GROUP:-cdc-collector-group}
-      
-      # 重试配置
-      - RETRY_MAX_ATTEMPTS=3
-      - RETRY_BACKOFF_MS=2000
-      
-      # 监控配置
-      - MONITORING_PORT=8080
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      
-      # 内存配置
-      - HEAP_SIZE=512m
-    volumes:
-      - cdc-logs:/opt/cdc-collector/logs
-      - cdc-data:/opt/cdc-collector/data
-    networks:
-      - flink-network
-    # 需求 4.5: 容器自动重启策略
-    restart: unless-stopped
-    # 健康检查配置（需求 8.8）
-    # 使用HTTP健康检查端点
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health/live"]
-      interval: 30s
-      timeout: 10s
-      start_period: 60s
-      retries: 3
-    # 资源限制
-    deploy:
-      resources:
-        limits:
-          cpus: '1.0'
-          memory: 1G
-        reservations:
-          cpus: '0.5'
-          memory: 512M
 
 # 网络配置
 networks:
@@ -359,30 +280,18 @@ volumes:
   flink-savepoints:
     driver: local
     name: flink-savepoints
+  flink-ha:
+    driver: local
+    name: flink-ha
   flink-logs:
     driver: local
     name: flink-logs
   flink-data:
     driver: local
     name: flink-data
-  cdc-logs:
-    driver: local
-    name: cdc-logs
-  cdc-data:
-    driver: local
-    name: cdc-data
   zookeeper-data:
     driver: local
     name: zookeeper-data
   zookeeper-logs:
     driver: local
     name: zookeeper-logs
-  kafka-data:
-    driver: local
-    name: kafka-data
-  debezium-data:
-    driver: local
-    name: debezium-data
-  debezium-logs:
-    driver: local
-    name: debezium-logs

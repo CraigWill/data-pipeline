@@ -74,6 +74,32 @@ metrics.reporter.prom.port: 9249
 io.tmp.dirs: /opt/flink/tmp
 EOF
 
+# 配置高可用（如果启用）
+if [ "$HA_MODE" != "NONE" ]; then
+    echo "Configuring High Availability..."
+    
+    if [ -z "$HA_ZOOKEEPER_QUORUM" ]; then
+        echo "WARNING: HA_MODE is enabled but HA_ZOOKEEPER_QUORUM is not set"
+    else
+        # 创建 HA 存储目录
+        mkdir -p /opt/flink/ha
+        
+        cat >> /opt/flink/conf/flink-conf.yaml.dynamic << EOF
+
+# 高可用配置
+high-availability: zookeeper
+high-availability.zookeeper.quorum: ${HA_ZOOKEEPER_QUORUM}
+high-availability.zookeeper.path.root: ${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+high-availability.cluster-id: ${HA_CLUSTER_ID:-/default}
+high-availability.storageDir: ${HA_STORAGE_DIR:-file:///opt/flink/ha}
+EOF
+        
+        echo "  ZooKeeper Quorum: $HA_ZOOKEEPER_QUORUM"
+        echo "  Cluster ID: ${HA_CLUSTER_ID:-/default}"
+        echo "  HA Storage Dir: ${HA_STORAGE_DIR:-file:///opt/flink/ha}"
+    fi
+fi
+
 # 如果存在原始配置文件，合并配置
 if [ -f /opt/flink/conf/flink-conf.yaml.original ]; then
     echo "Merging with original configuration..."
@@ -100,25 +126,31 @@ if [ -n "$EXTRA_JAVA_OPTS" ]; then
 fi
 
 # 等待JobManager就绪
-echo "Waiting for JobManager to be ready..."
-RETRY_COUNT=0
-MAX_RETRIES=30
-RETRY_INTERVAL=2
+# 在 HA 模式下，跳过此检查，因为 JobManager 地址可能动态变化
+if [ "${HA_MODE:-NONE}" = "NONE" ]; then
+    echo "Waiting for JobManager to be ready..."
+    RETRY_COUNT=0
+    MAX_RETRIES=30
+    RETRY_INTERVAL=2
 
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    if nc -z $JOB_MANAGER_RPC_ADDRESS $JOB_MANAGER_RPC_PORT 2>/dev/null; then
-        echo "JobManager is ready!"
-        break
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        if nc -z $JOB_MANAGER_RPC_ADDRESS $JOB_MANAGER_RPC_PORT 2>/dev/null; then
+            echo "JobManager is ready!"
+            break
+        fi
+        
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+        echo "  Attempt $RETRY_COUNT/$MAX_RETRIES: JobManager not ready, waiting ${RETRY_INTERVAL}s..."
+        sleep $RETRY_INTERVAL
+    done
+
+    if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+        echo "WARNING: JobManager not reachable after $MAX_RETRIES attempts"
+        echo "  Continuing anyway, TaskManager will retry connection..."
     fi
-    
-    RETRY_COUNT=$((RETRY_COUNT + 1))
-    echo "  Attempt $RETRY_COUNT/$MAX_RETRIES: JobManager not ready, waiting ${RETRY_INTERVAL}s..."
-    sleep $RETRY_INTERVAL
-done
-
-if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
-    echo "WARNING: JobManager not reachable after $MAX_RETRIES attempts"
-    echo "  Continuing anyway, TaskManager will retry connection..."
+else
+    echo "HA mode enabled, skipping JobManager connectivity check"
+    echo "TaskManager will discover JobManager through Zookeeper"
 fi
 
 # 验证配置

@@ -40,35 +40,11 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Flink CDC Connector for OceanBase -->
+        <!-- Flink CDC 3.x Connector for Oracle -->
         <dependency>
-            <groupId>com.ververica</groupId>
-            <artifactId>flink-connector-oceanbase-cdc</artifactId>
-            <version>2.4.2</version>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.infinispan</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
-        <!-- Flink CDC Connector for Oracle (LogMiner based) -->
-        <dependency>
-            <groupId>com.ververica</groupId>
+            <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-oracle-cdc</artifactId>
-            <version>2.4.2</version>
-            <exclusions>
-                <!-- 排除 Infinispan 以解决类加载冲突 -->
-                <exclusion>
-                    <groupId>org.infinispan</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-                <exclusion>
-                    <groupId>org.infinispan.protostream</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
+            <version>3.2.1</version>
         </dependency>
 
         <!-- Oracle JDBC Driver -->
@@ -76,6 +52,13 @@
             <groupId>com.oracle.database.jdbc</groupId>
             <artifactId>ojdbc8</artifactId>
             <version>21.1.0.0</version>
+        </dependency>
+
+        <!-- Oracle XML Database (required by Oracle CDC) -->
+        <dependency>
+            <groupId>com.oracle.database.xml</groupId>
+            <artifactId>xdb</artifactId>
+            <version>19.3.0.0</version>
         </dependency>
 
         <!-- Flink Shaded Guava (required by Flink CDC) -->
@@ -283,8 +266,6 @@
                                 <excludes>
                                     <exclude>org.apache.flink:flink-shaded-force-shading</exclude>
                                     <exclude>com.google.code.findbugs:jsr305</exclude>
-                                    <exclude>org.slf4j:*</exclude>
-                                    <exclude>org.apache.logging.log4j:*</exclude>
                                 </excludes>
                             </artifactSet>
                             <filters>

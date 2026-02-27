@@ -2,6 +2,8 @@
 # 需求: 8.6 - 支持通过环境变量配置系统参数
 
 # JobManager连接配置
+# 注意：在 HA 模式下，TaskManager 通过 Zookeeper 发现 JobManager，
+# 不需要固定的 RPC 地址。但为了兼容非 HA 模式，保留此配置。
 jobmanager.rpc.address: jobmanager
 jobmanager.rpc.port: 6123
 
@@ -20,6 +22,7 @@ taskmanager.network.memory.min: 64mb
 taskmanager.network.memory.max: 1gb
 
 # 高可用配置（需求 5.1）
+# 暂时禁用 HA 模式以解决 TaskManager 注册问题
 # 通过环境变量启用HA模式
 # high-availability: zookeeper
 # high-availability.storageDir: file:///opt/flink/ha

@@ -68,9 +68,6 @@ build_image "jobmanager" "docker/jobmanager/Dockerfile"
 # Build TaskManager image
 build_image "taskmanager" "docker/taskmanager/Dockerfile"
 
-# Build CDC Collector image
-build_image "cdc-collector" "docker/cdc-collector/Dockerfile"
-
 # Summary
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Build Summary${NC}"

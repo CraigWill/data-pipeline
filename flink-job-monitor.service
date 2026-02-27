@@ -1,0 +1,24 @@
+[Unit]
+Description=Flink Job Monitor and Auto Recovery Service
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=YOUR_USER
+WorkingDirectory=/path/to/data-pipeline
+ExecStart=/path/to/data-pipeline/monitor-and-recover-jobs.sh
+ExecStop=/path/to/data-pipeline/stop-job-monitor.sh
+Restart=always
+RestartSec=10
+StandardOutput=append:/path/to/data-pipeline/logs/job-monitor.log
+StandardError=append:/path/to/data-pipeline/logs/job-monitor-error.log
+
+# 环境变量
+Environment="FLINK_REST_URL=http://localhost:8081"
+Environment="CHECK_INTERVAL=30"
+Environment="MAX_RECOVERY_ATTEMPTS=3"
+Environment="RECOVERY_COOLDOWN=300"
+
+[Install]
+WantedBy=multi-user.target

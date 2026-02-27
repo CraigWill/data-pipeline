@@ -17,6 +17,7 @@ RUN apt-get update && \
 # 创建必要的目录
 RUN mkdir -p /opt/flink/checkpoints && \
     mkdir -p /opt/flink/savepoints && \
+    mkdir -p /opt/flink/ha && \
     mkdir -p /opt/flink/logs && \
     mkdir -p /opt/flink/lib && \
     chown -R flink:flink /opt/flink
@@ -24,6 +25,12 @@ RUN mkdir -p /opt/flink/checkpoints && \
 # 复制自定义entrypoint脚本
 COPY --chown=flink:flink docker/jobmanager/entrypoint.sh /opt/flink/bin/custom-entrypoint.sh
 RUN chmod +x /opt/flink/bin/custom-entrypoint.sh
+
+# 下载 Oracle JDBC 驱动到 Flink lib 目录（父类加载器）
+# 这样可以避免 ChildFirstClassLoader 导致的驱动加载问题
+RUN curl -L https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/21.1.0.0/ojdbc8-21.1.0.0.jar \
+    -o /opt/flink/lib/ojdbc8.jar && \
+    chown flink:flink /opt/flink/lib/ojdbc8.jar
 
 # 切换回flink用户
 USER flink

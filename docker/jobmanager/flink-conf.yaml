@@ -13,6 +13,7 @@ rest.address: 0.0.0.0
 rest.bind-address: 0.0.0.0
 
 # 高可用配置（需求 5.1, 5.2）
+# 暂时禁用 HA 模式以解决 TaskManager 注册问题
 # 通过环境变量启用HA模式
 # high-availability: zookeeper
 # high-availability.storageDir: file:///opt/flink/ha
@@ -39,9 +40,17 @@ state.backend.local-recovery: true
 parallelism.default: 4
 
 # 重启策略（需求 4.1）
-restart-strategy: fixed-delay
-restart-strategy.fixed-delay.attempts: 3
-restart-strategy.fixed-delay.delay: 10s
+# 使用 exponential-delay 策略，提供更智能的重启机制
+restart-strategy: exponential-delay
+restart-strategy.exponential-delay.initial-backoff: 10s
+restart-strategy.exponential-delay.max-backoff: 2min
+restart-strategy.exponential-delay.backoff-multiplier: 2.0
+restart-strategy.exponential-delay.reset-backoff-threshold: 10min
+restart-strategy.exponential-delay.jitter-factor: 0.1
+
+# 作业自动恢复配置
+# 在 HA 模式下，JobManager 故障后自动恢复作业
+jobmanager.execution.failover-strategy: region
 
 # 监控配置（需求 7.1）
 metrics.reporter.prometheus.class: org.apache.flink.metrics.prometheus.PrometheusReporter

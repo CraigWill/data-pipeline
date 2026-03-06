@@ -10,41 +10,109 @@
     <packaging>jar</packaging>
 
     <name>Realtime Data Pipeline</name>
-    <description>实时数据管道系统 - 基于Apache Flink的流处理平台</description>
+    <description>实时数据管道系统 - 基于Apache Flink的流处理平台 + 监控后端</description>
+
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.7.18</version>
+        <relativePath/>
+    </parent>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
-        <flink.version>1.18.0</flink.version>
+        <java.version>11</java.version>
+        <flink.version>1.20.0</flink.version>
+        <flink.cdc.version>3.4.0</flink.cdc.version>
         <scala.binary.version>2.12</scala.binary.version>
         <log4j.version>2.20.0</log4j.version>
-        <jackson.version>2.15.2</jackson.version>
+        <jackson.version>2.13.5</jackson.version>
+        <infinispan.commons.version>14.0.11.Final</infinispan.commons.version>
         <junit.version>5.10.0</junit.version>
         <jqwik.version>1.8.0</jqwik.version>
     </properties>
 
+    <repositories>
+        <repository>
+            <id>central</id>
+            <name>Maven Central Repository</name>
+            <url>https://repo.maven.apache.org/maven2</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <pluginRepositories>
+        <pluginRepository>
+            <id>central</id>
+            <name>Maven Central Repository</name>
+            <url>https://repo.maven.apache.org/maven2</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </pluginRepository>
+    </pluginRepositories>
+
     <dependencies>
-        <!-- Apache Flink Core -->
+        <!-- Spring Boot Web (监控后端) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- Spring Boot Actuator for health checks -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- Spring Boot JDBC for database access -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-jdbc</artifactId>
+        </dependency>
+
+        <!-- Apache Flink Core (provided by cluster) -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-streaming-java</artifactId>
             <version>${flink.version}</version>
-            <scope>provided</scope>
         </dependency>
 
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-clients</artifactId>
             <version>${flink.version}</version>
-            <scope>provided</scope>
         </dependency>
 
-        <!-- Flink CDC 3.x Connector for Oracle -->
+        <dependency>
+            <groupId>org.infinispan</groupId>
+            <artifactId>infinispan-commons</artifactId>
+            <version>${infinispan.commons.version}</version>
+        </dependency>
+        
+        <!-- Flink Runtime (for client API) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-runtime</artifactId>
+            <version>${flink.version}</version>
+        </dependency>
+
+        <!-- Flink CDC 3.4.0 Connector for Oracle -->
+        <!-- 使用最新版本，支持 log.mining.flush.table.name 配置 -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-connector-oracle-cdc</artifactId>
-            <version>3.2.1</version>
+            <version>${flink.cdc.version}</version>
         </dependency>
 
         <!-- Oracle JDBC Driver -->
@@ -65,10 +133,10 @@
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-shaded-guava</artifactId>
-            <version>30.1.1-jre-16.1</version>
+            <version>31.1-jre-17.0</version>
         </dependency>
 
-        <!-- Flink State Backend -->
+        <!-- Flink State Backend (provided by cluster) -->
         <dependency>
             <groupId>org.apache.flink</groupId>
             <artifactId>flink-statebackend-rocksdb</artifactId>
@@ -211,6 +279,12 @@
             <artifactId>flink-test-utils</artifactId>
             <version>${flink.version}</version>
             <scope>test</scope>
+            <exclusions>
+                <exclusion>
+                    <groupId>junit</groupId>
+                    <artifactId>junit</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
@@ -279,10 +353,15 @@
                                 </filter>
                             </filters>
                             <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.realtime.pipeline.FlinkPipelineMain</mainClass>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/spring.handlers</resource>
                                 </transformer>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/spring.schemas</resource>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                                    <resource>META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports</resource>
+                                </transformer>
                             </transformers>
                         </configuration>
                     </execution>

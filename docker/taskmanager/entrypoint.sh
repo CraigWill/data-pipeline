@@ -72,6 +72,12 @@ metrics.reporter.prom.port: 9249
 
 # 临时目录配置
 io.tmp.dirs: /opt/flink/tmp
+
+# 类加载器配置（解决 JDBC 驱动加载问题）
+# child-first: 用户 JAR 的 jackson 2.15 优先于 Flink 的 shaded jackson 2.14
+# oracle.jdbc parent-first: 确保 /opt/flink/lib/ojdbc8.jar 被 DriverManager 正确注册
+classloader.resolve-order: child-first
+classloader.parent-first-patterns.additional: oracle.jdbc
 EOF
 
 # 配置高可用（如果启用）

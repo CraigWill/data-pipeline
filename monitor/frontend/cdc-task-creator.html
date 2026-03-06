@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>创建 CDC 任务</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            padding: 20px;
+        }
+
+        .wizard-container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+
+        .wizard-steps {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 40px;
+        }
+
+        .step {
+            flex: 1;
+            text-align: center;
+            position: relative;
+        }
+
+        .step::after {
+            content: '';
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            width: 100%;
+            height: 2px;
+            background: #e5e7eb;
+            z-index: -1;
+        }
+
+        .step:last-child::after {
+            display: none;
+        }
+
+        .step-number {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #e5e7eb;
+            color: #6b7280;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .step.active .step-number {
+            background: #667eea;
+            color: white;
+        }
+
+        .step.completed .step-number {
+            background: #10b981;
+            color: white;
+        }
+
+        .step-title {
+            font-size: 14px;
+            color: #6b7280;
+        }
+
+        .step.active .step-title {
+            color: #667eea;
+            font-weight: 500;
+        }
+
+        .wizard-content {
+            background: white;
+            border-radius: 12px;
+            padding: 30px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            min-height: 400px;
+        }
+
+        .step-content {
+            display: none;
+        }
+
+        .step-content.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 500;
+            color: #374151;
+        }
+
+        .form-group select,
+        .form-group input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        .form-group select:focus,
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .table-list {
+            max-height: 300px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 6px;
+            padding: 10px;
+        }
+
+        .table-item {
+            padding: 10px;
+            border-bottom: 1px solid #e5e7eb;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .table-item:last-child {
+            border-bottom: none;
+        }
+
+        .table-item input[type="checkbox"] {
+            width: auto;
+        }
+
+        .table-info {
+            flex: 1;
+        }
+
+        .table-name {
+            font-weight: 500;
+            color: #111827;
+        }
+
+        .table-stats {
+            font-size: 12px;
+            color: #6b7280;
+            margin-top: 4px;
+        }
+
+        .wizard-actions {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 30px;
+        }
+
+        .btn {
+            padding: 10px 24px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .btn-primary {
+            background: #667eea;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #5568d3;
+        }
+
+        .btn-secondary {
+            background: #e5e7eb;
+            color: #374151;
+        }
+
+        .btn-secondary:hover {
+            background: #d1d5db;
+        }
+
+        .alert {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .alert.active {
+            display: block;
+        }
+
+        .alert-success {
+            background: #d1fae5;
+            color: #065f46;
+        }
+
+        .alert-error {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #6b7280;
+        }
+    </style>
+</head>
+<body>
+    <div class="wizard-container">
+        <div id="alert" class="alert"></div>
+
+        <!-- 步骤指示器 -->
+        <div class="wizard-steps">
+            <div class="step active" data-step="1">
+                <div class="step-number">1</div>
+                <div class="step-title">选择数据源</div>
+            </div>
+            <div class="step" data-step="2">
+                <div class="step-number">2</div>
+                <div class="step-title">选择 Schema</div>
+            </div>
+            <div class="step" data-step="3">
+                <div class="step-number">3</div>
+                <div class="step-title">选择表</div>
+            </div>
+            <div class="step" data-step="4">
+                <div class="step-number">4</div>
+                <div class="step-title">配置任务</div>
+            </div>
+        </div>
+
+        <!-- 向导内容 -->
+        <div class="wizard-content">
+            <!-- 步骤 1: 选择数据源 -->
+            <div id="step1" class="step-content active">
+                <h2 style="margin-bottom: 20px;">选择数据源</h2>
+                <div class="form-group">
+                    <label>数据源 *</label>
+                    <select id="datasourceSelect" required>
+                        <option value="">加载中...</option>
+                    </select>
+                </div>
+                <p style="color: #6b7280; font-size: 14px; margin-top: 10px;">
+                    如果没有可用的数据源，请先到"数据源管理"页面创建数据源。
+                </p>
+            </div>
+
+            <!-- 步骤 2: 选择 Schema -->
+            <div id="step2" class="step-content">
+                <h2 style="margin-bottom: 20px;">选择 Schema</h2>
+                <div class="form-group">
+                    <label>Schema *</label>
+                    <select id="schemaSelect" required>
+                        <option value="">请先选择数据源</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- 步骤 3: 选择表 -->
+            <div id="step3" class="step-content">
+                <h2 style="margin-bottom: 20px;">选择要监控的表</h2>
+                <div id="tableList" class="table-list">
+                    <div class="loading">请先选择 Schema</div>
+                </div>
+            </div>
+
+            <!-- 步骤 4: 配置任务 -->
+            <div id="step4" class="step-content">
+                <h2 style="margin-bottom: 20px;">配置任务参数</h2>
+                <div class="form-group">
+                    <label>任务名称 *</label>
+                    <input type="text" id="taskName" required placeholder="例如：交易信息 CDC">
+                </div>
+                <div class="form-group">
+                    <label>任务描述</label>
+                    <input type="text" id="taskDescription" placeholder="任务描述（可选）">
+                </div>
+                <div class="form-group">
+                    <label>输出路径</label>
+                    <input type="text" id="outputPath" value="./output/cdc" placeholder="./output/cdc">
+                </div>
+                <div class="form-group">
+                    <label>并行度</label>
+                    <input type="number" id="parallelism" value="2" min="1" max="16">
+                </div>
+                <div class="form-group">
+                    <label>分片大小</label>
+                    <input type="number" id="splitSize" value="8096" min="1024">
+                </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="wizard-actions">
+                <button id="prevBtn" class="btn btn-secondary" onclick="previousStep()" style="display: none;">上一步</button>
+                <div></div>
+                <button id="nextBtn" class="btn btn-primary" onclick="nextStep()">下一步</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="cdc-task-creator.js"></script>
+</body>
+</html>

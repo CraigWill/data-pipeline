@@ -1,0 +1,10 @@
+{
+  "id": "oracle-prod",
+  "name": "生产环境 Oracle",
+  "host": "host.docker.internal",
+  "port": "1521",
+  "sid": "helowin",
+  "username": "finance_user",
+  "password": "password",
+  "updated_at": "2026-03-03T13:20:00.000000"
+}

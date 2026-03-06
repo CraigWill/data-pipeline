@@ -265,6 +265,72 @@ services:
           cpus: '1.0'
           memory: 1G
 
+  # 监控后端
+  monitor-backend:
+    build:
+      context: .
+      dockerfile: monitor/Dockerfile
+    container_name: flink-monitor-backend
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+    ports:
+      - "5001:5001"
+    environment:
+      - FLINK_REST_URL=http://jobmanager:8081
+      - OUTPUT_PATH=/app/output/cdc
+      - CONFIG_DIR=/app/config
+      - ORACLE_CONTAINER=oracle11g
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./output:/app/output
+      - ./monitor/config:/app/config
+    networks:
+      - flink-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  # 监控前端
+  monitor-frontend:
+    image: nginx:alpine
+    container_name: flink-monitor-frontend
+    depends_on:
+      - monitor-backend
+    ports:
+      - "8888:80"
+    volumes:
+      - ./monitor/frontend:/usr/share/nginx/html:ro
+      - ./monitor/frontend/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - flink-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+
 
 # 网络配置
 networks:

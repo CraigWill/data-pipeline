@@ -1,0 +1,54 @@
+server:
+  port: 5001
+
+spring:
+  application:
+    name: realtime-data-pipeline
+  
+  # 数据源配置 - 连接到 Oracle 数据库
+  datasource:
+    url: jdbc:oracle:thin:@${DATABASE_HOST:host.docker.internal}:${DATABASE_PORT:1521}:${DATABASE_SID:helowin}
+    username: ${DATABASE_USERNAME:finance_user}
+    password: ${DATABASE_PASSWORD:password}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+# Flink 配置
+flink:
+  rest:
+    url: ${FLINK_REST_URL:http://localhost:8081}
+
+# 输出路径配置
+output:
+  path: ${OUTPUT_PATH:./output/cdc}
+
+# 配置目录
+config:
+  dir: ${CONFIG_DIR:./monitor/config}
+
+# Oracle 容器配置
+oracle:
+  container: ${ORACLE_CONTAINER:oracle11g}
+
+# 日志配置
+logging:
+  level:
+    root: INFO
+    com.realtime: DEBUG
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+# Actuator 配置
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: always

@@ -48,3 +48,7 @@ metrics.reporter.prometheus.port: 9249
 
 # 日志配置
 env.log.dir: /opt/flink/logs
+
+# 类加载器配置（解决 JDBC 驱动加载问题）
+# parent-first: 优先使用父类加载器，确保 JDBC 驱动在所有线程中可用
+classloader.resolve-order: parent-first

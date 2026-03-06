@@ -1,7 +1,7 @@
 # Dockerfile for Flink JobManager
 # 需求: 8.1, 8.4 - 提供Flink JobManager的Docker镜像，包含所有必要依赖
 
-FROM flink:1.18.0-java11
+FROM flink:1.20.0-java11
 
 # 设置工作目录
 WORKDIR /opt/flink
@@ -28,7 +28,8 @@ RUN chmod +x /opt/flink/bin/custom-entrypoint.sh
 
 # 下载 Oracle JDBC 驱动到 Flink lib 目录（父类加载器）
 # 这样可以避免 ChildFirstClassLoader 导致的驱动加载问题
-RUN curl -L https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/21.1.0.0/ojdbc8-21.1.0.0.jar \
+# ojdbc8 19.3.0.0 兼容 Oracle 11g（21.x 的 O5LOGON 认证协议与 11g 不兼容，导致 ORA-01005）
+RUN curl -L https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.jar \
     -o /opt/flink/lib/ojdbc8.jar && \
     chown flink:flink /opt/flink/lib/ojdbc8.jar
 

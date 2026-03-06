@@ -82,6 +82,10 @@ metrics.reporter.prom.port: 9249
 # Web UI配置
 web.submit.enable: true
 web.cancel.enable: true
+
+# 类加载器配置（解决 JDBC 驱动加载问题）
+classloader.resolve-order: child-first
+classloader.parent-first-patterns.additional: oracle.jdbc
 EOF
 
 # 如果存在原始配置文件，合并配置
@@ -184,10 +188,18 @@ if [ "$AUTO_SUBMIT_JOB" = "true" ] && [ "$JOB_MANAGER_RPC_ADDRESS" = "jobmanager
             exit 1
         fi
         
-        # 检查是否已有运行中的作业
-        RUNNING_JOBS=$(curl -s http://localhost:${REST_PORT}/jobs/overview 2>/dev/null | grep -o '"state":"RUNNING"' | wc -l)
+        # 检查是否已有运行中的作业（包括 RESTARTING 状态）
+        RUNNING_JOBS=$(curl -s http://localhost:${REST_PORT}/jobs/overview 2>/dev/null | grep -oE '"state":"(RUNNING|RESTARTING)"' | wc -l)
         if [ "$RUNNING_JOBS" -gt 0 ]; then
-            echo "[Auto-Submit] Job already running, skipping auto-submit"
+            echo "[Auto-Submit] Job already running ($RUNNING_JOBS jobs), skipping auto-submit"
+            exit 0
+        fi
+        
+        # 额外检查：是否有相同名称的作业（防止重复提交）
+        JOB_NAME="Flink CDC 3.x Oracle Application"
+        EXISTING_JOBS=$(curl -s http://localhost:${REST_PORT}/jobs/overview 2>/dev/null | grep -c "$JOB_NAME" || echo "0")
+        if [ "$EXISTING_JOBS" -gt 0 ]; then
+            echo "[Auto-Submit] Job with name '$JOB_NAME' already exists, skipping auto-submit"
             exit 0
         fi
         

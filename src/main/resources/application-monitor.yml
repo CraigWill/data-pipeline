@@ -9,6 +9,7 @@ spring:
 flink:
   rest:
     url: ${FLINK_REST_URL:http://localhost:8081}
+    urls: ${FLINK_REST_URLS:}
 
 # 输出路径配置
 output:

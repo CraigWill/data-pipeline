@@ -147,10 +147,6 @@ public class CdcTaskService {
             }
         }
 
-        if (config.getStatus() == null || config.getStatus().isEmpty()) {
-            config.setStatus("CREATED");
-        }
-
         taskRepository.save(config);
         return taskId;
     }
@@ -216,8 +212,6 @@ public class CdcTaskService {
                     }
                     summary.put("database", dbDisplay != null ? dbDisplay : "Unknown");
                     summary.put("tables", config.getTables() != null ? config.getTables().size() : 0);
-                    summary.put("status", config.getStatus());
-                    summary.put("flink_job_id", config.getFlinkJobId());
                     summary.put("created", config.getCreated());
                     return summary;
                 })
@@ -234,8 +228,6 @@ public class CdcTaskService {
         detail.put("id", config.getId());
         detail.put("name", config.getName());
         detail.put("created", config.getCreated());
-        detail.put("status", config.getStatus());
-        detail.put("flink_job_id", config.getFlinkJobId());
 
         Map<String, Object> database = new HashMap<>();
         if (config.getDatabase() != null) {
@@ -290,20 +282,14 @@ public class CdcTaskService {
             if (result.get("success") == Boolean.TRUE && result.containsKey("job_id")) {
                 String jobId = (String) result.get("job_id");
                 runtimeJobService.updateFlinkJobIdAsync(runtimeJob.getId(), jobId);
-                
-                // 同时更新任务配置表
-                taskRepository.updateStatus(taskId, "RUNNING", jobId);
-                
                 result.put("runtime_job_id", runtimeJob.getId());
             } else {
-                // 提交失败，更新状态
                 runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", "提交失败");
             }
 
             return result;
         } catch (Exception e) {
             runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", e.getMessage());
-            taskRepository.updateStatus(taskId, "FAILED", null);
             throw e;
         }
     }
@@ -328,7 +314,6 @@ public class CdcTaskService {
         taskConfig.setOutputPath(request.getOutputPath());
         taskConfig.setParallelism(request.getParallelism());
         taskConfig.setSplitSize(request.getSplitSize());
-        taskConfig.setStatus("CREATED");
 
         // 设置数据库配置
         TaskConfig.DatabaseConfig dbConfig = new TaskConfig.DatabaseConfig();
@@ -362,26 +347,17 @@ public class CdcTaskService {
             if (result.get("success") == Boolean.TRUE && result.containsKey("job_id")) {
                 String jobId = (String) result.get("job_id");
                 runtimeJobService.updateFlinkJobIdAsync(runtimeJob.getId(), jobId);
-                taskRepository.updateStatus(taskConfig.getId(), "RUNNING", jobId);
                 result.put("runtime_job_id", runtimeJob.getId());
                 result.put("task_id", taskConfig.getId());
             } else {
                 runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", "提交失败");
-                taskRepository.updateStatus(taskConfig.getId(), "FAILED", null);
             }
 
             return result;
         } catch (Exception e) {
             runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", e.getMessage());
-            taskRepository.updateStatus(taskConfig.getId(), "FAILED", null);
             throw e;
         }
     }
 
-    /**
-     * 更新任务状态
-     */
-    public void updateTaskStatus(String taskId, String status, String flinkJobId) {
-        taskRepository.updateStatus(taskId, status, flinkJobId);
-    }
 }

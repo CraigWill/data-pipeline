@@ -13,6 +13,10 @@ public class AppConfig {
     
     @Value("${flink.rest.url:http://localhost:8081}")
     private String flinkRestUrl;
+
+    /** 备用 Flink REST URL 列表，逗号分隔（HA 模式下使用） */
+    @Value("${flink.rest.urls:}")
+    private String flinkRestUrls;
     
     @Value("${output.path:./output/cdc}")
     private String outputPath;

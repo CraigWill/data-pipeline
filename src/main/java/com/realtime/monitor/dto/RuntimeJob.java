@@ -20,4 +20,6 @@ public class RuntimeJob {
     private String startTime;
     private String endTime;
     private String errorMessage;
+    private String lastSavepointPath;   // 最近一次成功的 savepoint 路径
+    private String lastSavepointTime;   // 最近一次 savepoint 时间
 }

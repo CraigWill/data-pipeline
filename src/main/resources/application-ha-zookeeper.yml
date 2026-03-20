@@ -11,15 +11,6 @@ database:
     - users
     - orders
 
-datahub:
-  endpoint: https://datahub.aliyuncs.com
-  accessId: your_access_id
-  accessKey: your_access_key
-  project: your_project
-  topic: your_topic
-  consumerGroup: flink_consumer_group
-  startPosition: LATEST
-
 flink:
   parallelism: 4
   checkpointInterval: 300000  # 5分钟

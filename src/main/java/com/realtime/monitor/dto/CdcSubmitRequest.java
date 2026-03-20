@@ -20,4 +20,5 @@ public class CdcSubmitRequest {
     private int splitSize = 8096;
     private String startupMode = "latest";
     private String jobName;
+    private String savepointPath;  // 从 savepoint 恢复时使用
 }

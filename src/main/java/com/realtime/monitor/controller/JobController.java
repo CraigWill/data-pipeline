@@ -60,4 +60,34 @@ public class JobController {
             return ApiResponse.error(e.getMessage());
         }
     }
+    
+    /**
+     * 带 Savepoint 停止作业（推荐方式，不丢失数据）
+     */
+    @PostMapping("/{jobId}/stop")
+    public ApiResponse<Map<String, Object>> stopJobWithSavepoint(
+            @PathVariable String jobId,
+            @RequestParam(defaultValue = "file:///opt/flink/savepoints") String targetDirectory) {
+        try {
+            Map<String, Object> result = flinkService.stopJobWithSavepoint(jobId, targetDirectory);
+            return ApiResponse.success(result, "作业已停止，Savepoint 已创建");
+        } catch (Exception e) {
+            log.error("停止作业失败: {}", jobId, e);
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+    
+    /**
+     * 获取作业的 Checkpoint 列表
+     */
+    @GetMapping("/{jobId}/checkpoints")
+    public ApiResponse<Map<String, Object>> getCheckpoints(@PathVariable String jobId) {
+        try {
+            Map<String, Object> result = flinkService.getCheckpoints(jobId);
+            return ApiResponse.success(result);
+        } catch (Exception e) {
+            log.error("获取 Checkpoint 列表失败: {}", jobId, e);
+            return ApiResponse.error(e.getMessage());
+        }
+    }
 }

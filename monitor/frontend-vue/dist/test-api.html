@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>CDC Events API Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        pre { background: #f5f5f5; padding: 10px; overflow: auto; }
+        .success { color: green; }
+        .error { color: red; }
+    </style>
+</head>
+<body>
+    <h1>CDC Events API 测试</h1>
+    <button onclick="testAPI()">测试 API</button>
+    <div id="result"></div>
+
+    <script>
+        async function testAPI() {
+            const resultDiv = document.getElementById('result');
+            resultDiv.innerHTML = '<p>正在测试...</p>';
+            
+            try {
+                // 测试获取事件列表
+                const response = await fetch('/api/cdc/events?page=1&size=5');
+                const data = await response.json();
+                
+                let html = '<h2>API 响应:</h2>';
+                html += '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                
+                if (data.success && data.data && data.data.events) {
+                    html += '<p class="success">✅ API 正常，共 ' + data.data.total + ' 条事件</p>';
+                    html += '<h3>前 5 条事件:</h3>';
+                    data.data.events.forEach((event, i) => {
+                        html += '<p>' + (i+1) + '. ' + event.tableName + ' - ' + event.eventType + '</p>';
+                    });
+                } else {
+                    html += '<p class="error">❌ API 返回格式异常</p>';
+                }
+                
+                resultDiv.innerHTML = html;
+            } catch (error) {
+                resultDiv.innerHTML = '<p class="error">❌ 错误: ' + error.message + '</p>';
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # 实时数据管道系统 (Realtime Data Pipeline)
 
-基于 Apache Flink 的流处理平台，使用 Flink CDC 3.x 从 Oracle 数据库实时捕获变更数据（CDC），通过 Kafka 进行数据传输，使用 Flink 进行流处理，最终输出到文件系统。
+基于 Apache Flink 的企业级 CDC 数据采集平台，使用 Flink CDC 3.2 从 Oracle 数据库实时捕获变更数据，支持高可用部署、Web 可视化管理和自动化运维。
 
 ## 快速启动
 
@@ -9,19 +9,16 @@
 docker-compose up -d
 ```
 
-### 2. 启动 Flink CDC 作业
-```bash
-./shell/start-flink-cdc.sh
-```
-
-### 3. 检查作业状态
-```bash
-./shell/check-cdc-status.sh
-```
-
-### 4. 访问 Web UI
+### 2. 访问 Web 管理界面
+- 管理界面: http://localhost:8888
 - Flink Web UI: http://localhost:8081
-- Kafka UI: http://localhost:8082
+- 后端 API: http://localhost:5001
+
+### 3. 创建 CDC 任务
+1. 访问管理界面，配置数据源
+2. 创建 CDC 任务，选择要监控的表
+3. 提交任务到 Flink 集群
+4. 实时查看任务状态和输出数据
 
 ## 目录
 
@@ -38,70 +35,79 @@ docker-compose up -d
 
 ## 项目介绍
 
-实时数据管道系统是一个企业级的流处理解决方案，设计支持500亿级别的数据处理。系统采用DataHub + Flink的两层架构，通过Docker容器化部署，提供高可用、高性能、易运维的实时数据处理能力。
+实时数据管道系统是一个企业级的 CDC 数据采集平台，专为 Oracle 数据库设计。系统采用 Flink CDC + Web 管理界面的架构，通过 Docker 容器化部署，提供高可用、易用、可视化的实时数据采集能力。
 
 ### 核心特性
 
-- **高可用性**: 支持JobManager高可用配置，主备自动切换，系统可用性达99.9%
-- **容错性**: 基于Flink Checkpoint机制，保证数据不丢失，支持故障自动恢复
-- **可扩展性**: 支持动态扩缩容，水平扩展处理能力，支持至少100个并行任务
-- **数据一致性**: 支持至少一次和精确一次语义，保证数据准确性
-- **可观测性**: 完整的监控指标和告警机制，实时掌握系统运行状态
-- **容器化部署**: 采用Docker容器化，60秒内完成启动，简化部署和运维
+- **Web 可视化管理**: 提供完整的 Web 管理界面，支持数据源管理、任务创建、状态监控
+- **高可用架构**: 支持 Flink JobManager 高可用配置（ZooKeeper/Kubernetes），主备自动切换
+- **数据库持久化**: 任务配置和运行状态存储在 Oracle 数据库，支持数据迁移和备份
+- **智能任务调度**: 自动检测资源冲突，防止重复任务，支持并发控制
+- **实时数据输出**: 支持 CSV 格式输出，按表和时间自动分区，便于数据分析
+- **容器化部署**: 采用 Docker Compose 一键部署，包含所有依赖组件
 
 ## 系统架构
 
 ### 整体架构
 
 ```
-┌─────────────┐      ┌──────────────┐      ┌─────────────┐      ┌──────────────┐
-│  OceanBase  │─CDC─>│ CDC Collector│─────>│   DataHub   │─────>│    Flink     │
-│   Oracle    │      │  Container   │      │   Topic     │      │   Cluster    │
-└─────────────┘      └──────────────┘      └─────────────┘      └──────────────┘
-                                                                         │
-                                                                         ▼
-                                                                  ┌──────────────┐
-                                                                  │ File System  │
-                                                                  │ JSON/Parquet │
-                                                                  │     /CSV     │
-                                                                  └──────────────┘
+┌─────────────────┐      ┌──────────────────┐      ┌─────────────────┐
+│  Web 管理界面   │─────>│  后端 API 服务   │─────>│  Oracle 数据库  │
+│  (Nginx)        │      │  (Spring Boot)   │      │  (元数据存储)   │
+│  Port: 8888     │      │  Port: 5001      │      │                 │
+└─────────────────┘      └──────────────────┘      └─────────────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐
+                         │  Flink 集群      │
+                         │  (HA 模式)       │
+                         │  Port: 8081      │
+                         └──────────────────┘
+                                  │
+                                  ▼
+                         ┌──────────────────┐      ┌─────────────────┐
+                         │  CDC 数据采集    │─────>│  CSV 文件输出   │
+                         │  (Flink CDC)     │      │  (按表分区)     │
+                         └──────────────────┘      └─────────────────┘
+                                  ▲
+                                  │
+                         ┌──────────────────┐
+                         │  Oracle 源数据库 │
+                         │  (CDC 源)        │
+                         └──────────────────┘
 ```
+
+### 核心组件
+
+1. **Web 管理界面**: 基于 Nginx 的前端应用，提供可视化管理功能
+2. **后端 API 服务**: Spring Boot 应用，处理业务逻辑和任务调度
+3. **Flink 集群**: 高可用的流处理集群，执行 CDC 数据采集任务
+4. **Oracle 数据库**: 存储系统元数据（数据源配置、任务配置、运行状态）
+5. **ZooKeeper**: 提供 Flink 高可用协调服务（可选）
 
 ### 数据流
 
-1. **CDC采集**: CDC Collector从OceanBase捕获INSERT/UPDATE/DELETE变更事件
-2. **数据传输**: 变更数据通过DataHub进行可靠传输
-3. **流处理**: Flink集群消费DataHub数据，进行实时处理和转换
-4. **数据输出**: 处理后的数据写入文件系统，支持多种格式
-
-### 部署架构
-
-```
-Docker容器集群
-├── CDC Collector (1个容器)
-│   └── 端口: 8080 (健康检查和监控)
-├── Flink JobManager (1-2个容器，支持HA)
-│   ├── 端口: 8081 (Web UI)
-│   ├── 端口: 6123 (RPC)
-│   └── 端口: 9249 (Metrics)
-└── Flink TaskManager (N个容器，支持动态扩展)
-    ├── 端口: 6121 (数据交换)
-    └── 端口: 6122 (RPC)
-```
+1. **任务创建**: 用户通过 Web 界面创建 CDC 任务，配置存储到 Oracle 数据库
+2. **任务提交**: 后端服务将任务提交到 Flink 集群，启动 CDC 数据采集
+3. **数据采集**: Flink CDC 连接器从源 Oracle 数据库捕获变更数据
+4. **数据输出**: 变更数据按表和时间分区输出为 CSV 文件
+5. **状态监控**: 实时查询 Flink 作业状态，更新到数据库
 
 ## 技术栈
 
 | 组件 | 技术 | 版本 |
 |------|------|------|
 | 流处理引擎 | Apache Flink | 1.18.0 |
-| CDC连接器 | Flink CDC Connector | OceanBase |
-| 消息队列 | 阿里云DataHub | - |
-| 数据库 | OceanBase | Oracle模式 |
+| CDC 连接器 | Flink CDC Connector | 3.2.0 (Oracle) |
+| 后端框架 | Spring Boot | 2.7.x |
+| 前端框架 | 原生 JavaScript + HTML/CSS | - |
+| Web 服务器 | Nginx | Alpine |
+| 数据库 | Oracle | 11g+ |
+| 高可用协调 | Apache ZooKeeper | 3.8.0 |
 | 日志框架 | Log4j2 | 2.20.0 |
 | 构建工具 | Maven | 3.6+ |
 | 容器化 | Docker | 20.10+ |
 | 编排工具 | Docker Compose | 2.0+ |
-| 测试框架 | JUnit 5, jqwik | 5.10.0 |
 | 编程语言 | Java | 11+ |
 
 ## 项目结构
@@ -110,70 +116,95 @@ Docker容器集群
 realtime-data-pipeline/
 ├── src/                             # 源代码目录
 │   ├── main/
-│   │   ├── java/
-│   │   │   └── com/realtime/pipeline/
-│   │   │       ├── config/          # 配置类
-│   │   │       │   ├── PipelineConfig.java
-│   │   │       │   ├── DatabaseConfig.java
-│   │   │       │   ├── DataHubConfig.java
-│   │   │       │   ├── FlinkConfig.java
-│   │   │       │   ├── OutputConfig.java
-│   │   │       │   └── MonitoringConfig.java
-│   │   │       ├── model/           # 数据模型
-│   │   │       │   ├── ChangeEvent.java
-│   │   │       │   ├── ProcessedEvent.java
-│   │   │       │   ├── CollectorMetrics.java
-│   │   │       │   └── JobStatus.java
-│   │   │       └── util/            # 工具类
-│   │   │           ├── ConfigLoader.java
-│   │   │           ├── IdGenerator.java
-│   │   │           └── RetryUtil.java
+│   │   ├── java/com/realtime/
+│   │   │   ├── UnifiedApplication.java    # 统一应用入口
+│   │   │   ├── monitor/                   # 监控和管理模块
+│   │   │   │   ├── controller/            # REST API 控制器
+│   │   │   │   │   ├── CdcTaskController.java      # CDC 任务管理
+│   │   │   │   │   ├── DataSourceController.java   # 数据源管理
+│   │   │   │   │   ├── JobController.java          # Flink 作业管理
+│   │   │   │   │   ├── ClusterController.java      # 集群状态查询
+│   │   │   │   │   └── RuntimeJobController.java   # 运行时作业管理
+│   │   │   │   ├── service/               # 业务逻辑服务
+│   │   │   │   │   ├── CdcTaskService.java         # 任务服务
+│   │   │   │   │   ├── DataSourceService.java      # 数据源服务
+│   │   │   │   │   ├── FlinkService.java           # Flink 集成服务
+│   │   │   │   │   ├── EmbeddedCdcService.java     # CDC 提交服务
+│   │   │   │   │   └── RuntimeJobService.java      # 运行时作业服务
+│   │   │   │   ├── repository/            # 数据访问层
+│   │   │   │   │   ├── TaskRepository.java         # 任务数据访问
+│   │   │   │   │   ├── DataSourceRepository.java   # 数据源数据访问
+│   │   │   │   │   └── RuntimeJobRepository.java   # 运行时作业数据访问
+│   │   │   │   ├── dto/                   # 数据传输对象
+│   │   │   │   │   ├── TaskConfig.java             # 任务配置
+│   │   │   │   │   ├── DataSourceConfig.java       # 数据源配置
+│   │   │   │   │   ├── RuntimeJob.java             # 运行时作业
+│   │   │   │   │   └── ApiResponse.java            # API 响应
+│   │   │   │   └── config/               # 配置类
+│   │   │   │       ├── AppConfig.java              # 应用配置
+│   │   │   │       └── WebConfig.java              # Web 配置
+│   │   │   └── pipeline/                  # CDC 数据管道
+│   │   │       └── CdcJobMain.java                 # CDC 作业主类
 │   │   └── resources/
-│   │       ├── application.yml      # 配置文件模板
-│   │       └── log4j2.xml          # 日志配置
+│   │       ├── application.yml            # 应用配置
+│   │       ├── application-docker.yml     # Docker 环境配置
+│   │       ├── application-ha-zookeeper.yml  # ZooKeeper HA 配置
+│   │       ├── application-ha-kubernetes.yml # Kubernetes HA 配置
+│   │       └── log4j2.xml                 # 日志配置
 │   └── test/
-│       └── java/                    # 测试代码
-├── docs/                            # 项目文档
-│   ├── DEPLOYMENT.md               # 部署指南
-│   ├── DEVELOPMENT.md              # 开发指南
-│   └── ...
+│       └── java/                          # 测试代码
+├── monitor/                         # 前端和配置
+│   ├── frontend/                    # Web 前端
+│   │   ├── index.html              # 主页
+│   │   ├── main.html               # 主界面
+│   │   ├── cdc-manager.html        # CDC 管理
+│   │   ├── cdc-task-creator.html   # 任务创建
+│   │   ├── datasource-manager.html # 数据源管理
+│   │   ├── task-list.html          # 任务列表
+│   │   └── nginx.conf              # Nginx 配置
+│   ├── config/                      # 配置文件（已迁移到数据库）
+│   │   ├── datasources/            # 数据源配置（历史）
+│   │   └── cdc_tasks/              # 任务配置（历史）
+│   └── Dockerfile                   # 前端镜像构建
 ├── docker/                          # Docker 配置
 │   ├── jobmanager/                 # JobManager 配置
-│   ├── taskmanager/                # TaskManager 配置
-│   └── cdc-collector/              # CDC Collector 配置
-├── shell/                           # Shell 脚本目录 ⭐ 新增
-│   ├── README.md                   # 脚本使用说明
-│   ├── restart-flink-cdc-job.sh   # 重启作业
-│   ├── quick-test-cdc.sh          # 快速测试
-│   ├── check-cdc-status.sh        # 检查状态
-│   └── ...                         # 其他运维脚本
-├── md/                              # Markdown 文档目录 ⭐ 新增
-│   ├── README.md                   # 文档索引
-│   ├── CURRENT_CDC_STATUS.md      # 当前状态报告
-│   ├── CDC_*.md                    # CDC 相关文档
-│   ├── CSV_*.md                    # CSV 相关文档
-│   └── ...                         # 其他状态文档
-├── sql/                             # SQL 脚本目录 ⭐ 新增
-│   ├── README.md                   # SQL 脚本说明
-│   ├── setup-oracle-cdc.sql       # Oracle CDC 配置
-│   ├── enable-archivelog.sql      # 启用归档日志
-│   ├── configure-oracle-for-cdc.sql # CDC 配置
-│   └── ...                         # 其他 SQL 脚本
+│   │   ├── Dockerfile
+│   │   ├── flink-conf.yaml
+│   │   ├── entrypoint.sh
+│   │   └── log4j.properties
+│   └── taskmanager/                # TaskManager 配置
+│       ├── Dockerfile
+│       ├── flink-conf.yaml
+│       ├── entrypoint.sh
+│       └── log4j.properties
+├── sql/                             # SQL 脚本
+│   ├── setup-flink-user-schema.sql # 创建用户和表空间
+│   ├── setup-metadata-tables.sql   # 创建元数据表
+│   ├── setup-runtime-jobs-table.sql # 创建运行时作业表
+│   ├── configure-oracle-for-cdc.sql # 配置 Oracle CDC
+│   ├── migrate-json-to-db.py       # 数据迁移脚本
+│   └── README-database-migration.md # 迁移文档
 ├── output/                          # 输出目录
-│   └── cdc/                        # CDC 输出文件
+│   └── cdc/                        # CDC 输出文件（按日期分区）
+├── logs/                            # 日志目录
+├── docs/                            # 项目文档
+│   ├── MIGRATION-SUMMARY.md        # 迁移总结
+│   ├── RUNTIME-JOB-MANAGEMENT.md   # 运行时作业管理
+│   └── LOG-MINING-FLUSH-ISSUE-RESOLVED.md
 ├── docker-compose.yml              # Docker Compose 配置
 ├── pom.xml                         # Maven 配置
+├── .env                            # 环境变量配置
 └── README.md                       # 项目文档（本文件）
 ```
 
 ### 目录说明
 
-- **shell/**: 包含所有运维和管理脚本，从根目录执行 `./shell/script-name.sh`
-- **md/**: 包含所有状态报告和问题解决文档，便于查阅和维护
-- **sql/**: 包含所有 SQL 配置和测试脚本，便于数据库操作
-- **docs/**: 项目技术文档和设计文档
-- **docker/**: Docker 容器配置文件
-- **output/**: 系统输出目录，包含生成的 CSV 文件
+- **src/main/java/com/realtime/monitor**: 后端 API 服务，提供 REST 接口
+- **src/main/java/com/realtime/pipeline**: CDC 数据管道，Flink 作业实现
+- **monitor/frontend**: Web 前端界面，提供可视化管理
+- **docker/**: Docker 容器配置，包含 JobManager 和 TaskManager
+- **sql/**: 数据库脚本，包含表结构和配置脚本
+- **output/cdc/**: CDC 输出目录，按日期和表名分区存储 CSV 文件
 
 ## 核心组件
 
@@ -201,131 +232,115 @@ realtime-data-pipeline/
 
 ## 配置说明
 
-系统配置通过`application.yml`文件和环境变量管理。环境变量优先级高于配置文件。
+系统配置通过环境变量和数据库管理。
 
-### 配置文件结构
+### 环境变量配置
 
-```yaml
-database:
-  host: localhost
-  port: 2881
-  username: root
-  password: password
-  schema: test
-  tables: "*"
+创建 `.env` 文件配置系统参数：
 
-datahub:
-  endpoint: https://dh-cn-hangzhou.aliyuncs.com
-  accessId: your-access-id
-  accessKey: your-access-key
-  project: realtime-pipeline
-  topic: cdc-events
-  consumerGroup: cdc-collector-group
-
-flink:
-  parallelism: 4
-  checkpoint:
-    interval: 300000  # 5分钟
-    timeout: 600000   # 10分钟
-    minPause: 60000   # 1分钟
-    maxConcurrent: 1
-    retainedNumber: 3
-  stateBackend:
-    type: hashmap
-    checkpointDir: file:///opt/flink/checkpoints
-
-output:
-  path: /opt/flink/data
-  format: json  # json, parquet, csv
-  rolling:
-    sizeBytes: 1073741824  # 1GB
-    intervalMs: 3600000    # 1小时
-  compression: none  # none, gzip, snappy
-  maxRetries: 3
-
-monitoring:
-  port: 8080
-  metrics:
-    enabled: true
-  alerts:
-    latencyThresholdMs: 60000
-    checkpointFailureRate: 0.1
-    loadThreshold: 0.8
-```
-
-### 环境变量覆盖
-
-环境变量格式: `PIPELINE_<SECTION>_<KEY>` 或直接使用大写的配置项名称
-
-**数据库配置**:
-- `DATABASE_HOST`: 数据库主机地址
-- `DATABASE_PORT`: 数据库端口（默认: 2881）
-- `DATABASE_USERNAME`: 数据库用户名
-- `DATABASE_PASSWORD`: 数据库密码
-- `DATABASE_SCHEMA`: 数据库Schema
-- `DATABASE_TABLES`: 监控的表列表，逗号分隔或使用`*`
-
-**DataHub配置**:
-- `DATAHUB_ENDPOINT`: DataHub服务端点
-- `DATAHUB_ACCESS_ID`: 访问ID（必需）
-- `DATAHUB_ACCESS_KEY`: 访问密钥（必需）
-- `DATAHUB_PROJECT`: 项目名称
-- `DATAHUB_TOPIC`: 主题名称
-- `DATAHUB_CONSUMER_GROUP`: 消费者组名称
-
-**Flink配置**:
-- `PARALLELISM_DEFAULT`: 默认并行度（默认: 4）
-- `CHECKPOINT_INTERVAL`: Checkpoint间隔毫秒（默认: 300000）
-- `CHECKPOINT_DIR`: Checkpoint存储目录
-- `STATE_BACKEND`: 状态后端类型（hashmap/rocksdb）
-
-**输出配置**:
-- `OUTPUT_PATH`: 输出目录路径
-- `OUTPUT_FORMAT`: 输出格式（json/parquet/csv）
-- `OUTPUT_ROLLING_SIZE`: 文件滚动大小（字节）
-- `OUTPUT_ROLLING_INTERVAL`: 文件滚动时间间隔（毫秒）
-
-**监控配置**:
-- `MONITORING_PORT`: 监控端口（默认: 8080）
-- `LOG_LEVEL`: 日志级别（DEBUG/INFO/WARN/ERROR）
-
-### 配置验证
-
-系统启动时会自动验证配置参数的有效性：
-
-- 必需参数检查（数据库连接、DataHub凭证）
-- 参数类型验证（端口号、时间间隔等）
-- 参数范围验证（并行度、重试次数等）
-- 文件路径可访问性检查
-
-如果配置无效，系统会拒绝启动并返回详细的错误信息。
-
-### 配置示例
-
-**开发环境配置**:
 ```bash
-DATABASE_HOST=localhost
-DATABASE_SCHEMA=dev_db
-PARALLELISM_DEFAULT=2
-LOG_LEVEL=DEBUG
-```
+# Oracle 数据库配置（元数据存储）
+ORACLE_HOST=host.docker.internal
+ORACLE_PORT=1521
+ORACLE_SID=helowin
+ORACLE_USERNAME=finance_user
+ORACLE_PASSWORD=password
 
-**生产环境配置**:
-```bash
-DATABASE_HOST=prod-oceanbase.example.com
-DATABASE_SCHEMA=prod_db
-PARALLELISM_DEFAULT=16
-CHECKPOINT_INTERVAL=180000  # 3分钟
-STATE_BACKEND=rocksdb
-LOG_LEVEL=INFO
-```
+# Flink 配置
+FLINK_REST_URL=http://jobmanager:8081
+FLINK_OUTPUT_PATH=./output/cdc
+FLINK_PARALLELISM=2
 
-**高可用配置**:
-```bash
+# 应用配置
+SERVER_PORT=5001
+SPRING_PROFILES_ACTIVE=docker
+
+# 高可用配置（可选）
 HA_MODE=zookeeper
-HA_ZOOKEEPER_QUORUM=zk1:2181,zk2:2181,zk3:2181
+HA_ZOOKEEPER_QUORUM=zookeeper:2181
 HA_CLUSTER_ID=/flink-cluster
 ```
+
+### 数据库表结构
+
+系统使用以下数据库表存储元数据：
+
+**1. datasources - 数据源配置表**
+```sql
+CREATE TABLE datasources (
+    id VARCHAR2(100) PRIMARY KEY,
+    name VARCHAR2(200) NOT NULL,
+    host VARCHAR2(200) NOT NULL,
+    port NUMBER(5) NOT NULL,
+    username VARCHAR2(100) NOT NULL,
+    password VARCHAR2(200) NOT NULL,
+    sid VARCHAR2(100) NOT NULL,
+    description VARCHAR2(500),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**2. cdc_tasks - CDC 任务配置表**
+```sql
+CREATE TABLE cdc_tasks (
+    id VARCHAR2(100) PRIMARY KEY,
+    name VARCHAR2(200) NOT NULL,
+    datasource_id VARCHAR2(100),
+    schema_name VARCHAR2(100) NOT NULL,
+    tables CLOB NOT NULL,
+    output_path VARCHAR2(500),
+    parallelism NUMBER(3) DEFAULT 2,
+    split_size NUMBER(10) DEFAULT 8096,
+    status VARCHAR2(20) DEFAULT 'CREATED',
+    flink_job_id VARCHAR2(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+**3. runtime_jobs - 运行时作业表**
+```sql
+CREATE TABLE runtime_jobs (
+    id VARCHAR2(100) PRIMARY KEY,
+    task_id VARCHAR2(100),
+    task_name VARCHAR2(200),
+    schema_name VARCHAR2(100),
+    tables CLOB,
+    parallelism NUMBER(3),
+    flink_job_id VARCHAR2(100),
+    status VARCHAR2(20) DEFAULT 'PENDING',
+    error_message VARCHAR2(4000),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP,
+    finished_at TIMESTAMP
+);
+```
+
+### 初始化数据库
+
+```bash
+# 1. 创建用户和表空间
+sqlplus sys/password@helowin as sysdba @sql/setup-flink-user-schema.sql
+
+# 2. 创建元数据表
+sqlplus finance_user/password@helowin @sql/setup-metadata-tables.sql
+
+# 3. 配置 Oracle CDC（源数据库）
+sqlplus sys/password@source_db as sysdba @sql/configure-oracle-for-cdc.sql
+```
+
+### 数据迁移
+
+如果从 JSON 文件配置迁移到数据库：
+
+```bash
+# 运行迁移脚本
+python3 sql/migrate-json-to-db.py
+```
+
+详细信息请参考: [数据库迁移文档](sql/README-database-migration.md)
 
 ## 快速开始
 
@@ -333,12 +348,10 @@ HA_CLUSTER_ID=/flink-cluster
 
 - Docker 20.10+
 - Docker Compose 2.0+
-- Maven 3.6+
-- Java 11+
-- OceanBase数据库（Oracle模式）
-- 阿里云DataHub账号
+- Oracle 数据库 11g+（用于元数据存储和 CDC 源）
+- Maven 3.6+ 和 Java 11+（仅开发环境需要）
 
-### 5分钟快速部署
+### 5 分钟快速部署
 
 #### 1. 克隆项目
 
@@ -347,17 +360,7 @@ git clone <repository-url>
 cd realtime-data-pipeline
 ```
 
-#### 2. 构建应用
-
-```bash
-# 编译并打包
-mvn clean package -DskipTests
-
-# 验证构建产物
-ls -lh target/realtime-data-pipeline-*.jar
-```
-
-#### 3. 配置环境变量
+#### 2. 配置环境变量
 
 ```bash
 # 复制环境变量模板
@@ -370,56 +373,106 @@ vim .env
 **必需配置项**:
 
 ```bash
-# 数据库配置
-DATABASE_HOST=your-oceanbase-host
-DATABASE_PORT=2881
-DATABASE_USERNAME=your-username
-DATABASE_PASSWORD=your-password
-DATABASE_SCHEMA=your-schema
-DATABASE_TABLES=table1,table2  # 或使用 * 监控所有表
+# Oracle 数据库配置（元数据存储）
+ORACLE_HOST=your-oracle-host
+ORACLE_PORT=1521
+ORACLE_SID=your-sid
+ORACLE_USERNAME=finance_user
+ORACLE_PASSWORD=your-password
 
-# DataHub配置
-DATAHUB_ENDPOINT=https://dh-cn-hangzhou.aliyuncs.com
-DATAHUB_ACCESS_ID=your-access-id
-DATAHUB_ACCESS_KEY=your-access-key
-DATAHUB_PROJECT=your-project
-DATAHUB_TOPIC=your-topic
+# Flink 配置
+FLINK_REST_URL=http://jobmanager:8081
+FLINK_OUTPUT_PATH=./output/cdc
+```
+
+#### 3. 初始化数据库
+
+```bash
+# 创建用户和表空间
+sqlplus sys/password@helowin as sysdba @sql/setup-flink-user-schema.sql
+
+# 创建元数据表
+sqlplus finance_user/password@helowin @sql/setup-metadata-tables.sql
 ```
 
 #### 4. 启动服务
 
 ```bash
+# 构建应用（首次部署）
+mvn clean package -DskipTests
+
 # 启动所有服务
 docker-compose up -d
 
 # 查看服务状态
 docker-compose ps
-
-# 查看日志
-docker-compose logs -f
 ```
 
-#### 5. 验证部署
+#### 5. 访问管理界面
 
 ```bash
-# 访问Flink Web UI
+# 打开浏览器访问
+open http://localhost:8888
+
+# 或查看 Flink Web UI
 open http://localhost:8081
-
-# 检查CDC Collector健康状态
-curl http://localhost:8080/health
-
-# 查看系统指标
-curl http://localhost:8080/metrics
 ```
 
-### 扩展TaskManager
+### 使用 Web 界面创建 CDC 任务
+
+1. **配置数据源**
+   - 访问 http://localhost:8888
+   - 点击"数据源管理"
+   - 添加 Oracle 数据源（CDC 源数据库）
+   - 测试连接
+
+2. **创建 CDC 任务**
+   - 点击"CDC 任务管理" → "创建任务"
+   - 选择数据源和 Schema
+   - 选择要监控的表
+   - 配置输出路径和并行度
+   - 保存任务
+
+3. **提交任务**
+   - 在任务列表中找到创建的任务
+   - 点击"提交"按钮
+   - 系统自动提交到 Flink 集群
+
+4. **查看输出**
+   - 输出文件位于 `output/cdc/` 目录
+   - 按日期和表名分区：`output/cdc/YYYY-MM-DD--HH/TABLE_NAME_*.csv`
+
+### 使用 API 创建任务
 
 ```bash
-# 扩展到3个TaskManager实例
-docker-compose up -d --scale taskmanager=3
+# 1. 创建数据源
+curl -X POST http://localhost:5001/api/datasources \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "oracle-prod",
+    "name": "生产环境 Oracle",
+    "host": "your-oracle-host",
+    "port": 1521,
+    "username": "your-username",
+    "password": "your-password",
+    "sid": "your-sid"
+  }'
 
-# 验证扩展结果
-docker-compose ps
+# 2. 创建 CDC 任务
+curl -X POST http://localhost:5001/api/cdc/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "我的CDC任务",
+    "datasource_id": "oracle-prod",
+    "schema": "YOUR_SCHEMA",
+    "tables": ["TABLE1", "TABLE2"],
+    "output_path": "./output/cdc",
+    "parallelism": 2,
+    "split_size": 8096
+  }'
+
+# 3. 提交任务
+curl -X POST http://localhost:5001/api/cdc/tasks/{task-id}/submit
 ```
 
 ### 停止服务
@@ -431,8 +484,6 @@ docker-compose down
 # 停止并删除数据卷
 docker-compose down -v
 ```
-
-更多详细信息请参考: [Docker快速开始指南](docker/QUICKSTART.md)
 
 ## 部署指南
 
@@ -578,260 +629,221 @@ docker-compose --profile ha up -d
 
 ### 部署相关
 
-**Q: 容器启动失败，提示"无法连接到JobManager"？**
+**Q: 容器启动失败，提示"无法连接到 JobManager"？**
 
 A: 检查以下几点：
-1. 确保JobManager容器已启动并健康：`docker-compose ps`
-2. 检查网络连接：`docker network inspect flink-network`
-3. 验证环境变量配置：`docker-compose config`
-4. 查看JobManager日志：`docker-compose logs jobmanager`
+1. 确保 JobManager 容器已启动：`docker-compose ps`
+2. 检查网络连接：`docker network inspect realtime-data-pipeline_default`
+3. 查看 JobManager 日志：`docker-compose logs jobmanager`
+4. 验证环境变量：`docker-compose config`
 
-**Q: 如何修改Flink并行度？**
-
-A: 有两种方式：
-```bash
-# 方式1: 修改环境变量
-echo "PARALLELISM_DEFAULT=8" >> .env
-docker-compose restart
-
-# 方式2: 修改配置文件
-vim src/main/resources/application.yml
-# 修改 flink.parallelism 值
-```
-
-**Q: 容器启动超过60秒怎么办？**
-
-A: 检查以下原因：
-1. 资源不足：增加Docker资源限制
-2. 网络问题：检查DataHub和数据库连接
-3. 配置错误：验证配置参数有效性
-4. 查看启动日志：`docker-compose logs -f`
-
-### 数据处理相关
-
-**Q: 数据延迟很高，如何优化？**
-
-A: 尝试以下优化措施：
-1. 增加TaskManager数量：`docker-compose up -d --scale taskmanager=5`
-2. 增加并行度：修改`PARALLELISM_DEFAULT`环境变量
-3. 调整Checkpoint间隔：减少`CHECKPOINT_INTERVAL`值
-4. 检查反压情况：访问Flink Web UI查看反压指标
-
-**Q: Checkpoint频繁失败怎么办？**
+**Q: Web 界面无法访问？**
 
 A: 排查步骤：
-1. 检查存储空间：确保Checkpoint目录有足够空间
-2. 增加超时时间：调整`CHECKPOINT_TIMEOUT`参数
-3. 检查状态大小：考虑使用RocksDB状态后端
-4. 查看错误日志：`docker-compose logs jobmanager | grep checkpoint`
+1. 检查 Nginx 容器状态：`docker-compose ps monitor-frontend`
+2. 查看 Nginx 日志：`docker-compose logs monitor-frontend`
+3. 验证端口映射：`docker ps | grep 8888`
+4. 检查后端服务：`curl http://localhost:5001/api/health`
 
-**Q: 如何处理死信队列中的数据？**
+**Q: 数据库连接失败？**
 
-A: 死信队列数据存储在`/opt/flink/data/dlq/`目录：
+A: 检查配置：
+1. 验证 `.env` 文件中的数据库配置
+2. 测试数据库连接：`sqlplus finance_user/password@helowin`
+3. 检查防火墙和网络：`telnet oracle-host 1521`
+4. 查看后端日志：`docker-compose logs monitor-backend`
+
+### 任务管理相关
+
+**Q: 任务提交失败，提示"任务配置缺少数据库连接信息"？**
+
+A: 这是字段映射问题，已在最新版本修复：
+1. 确保使用最新版本的代码
+2. 重新构建镜像：`mvn clean package && docker-compose build monitor-backend`
+3. 重启服务：`docker-compose restart monitor-backend`
+4. 验证数据源配置：检查 `datasources` 表中是否有数据
+
+**Q: 如何查看任务状态？**
+
+A: 多种方式查看：
+1. Web 界面：访问 http://localhost:8888，查看任务列表
+2. Flink UI：访问 http://localhost:8081，查看运行中的作业
+3. API 查询：`curl http://localhost:5001/api/cdc/tasks`
+4. 数据库查询：`SELECT * FROM cdc_tasks;`
+
+**Q: 任务重复提交怎么办？**
+
+A: 系统已实现防重复机制：
+1. 系统会自动检测相同 Schema 和表的任务
+2. 如果已有运行中的任务，会拒绝提交
+3. 查看冲突任务：检查 `runtime_jobs` 表
+4. 手动取消冲突任务：通过 Flink UI 或 API
+
+**Q: 如何取消运行中的任务？**
+
+A: 两种方式：
 ```bash
-# 查看死信队列数据
-docker exec flink-taskmanager-1 ls -lh /opt/flink/data/dlq/
+# 方式1: 通过 Flink UI
+# 访问 http://localhost:8081，找到作业，点击 Cancel
 
-# 导出死信队列数据
-docker cp flink-taskmanager-1:/opt/flink/data/dlq/ ./dlq-backup/
-
-# 分析失败原因并修复后重新处理
+# 方式2: 通过 API
+curl -X POST http://localhost:5001/api/cdc/jobs/{job-id}/cancel
 ```
 
-**Q: 数据重复怎么办？**
+### 数据输出相关
 
-A: 系统默认提供至少一次语义，可能产生重复：
-1. 启用精确一次语义：配置幂等性Sink
-2. 在下游系统实现去重逻辑
-3. 使用唯一ID进行去重：每条记录都有`eventId`字段
+**Q: 输出文件在哪里？**
 
-### 监控相关
+A: 输出文件位置：
+- 默认路径：`output/cdc/`
+- 文件命名：`YYYY-MM-DD--HH/TABLE_NAME_timestamp-uuid-partition.csv`
+- 示例：`2026-03-09--09/IDS_ACCOUNT_INFO_20260309_092928270-a12381c7-0.csv`
 
-**Q: 如何查看实时处理速率？**
+**Q: 如何修改输出路径？**
 
-A: 访问监控端点：
-```bash
-# 查看详细指标
-curl http://localhost:8080/metrics | jq '.records'
+A: 在创建任务时指定：
+1. Web 界面：在任务创建页面修改"输出路径"
+2. API 方式：设置 `output_path` 参数
+3. 默认值：`./output/cdc`
 
-# 访问Flink Web UI
-open http://localhost:8081
-```
+**Q: CSV 文件格式是什么？**
 
-**Q: 告警通知如何配置？**
-
-A: 修改监控配置：
-```yaml
-monitoring:
-  alerts:
-    enabled: true
-    webhook: https://your-webhook-url
-    email: admin@example.com
-```
-
-**Q: 如何导出Prometheus指标？**
-
-A: JobManager和TaskManager都暴露Prometheus端口：
-```bash
-# 访问Prometheus指标
-curl http://localhost:9249/metrics
-
-# 配置Prometheus抓取
-# prometheus.yml:
-# - job_name: 'flink'
-#   static_configs:
-#   - targets: ['localhost:9249']
-```
-
-### 故障恢复相关
-
-**Q: JobManager崩溃后如何恢复？**
-
-A: 系统会自动恢复：
-1. Docker会自动重启容器（2分钟内）
-2. 如果启用HA，会切换到备用JobManager（30秒内）
-3. 作业会从最近的Checkpoint恢复
-
-**Q: 如何手动触发故障恢复？**
-
-A: 使用Savepoint进行恢复：
-```bash
-# 1. 触发Savepoint
-curl -X POST http://localhost:8081/jobs/<job-id>/savepoints \
-  -d '{"target-directory": "/opt/flink/savepoints"}'
-
-# 2. 取消作业
-curl -X PATCH http://localhost:8081/jobs/<job-id> \
-  -d '{"state": "cancelled"}'
-
-# 3. 从Savepoint恢复
-docker exec flink-jobmanager flink run \
-  -s /opt/flink/savepoints/<savepoint-id> \
-  /opt/flink/lib/realtime-data-pipeline.jar
-```
-
-**Q: 数据丢失怎么办？**
-
-A: 系统设计保证数据不丢失：
-1. 检查Checkpoint是否正常：查看Flink Web UI
-2. 验证至少一次语义：检查输出数据
-3. 如果确实丢失，从Checkpoint恢复并重放数据
+A: CSV 文件包含以下列：
+- 操作类型（INSERT/UPDATE/DELETE）
+- 数据库名
+- Schema 名
+- 表名
+- 主键值
+- 变更前数据（JSON）
+- 变更后数据（JSON）
+- 时间戳
 
 ### 性能相关
 
 **Q: 如何提高吞吐量？**
 
 A: 优化建议：
-1. 增加并行度：`PARALLELISM_DEFAULT=16`
-2. 增加TaskManager：`docker-compose up -d --scale taskmanager=10`
-3. 调整内存配置：增加`TASK_MANAGER_HEAP_SIZE`
-4. 使用Parquet格式输出：`OUTPUT_FORMAT=parquet`
-5. 启用压缩：`OUTPUT_COMPRESSION=snappy`
+1. 增加并行度：在任务创建时设置更高的并行度（如 4、8）
+2. 增加 TaskManager：`docker-compose up -d --scale taskmanager=3`
+3. 调整 split size：增大 `split_size` 参数（默认 8096）
+4. 优化数据库：确保源数据库开启归档日志和补充日志
 
 **Q: 内存使用率过高怎么办？**
 
 A: 调整内存配置：
+```yaml
+# docker-compose.yml
+taskmanager:
+  environment:
+    - FLINK_PROPERTIES=taskmanager.memory.process.size=2048m
+```
+
+**Q: Checkpoint 频繁失败？**
+
+A: 排查步骤：
+1. 检查存储空间：确保有足够的磁盘空间
+2. 查看 Flink 日志：`docker-compose logs jobmanager | grep checkpoint`
+3. 增加超时时间：修改 `flink-conf.yaml` 中的 checkpoint 配置
+4. 检查网络：确保 JobManager 和 TaskManager 之间网络稳定
+
+### 高可用相关
+
+**Q: 如何启用高可用？**
+
+A: 配置 ZooKeeper HA：
 ```bash
-# 增加TaskManager内存
-export TASK_MANAGER_HEAP_SIZE=2048m
-export TASK_MANAGER_MEMORY_PROCESS_SIZE=3456m
-docker-compose restart taskmanager
+# 1. 修改 .env 文件
+echo "HA_MODE=zookeeper" >> .env
+echo "HA_ZOOKEEPER_QUORUM=zookeeper:2181" >> .env
+
+# 2. 启动 ZooKeeper
+docker-compose up -d zookeeper
+
+# 3. 启动高可用集群
+docker-compose up -d jobmanager jobmanager-standby
 ```
 
-**Q: 如何减少Checkpoint开销？**
+**Q: JobManager 崩溃后如何恢复？**
 
-A: 优化Checkpoint配置：
+A: 自动恢复机制：
+1. Docker 会自动重启容器（restart: unless-stopped）
+2. 如果启用 HA，备用 JobManager 会接管（30秒内）
+3. 作业会从最近的 Checkpoint 恢复
+4. 查看恢复状态：访问 Flink UI
+
+### 数据库相关
+
+**Q: 如何从 JSON 配置迁移到数据库？**
+
+A: 运行迁移脚本：
 ```bash
-# 增加Checkpoint间隔
-export CHECKPOINT_INTERVAL=600000  # 10分钟
-
-# 启用增量Checkpoint（RocksDB）
-export STATE_BACKEND=rocksdb
-
-# 减少并发Checkpoint
-export CHECKPOINT_MAX_CONCURRENT=1
+python3 sql/migrate-json-to-db.py
 ```
+详细信息：[数据库迁移文档](sql/README-database-migration.md)
 
-### 开发相关
+**Q: 如何备份任务配置？**
 
-**Q: 如何添加新的数据处理逻辑？**
-
-A: 修改EventProcessor类：
-```java
-// src/main/java/com/realtime/pipeline/flink/processor/EventProcessor.java
-public class EventProcessor extends RichMapFunction<ChangeEvent, ProcessedEvent> {
-    @Override
-    public ProcessedEvent map(ChangeEvent event) {
-        // 添加自定义处理逻辑
-        return processEvent(event);
-    }
-}
-```
-
-**Q: 如何添加新的输出格式？**
-
-A: 实现AbstractFileSink：
-```java
-public class CustomFileSink extends AbstractFileSink {
-    @Override
-    protected void writeRecord(ProcessedEvent event) {
-        // 实现自定义格式写入逻辑
-    }
-}
-```
-
-**Q: 如何运行测试？**
-
-A: 运行测试命令：
+A: 导出数据库表：
 ```bash
-# 运行所有测试
-mvn test
+# 导出数据源配置
+sqlplus finance_user/password@helowin <<EOF
+SET PAGESIZE 0
+SET FEEDBACK OFF
+SPOOL datasources_backup.csv
+SELECT * FROM datasources;
+SPOOL OFF
+EXIT;
+EOF
 
-# 运行特定测试
-mvn test -Dtest=CDCCollectorTest
-
-# 运行属性测试
-mvn test -Dtest=*PropertyTest
-
-# 跳过测试构建
-mvn package -DskipTests
+# 导出任务配置
+sqlplus finance_user/password@helowin <<EOF
+SPOOL cdc_tasks_backup.csv
+SELECT * FROM cdc_tasks;
+SPOOL OFF
+EXIT;
+EOF
 ```
 
 ### 其他问题
 
 **Q: 支持哪些数据库？**
 
-A: 当前支持OceanBase（Oracle模式），理论上支持所有Flink CDC支持的数据库。
-
-**Q: 支持哪些输出格式？**
-
-A: 支持JSON、Parquet、CSV三种格式，可通过`OUTPUT_FORMAT`环境变量配置。
+A: 当前支持 Oracle 11g+，理论上支持所有 Flink CDC 支持的数据库。
 
 **Q: 如何升级系统版本？**
 
 A: 升级步骤：
 ```bash
-# 1. 触发Savepoint
-curl -X POST http://localhost:8081/jobs/<job-id>/savepoints
-
+# 1. 备份数据库
 # 2. 停止服务
 docker-compose down
 
-# 3. 更新代码并重新构建
+# 3. 更新代码
 git pull
+
+# 4. 重新构建
 mvn clean package -DskipTests
 docker-compose build
 
-# 4. 从Savepoint启动新版本
+# 5. 启动新版本
 docker-compose up -d
 ```
 
-**Q: 如何联系技术支持？**
+**Q: 如何查看系统日志？**
 
-A: 
-- 查看文档：`docs/`目录
-- 提交Issue：<repository-url>/issues
-- 邮件联系：support@example.com
+A: 查看日志命令：
+```bash
+# 查看所有服务日志
+docker-compose logs -f
+
+# 查看特定服务日志
+docker-compose logs -f monitor-backend
+docker-compose logs -f jobmanager
+docker-compose logs -f taskmanager
+
+# 查看最近 100 行
+docker-compose logs --tail 100 monitor-backend
+```
 
 ### 添加新功能
 
@@ -1023,11 +1035,44 @@ docker-compose up -d
 
 ## 相关文档
 
-- [Docker快速开始指南](docker/QUICKSTART.md) - 5分钟快速部署指南
-- [Docker部署指南](docker/README.md) - 详细的Docker部署说明
+- [数据库迁移文档](sql/README-database-migration.md) - JSON 配置迁移到数据库
+- [运行时作业管理](RUNTIME-JOB-MANAGEMENT.md) - 作业调度和冲突检测
+- [迁移总结](MIGRATION-SUMMARY.md) - 系统架构演进历史
+- [Log Mining 问题解决](LOG-MINING-FLUSH-ISSUE-RESOLVED.md) - 常见问题排查
 - [设计文档](.kiro/specs/realtime-data-pipeline/design.md) - 系统架构和设计
 - [需求文档](.kiro/specs/realtime-data-pipeline/requirements.md) - 功能需求说明
 - [任务列表](.kiro/specs/realtime-data-pipeline/tasks.md) - 实现任务清单
+
+## API 文档
+
+### REST API 端点
+
+**数据源管理**
+- `GET /api/datasources` - 获取数据源列表
+- `POST /api/datasources` - 创建数据源
+- `GET /api/datasources/{id}` - 获取数据源详情
+- `PUT /api/datasources/{id}` - 更新数据源
+- `DELETE /api/datasources/{id}` - 删除数据源
+- `POST /api/datasources/test` - 测试数据源连接
+
+**CDC 任务管理**
+- `GET /api/cdc/tasks` - 获取任务列表
+- `POST /api/cdc/tasks` - 创建任务
+- `GET /api/cdc/tasks/{id}` - 获取任务详情
+- `POST /api/cdc/tasks/{id}/submit` - 提交任务
+- `DELETE /api/cdc/tasks/{id}` - 删除任务
+
+**Flink 作业管理**
+- `GET /api/cdc/jobs` - 获取运行中作业列表
+- `GET /api/cdc/jobs/{id}` - 获取作业详情
+- `POST /api/cdc/jobs/{id}/cancel` - 取消作业
+
+**集群管理**
+- `GET /api/cluster/overview` - 获取集群概览
+- `GET /api/cluster/taskmanagers` - 获取 TaskManager 列表
+- `GET /api/cluster/jobs` - 获取所有作业
+
+详细 API 文档请访问：http://localhost:5001/swagger-ui.html（如果启用）
 
 ## 性能指标
 
@@ -1035,16 +1080,16 @@ docker-compose up -d
 
 | 指标 | 目标值 | 说明 |
 |------|--------|------|
-| 吞吐量 | 10万条/秒 | 每秒处理记录数 |
-| 延迟P99 | < 5秒 | 端到端处理延迟 |
-| Checkpoint耗时 | < 30秒 | Checkpoint完成时间 |
+| 吞吐量 | 1万条/秒 | 每秒处理记录数（单表） |
+| 延迟 P99 | < 10秒 | 端到端处理延迟 |
+| Checkpoint 耗时 | < 30秒 | Checkpoint 完成时间 |
 | 系统可用性 | 99.9% | 年度可用性目标 |
-| 故障恢复时间 | < 10分钟 | 从故障到恢复的时间 |
-| 容器启动时间 | < 60秒 | 容器初始化时间 |
+| 故障恢复时间 | < 5分钟 | 从故障到恢复的时间 |
+| 容器启动时间 | < 30秒 | 容器初始化时间 |
 
 ## 许可证
 
-Copyright © 2025 Realtime Data Pipeline Team
+Copyright © 2026 Realtime Data Pipeline Team
 
 本项目采用企业内部许可证，未经授权不得用于商业用途。
 
@@ -1057,398 +1102,29 @@ Copyright © 2025 Realtime Data Pipeline Team
 
 ---
 
-**最后更新**: 2025-01-28  
+**最后更新**: 2026-03-09  
 **版本**: 1.0.0  
 **状态**: 生产就绪
-
-
-## 开发指南
-
-### 项目结构
-
-```
-realtime-data-pipeline/
-├── src/
-│   ├── main/
-│   │   ├── java/com/realtime/pipeline/
-│   │   │   ├── cdc/              # CDC采集组件
-│   │   │   │   ├── CDCCollector.java
-│   │   │   │   ├── CDCEventConverter.java
-│   │   │   │   └── ConnectionManager.java
-│   │   │   ├── config/           # 配置管理
-│   │   │   │   ├── PipelineConfig.java
-│   │   │   │   ├── DatabaseConfig.java
-│   │   │   │   ├── DataHubConfig.java
-│   │   │   │   ├── FlinkConfig.java
-│   │   │   │   └── OutputConfig.java
-│   │   │   ├── datahub/          # DataHub集成
-│   │   │   │   ├── DataHubSender.java
-│   │   │   │   └── client/
-│   │   │   ├── flink/            # Flink流处理
-│   │   │   │   ├── source/       # 数据源
-│   │   │   │   ├── processor/    # 数据处理
-│   │   │   │   ├── sink/         # 数据输出
-│   │   │   │   ├── checkpoint/   # Checkpoint管理
-│   │   │   │   ├── recovery/     # 故障恢复
-│   │   │   │   ├── ha/           # 高可用
-│   │   │   │   └── scaling/      # 动态扩缩容
-│   │   │   ├── model/            # 数据模型
-│   │   │   │   ├── ChangeEvent.java
-│   │   │   │   ├── ProcessedEvent.java
-│   │   │   │   └── ...
-│   │   │   ├── monitoring/       # 监控组件
-│   │   │   │   ├── MonitoringService.java
-│   │   │   │   ├── MetricsReporter.java
-│   │   │   │   ├── AlertManager.java
-│   │   │   │   └── HealthCheckServer.java
-│   │   │   ├── error/            # 错误处理
-│   │   │   │   ├── DeadLetterQueue.java
-│   │   │   │   └── ...
-│   │   │   ├── job/              # 作业管理
-│   │   │   │   └── FlinkJobManager.java
-│   │   │   └── util/             # 工具类
-│   │   └── resources/
-│   │       ├── application.yml
-│   │       └── log4j2.xml
-│   └── test/
-│       └── java/                 # 测试代码
-│           ├── *Test.java        # 单元测试
-│           └── *PropertyTest.java # 属性测试
-├── docker/                       # Docker配置
-│   ├── jobmanager/
-│   ├── taskmanager/
-│   └── cdc-collector/
-├── docs/                         # 文档
-├── .kiro/specs/                  # 规格说明
-├── pom.xml
-├── docker-compose.yml
-└── README.md
-```
-
-### 开发环境搭建
-
-#### 1. 安装依赖
-
-```bash
-# Java 11+
-java -version
-
-# Maven 3.6+
-mvn -version
-
-# Docker
-docker --version
-docker-compose --version
-```
-
-#### 2. 克隆项目
-
-```bash
-git clone <repository-url>
-cd realtime-data-pipeline
-```
-
-#### 3. 构建项目
-
-```bash
-# 编译
-mvn clean compile
-
-# 运行测试
-mvn test
-
-# 打包
-mvn clean package
-```
-
-#### 4. IDE配置
-
-**IntelliJ IDEA**:
-1. 导入Maven项目
-2. 启用Lombok插件
-3. 设置Java 11 SDK
-4. 配置代码格式化规则
-
-**Eclipse**:
-1. 导入Maven项目
-2. 安装Lombok
-3. 配置Java 11
-
-### 添加新功能
-
-#### 1. 添加新的数据处理逻辑
-
-```java
-// 创建新的处理函数
-public class CustomProcessor extends RichMapFunction<ChangeEvent, ProcessedEvent> {
-    @Override
-    public ProcessedEvent map(ChangeEvent event) throws Exception {
-        // 实现处理逻辑
-        return processEvent(event);
-    }
-}
-
-// 在Flink作业中使用
-DataStream<ProcessedEvent> processed = source
-    .map(new CustomProcessor())
-    .name("Custom Processor");
-```
-
-#### 2. 添加新的输出格式
-
-```java
-// 继承AbstractFileSink
-public class XmlFileSink extends AbstractFileSink {
-    @Override
-    protected void writeRecord(ProcessedEvent event) throws IOException {
-        // 实现XML格式写入
-        String xml = convertToXml(event);
-        writer.write(xml);
-    }
-    
-    private String convertToXml(ProcessedEvent event) {
-        // XML转换逻辑
-        return "<event>...</event>";
-    }
-}
-```
-
-#### 3. 添加新的监控指标
-
-```java
-// 注册自定义指标
-public class CustomMetrics {
-    private final Counter customCounter;
-    
-    public CustomMetrics(RuntimeContext context) {
-        this.customCounter = context.getMetricGroup()
-            .counter("custom_metric");
-    }
-    
-    public void increment() {
-        customCounter.inc();
-    }
-}
-```
-
-### 测试策略
-
-系统采用双重测试方法：
-
-#### 1. 单元测试
-
-验证特定示例和边界情况：
-
-```java
-@Test
-public void testEventProcessing() {
-    EventProcessor processor = new EventProcessor();
-    ChangeEvent input = createTestEvent();
-    
-    ProcessedEvent output = processor.map(input);
-    
-    assertNotNull(output);
-    assertEquals(input.getEventId(), output.getEventId());
-}
-
-@Test
-public void testFileRolling() {
-    FileSink sink = new JsonFileSink();
-    sink.setRollingPolicy(RollingPolicy.onSize(1024));
-    
-    // 写入超过阈值的数据
-    writeTestData(sink, 2048);
-    
-    // 验证文件滚动
-    assertEquals(2, countOutputFiles());
-}
-```
-
-#### 2. 基于属性的测试
-
-验证跨所有输入的通用属性：
-
-```java
-@Property
-public void eventOrderPreservation(@ForAll List<ChangeEvent> events) {
-    // 发送事件序列
-    List<ProcessedEvent> output = processEvents(events);
-    
-    // 验证时间顺序保持
-    for (int i = 1; i < output.size(); i++) {
-        assertTrue(output.get(i).getTimestamp() >= 
-                   output.get(i-1).getTimestamp());
-    }
-}
-
-@Property
-public void uniqueIdentifierGeneration(@ForAll List<ChangeEvent> events) {
-    List<ProcessedEvent> processed = processEvents(events);
-    
-    Set<String> ids = processed.stream()
-        .map(ProcessedEvent::getEventId)
-        .collect(Collectors.toSet());
-    
-    // 验证所有ID唯一
-    assertEquals(processed.size(), ids.size());
-}
-```
-
-#### 3. 集成测试
-
-测试完整的数据流：
-
-```java
-@Test
-public void testEndToEndDataFlow() {
-    // 启动测试环境
-    TestEnvironment env = new TestEnvironment();
-    
-    // 发送测试数据
-    env.sendChangeEvent(testEvent);
-    
-    // 等待处理完成
-    env.waitForProcessing();
-    
-    // 验证输出
-    List<ProcessedEvent> output = env.readOutput();
-    assertEquals(1, output.size());
-}
-```
-
-### 代码规范
-
-#### 1. 命名规范
-
-- 类名：大驼峰（PascalCase）
-- 方法名：小驼峰（camelCase）
-- 常量：全大写下划线分隔（UPPER_SNAKE_CASE）
-- 包名：全小写（lowercase）
-
-#### 2. 注释规范
-
-```java
-/**
- * CDC采集器，从OceanBase数据库捕获变更数据
- * 
- * <p>功能：
- * <ul>
- *   <li>捕获INSERT/UPDATE/DELETE操作</li>
- *   <li>自动重连和重试</li>
- *   <li>发送数据到DataHub</li>
- * </ul>
- * 
- * @author Your Name
- * @since 1.0.0
- */
-public class CDCCollector {
-    /**
-     * 启动CDC采集
-     * 
-     * @param dbConfig 数据库配置
-     * @param dhConfig DataHub配置
-     * @throws IllegalArgumentException 如果配置无效
-     */
-    public void start(DatabaseConfig dbConfig, DataHubConfig dhConfig) {
-        // 实现
-    }
-}
-```
-
-#### 3. 异常处理
-
-```java
-// 使用自定义异常
-public class CDCException extends RuntimeException {
-    public CDCException(String message, Throwable cause) {
-        super(message, cause);
-    }
-}
-
-// 适当的异常处理
-try {
-    sendToDataHub(event);
-} catch (DataHubException e) {
-    logger.error("Failed to send event: {}", event.getEventId(), e);
-    deadLetterQueue.send(event, e);
-}
-```
-
-#### 4. 日志规范
-
-```java
-// 使用SLF4J
-private static final Logger logger = LoggerFactory.getLogger(CDCCollector.class);
-
-// 不同级别的日志
-logger.debug("Processing event: {}", event.getEventId());
-logger.info("CDC collector started successfully");
-logger.warn("Retry attempt {} failed", retryCount);
-logger.error("Failed to connect to database", exception);
-```
-
-### 调试技巧
-
-#### 1. 本地调试
-
-```bash
-# 启动本地Flink集群
-./bin/start-cluster.sh
-
-# 提交作业
-./bin/flink run target/realtime-data-pipeline-1.0.0-SNAPSHOT.jar
-
-# 查看日志
-tail -f log/flink-*-taskexecutor-*.log
-```
-
-#### 2. 远程调试
-
-```bash
-# 启动JobManager时启用远程调试
-export FLINK_ENV_JAVA_OPTS="-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=5005"
-docker-compose up -d
-
-# 在IDE中连接到localhost:5005
-```
-
-#### 3. 性能分析
-
-```bash
-# 启用JMX监控
-export FLINK_ENV_JAVA_OPTS="-Dcom.sun.management.jmxremote -Dcom.sun.management.jmxremote.port=9010"
-
-# 使用JConsole连接
-jconsole localhost:9010
-```
-
-### 贡献指南
-
-1. Fork项目
-2. 创建特性分支：`git checkout -b feature/new-feature`
-3. 提交更改：`git commit -am 'Add new feature'`
-4. 推送分支：`git push origin feature/new-feature`
-5. 提交Pull Request
-
-### 发布流程
-
-```bash
-# 1. 更新版本号
-mvn versions:set -DnewVersion=1.1.0
-
-# 2. 运行所有测试
-mvn clean test
-
-# 3. 构建发布包
-mvn clean package -DskipTests
-
-# 4. 构建Docker镜像
-docker build -t realtime-pipeline/jobmanager:1.1.0 .
-
-# 5. 推送镜像
-docker push realtime-pipeline/jobmanager:1.1.0
-
-# 6. 创建Git标签
-git tag -a v1.1.0 -m "Release version 1.1.0"
-git push origin v1.1.0
-```
+# 启动所有服务（含构建）
+./start.sh
+
+# 启动所有服务（跳过构建）
+./start.sh --skip-build
+
+# 只启动特定服务
+./start.sh backend              # 后端
+./start.sh frontend             # 前端
+./start.sh flink                # Flink 集群
+./start.sh zookeeper            # ZooKeeper
+./start.sh frontend backend     # 多服务组合
+
+# 其他操作
+./start.sh --stop               # 停止所有服务
+./start.sh --stop backend       # 停止特定服务
+./start.sh --restart            # 重启所有服务
+./start.sh --restart frontend   # 重启特定服务
+./start.sh --status             # 查看状态
+./start.sh --logs               # 查看所有日志
+./start.sh --logs backend       # 查看特定服务日志
+./start.sh --build-only         # 只构建不启动
+直接使用 docker-compose

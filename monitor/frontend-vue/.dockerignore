@@ -1,0 +1,43 @@
+# Node modules
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 构建产物
+dist
+dist-ssr
+*.local
+
+# 编辑器
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# 操作系统
+.DS_Store
+Thumbs.db
+
+# 测试
+coverage
+.nyc_output
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# 文档
+README.md
+*.md
+
+# CI/CD
+.github
+.gitlab-ci.yml

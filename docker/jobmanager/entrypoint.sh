@@ -64,28 +64,40 @@ parallelism.default: ${PARALLELISM_DEFAULT}
 execution.checkpointing.interval: ${CHECKPOINT_INTERVAL}
 execution.checkpointing.mode: EXACTLY_ONCE
 execution.checkpointing.timeout: 600000
-execution.checkpointing.min-pause: 60000
+execution.checkpointing.min-pause: 30000
 execution.checkpointing.max-concurrent-checkpoints: 1
+execution.checkpointing.tolerable-failed-checkpoints: 10
 state.checkpoints.dir: ${CHECKPOINT_DIR}
 state.savepoints.dir: ${SAVEPOINT_DIR}
 state.backend: ${STATE_BACKEND}
 
-# 容错配置
-restart-strategy: fixed-delay
-restart-strategy.fixed-delay.attempts: 3
-restart-strategy.fixed-delay.delay: 10s
+# 心跳超时配置（防止 LogMiner/GC 导致的心跳超时）
+heartbeat.interval: 10000
+heartbeat.timeout: 180000
+heartbeat.rpc-failure-threshold: 5
 
-# 监控配置
-metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter
-metrics.reporter.prom.port: 9249
+# Akka/Pekko RPC 超时配置
+akka.ask.timeout: 60s
+akka.lookup.timeout: 60s
+akka.client.timeout: 60s
+
+# 容错配置
+restart-strategy: exponential-delay
+restart-strategy.exponential-delay.initial-backoff: 10s
+restart-strategy.exponential-delay.max-backoff: 2min
+restart-strategy.exponential-delay.backoff-multiplier: 2.0
+restart-strategy.exponential-delay.reset-backoff-threshold: 10min
+restart-strategy.exponential-delay.jitter-factor: 0.1
+
+# 作业恢复策略
+jobmanager.execution.failover-strategy: region
 
 # Web UI配置
 web.submit.enable: true
 web.cancel.enable: true
 
-# 类加载器配置（解决 JDBC 驱动加载问题）
-classloader.resolve-order: child-first
-classloader.parent-first-patterns.additional: oracle.jdbc
+# 类加载器配置
+classloader.resolve-order: parent-first
 EOF
 
 # 如果存在原始配置文件，合并配置

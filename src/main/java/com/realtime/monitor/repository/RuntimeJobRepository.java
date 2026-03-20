@@ -67,6 +67,11 @@ public class RuntimeJobRepository {
             }
             
             job.setErrorMessage(rs.getString("error_message"));
+            job.setLastSavepointPath(rs.getString("last_savepoint_path"));
+            Timestamp savepointTime = rs.getTimestamp("last_savepoint_time");
+            if (savepointTime != null) {
+                job.setLastSavepointTime(savepointTime.toInstant().toString());
+            }
             
             return job;
         }
@@ -79,8 +84,8 @@ public class RuntimeJobRepository {
             
             String sql = "INSERT INTO " + TABLE + 
                     " (id, task_id, flink_job_id, job_name, status, schema_name, tables, parallelism, " +
-                    "  submit_time, start_time, end_time, error_message) " +
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    "  submit_time, start_time, end_time, error_message, last_savepoint_path, last_savepoint_time) " +
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             
             jdbcTemplate.update(sql,
                     job.getId(),
@@ -94,13 +99,21 @@ public class RuntimeJobRepository {
                     job.getSubmitTime() != null ? Timestamp.from(Instant.parse(job.getSubmitTime())) : Timestamp.from(Instant.now()),
                     job.getStartTime() != null ? Timestamp.from(Instant.parse(job.getStartTime())) : null,
                     job.getEndTime() != null ? Timestamp.from(Instant.parse(job.getEndTime())) : null,
-                    job.getErrorMessage());
+                    job.getErrorMessage(),
+                    job.getLastSavepointPath(),
+                    job.getLastSavepointTime() != null ? Timestamp.from(Instant.parse(job.getLastSavepointTime())) : null);
             
             log.info("保存运行时作业: {}", job.getId());
         } catch (JsonProcessingException e) {
             log.error("序列化表列表失败", e);
             throw new RuntimeException("保存运行时作业失败", e);
         }
+    }
+
+    public void updateSavepoint(String id, String savepointPath) {
+        String sql = "UPDATE " + TABLE + " SET last_savepoint_path = ?, last_savepoint_time = ? WHERE id = ?";
+        jdbcTemplate.update(sql, savepointPath, Timestamp.from(Instant.now()), id);
+        log.info("更新作业 savepoint: {} -> {}", id, savepointPath);
     }
 
     public void updateFlinkJobId(String id, String flinkJobId) {

@@ -48,8 +48,6 @@ public class TaskRepository {
             config.setOutputPath(rs.getString("output_path"));
             config.setParallelism(rs.getInt("parallelism"));
             config.setSplitSize(rs.getInt("split_size"));
-            config.setStatus(rs.getString("status"));
-            config.setFlinkJobId(rs.getString("flink_job_id"));
             
             // 读取创建时间
             Timestamp createdAt = rs.getTimestamp("created_at");
@@ -69,28 +67,29 @@ public class TaskRepository {
         try {
             String tablesJson = objectMapper.writeValueAsString(config.getTables());
             
+            log.info("保存任务配置: id={}, datasourceId={}", config.getId(), config.getDatasourceId());
+            
             String sql = "MERGE INTO " + TABLE + " t " +
                     "USING (SELECT ? AS id FROM dual) s " +
                     "ON (t.id = s.id) " +
                     "WHEN MATCHED THEN " +
                     "  UPDATE SET name=?, datasource_id=?, schema_name=?, tables=?, output_path=?, " +
-                    "             parallelism=?, split_size=?, status=?, flink_job_id=?, updated_at=? " +
+                    "             parallelism=?, split_size=?, updated_at=? " +
                     "WHEN NOT MATCHED THEN " +
                     "  INSERT (id, name, datasource_id, schema_name, tables, output_path, parallelism, " +
-                    "          split_size, status, flink_job_id, created_at, updated_at) " +
-                    "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    "          split_size, created_at, updated_at) " +
+                    "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             
             Timestamp now = Timestamp.from(Instant.now());
             jdbcTemplate.update(sql,
                     config.getId(),
                     config.getName(), config.getDatasourceId(), config.getSchema(), tablesJson,
-                    config.getOutputPath(), config.getParallelism(), config.getSplitSize(),
-                    config.getStatus(), config.getFlinkJobId(), now,
+                    config.getOutputPath(), config.getParallelism(), config.getSplitSize(), now,
                     config.getId(), config.getName(), config.getDatasourceId(), config.getSchema(),
                     tablesJson, config.getOutputPath(), config.getParallelism(), config.getSplitSize(),
-                    config.getStatus(), config.getFlinkJobId(), now, now);
+                    now, now);
             
-            log.info("保存任务配置: {}", config.getId());
+            log.info("任务配置已保存到数据库: {}", config.getId());
         } catch (JsonProcessingException e) {
             log.error("序列化表列表失败", e);
             throw new RuntimeException("保存任务配置失败", e);
@@ -106,18 +105,6 @@ public class TaskRepository {
     public List<TaskConfig> findAll() {
         String sql = "SELECT * FROM " + TABLE + " ORDER BY created_at DESC";
         return jdbcTemplate.query(sql, rowMapper);
-    }
-
-    public List<TaskConfig> findByStatus(String status) {
-        String sql = "SELECT * FROM " + TABLE + " WHERE status = ? ORDER BY created_at DESC";
-        return jdbcTemplate.query(sql, rowMapper, status);
-    }
-
-    public void updateStatus(String id, String status, String flinkJobId) {
-        String sql = "UPDATE " + TABLE + " SET status = ?, flink_job_id = ?, updated_at = ? WHERE id = ?";
-        Timestamp now = Timestamp.from(Instant.now());
-        jdbcTemplate.update(sql, status, flinkJobId, now, id);
-        log.info("更新任务状态: {} -> {}", id, status);
     }
 
     public void deleteById(String id) {

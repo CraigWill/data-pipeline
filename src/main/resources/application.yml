@@ -24,27 +24,6 @@ database:
   # 自动重连间隔（秒）
   reconnectInterval: 30
 
-# DataHub配置
-datahub:
-  # DataHub服务端点
-  endpoint: https://dh-cn-hangzhou.aliyuncs.com
-  # 访问ID
-  accessId: your_access_id
-  # 访问密钥
-  accessKey: your_access_key
-  # 项目名称
-  project: your_project
-  # 主题名称
-  topic: cdc_events
-  # 消费者组名称
-  consumerGroup: flink_consumer_group
-  # 起始消费位置: EARLIEST, LATEST, TIMESTAMP
-  startPosition: LATEST
-  # 最大重试次数
-  maxRetries: 3
-  # 重试间隔（秒）
-  retryBackoff: 2
-
 # Flink配置
 flink:
   # 默认并行度

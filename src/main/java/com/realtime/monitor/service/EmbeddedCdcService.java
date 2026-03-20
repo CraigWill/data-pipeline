@@ -81,7 +81,7 @@ public class EmbeddedCdcService {
             }
 
             // 3. 通过 REST API 提交作业
-            String url = appConfig.getFlinkRestUrl() + "/jars/" + jarId + "/run";
+            String url = flinkService.getActiveLeaderUrl() + "/jars/" + jarId + "/run";
 
             Map<String, Object> body = new HashMap<>();
             body.put("entryClass", CDC_MAIN_CLASS);
@@ -92,6 +92,12 @@ public class EmbeddedCdcService {
             if (request.getJobName() != null && !request.getJobName().isEmpty()) {
                 body.put("jobName", request.getJobName());
                 log.info("  作业名称: {}", request.getJobName());
+            }
+            // 从 savepoint 恢复
+            if (request.getSavepointPath() != null && !request.getSavepointPath().isEmpty()) {
+                body.put("savepointPath", request.getSavepointPath());
+                body.put("allowNonRestoredState", true);
+                log.info("  从 savepoint 恢复: {}", request.getSavepointPath());
             }
 
             HttpHeaders headers = new HttpHeaders();
@@ -163,6 +169,10 @@ public class EmbeddedCdcService {
         if (taskConfig.getName() != null && !taskConfig.getName().isEmpty()) {
             request.setJobName(taskConfig.getName());
         }
+        // 传递 savepoint 路径（恢复时使用）
+        if (taskConfig.getSavepointPath() != null && !taskConfig.getSavepointPath().isEmpty()) {
+            request.setSavepointPath(taskConfig.getSavepointPath());
+        }
 
         return submitTask(request);
     }
@@ -209,7 +219,7 @@ public class EmbeddedCdcService {
             throw new RuntimeException("本地 JAR 文件不存在: " + LOCAL_JAR_PATH);
         }
 
-        String url = appConfig.getFlinkRestUrl() + "/jars/upload";
+        String url = flinkService.getActiveLeaderUrl() + "/jars/upload";
         log.info("上传 JAR 到 Flink: {} ({}MB)", url, jarFile.length() / 1024 / 1024);
 
         // 使用 HttpURLConnection 流式上传，避免 RestTemplate 将整个文件加载到内存
@@ -266,7 +276,7 @@ public class EmbeddedCdcService {
      */
     private String findJarId() {
         try {
-            String url = appConfig.getFlinkRestUrl() + "/jars";
+            String url = flinkService.getActiveLeaderUrl() + "/jars";
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
@@ -292,7 +302,7 @@ public class EmbeddedCdcService {
      */
     private boolean isJarValid(String jarId) {
         try {
-            String url = appConfig.getFlinkRestUrl() + "/jars";
+            String url = flinkService.getActiveLeaderUrl() + "/jars";
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode root = objectMapper.readTree(response.getBody());

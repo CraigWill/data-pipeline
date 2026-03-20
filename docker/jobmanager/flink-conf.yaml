@@ -1,5 +1,4 @@
 # Flink JobManager Configuration
-# 需求: 8.6 - 支持通过环境变量配置系统参数
 
 # JobManager配置
 jobmanager.rpc.address: jobmanager
@@ -12,35 +11,54 @@ rest.port: 8081
 rest.address: 0.0.0.0
 rest.bind-address: 0.0.0.0
 
-# 高可用配置（需求 5.1, 5.2）
-# 暂时禁用 HA 模式以解决 TaskManager 注册问题
-# 通过环境变量启用HA模式
-# high-availability: zookeeper
-# high-availability.storageDir: file:///opt/flink/ha
-# high-availability.zookeeper.quorum: zookeeper:2181
-# high-availability.zookeeper.path.root: /flink
-# high-availability.cluster-id: /realtime-pipeline
+# ===== 心跳超时配置（解决 LogMiner 导致的心跳超时）=====
+# 心跳间隔：10秒发一次心跳
+heartbeat.interval: 10000
+# 心跳超时：180秒，给 LogMiner/GC 足够的处理时间
+heartbeat.timeout: 180000
+# 心跳 RPC 超时：单次心跳 RPC 调用超时
+heartbeat.rpc-failure-threshold: 5
 
-# Checkpoint配置（需求 2.4, 4.2）
+# ===== Akka/Pekko RPC 超时配置 =====
+# RPC ask 超时，默认 10s 太短
+akka.ask.timeout: 60s
+# 查找超时
+akka.lookup.timeout: 60s
+# 客户端 socket 超时
+akka.client.timeout: 60s
+
+# Checkpoint配置
 state.backend: hashmap
 state.checkpoints.dir: file:///opt/flink/checkpoints
 state.savepoints.dir: file:///opt/flink/savepoints
-execution.checkpointing.interval: 300000
+execution.checkpointing.interval: 60000
 execution.checkpointing.mode: EXACTLY_ONCE
 execution.checkpointing.timeout: 600000
-execution.checkpointing.min-pause: 60000
+execution.checkpointing.min-pause: 30000
 execution.checkpointing.max-concurrent-checkpoints: 1
-execution.checkpointing.tolerable-failed-checkpoints: 3
+execution.checkpointing.tolerable-failed-checkpoints: 10
 
 # 状态后端配置
 state.backend.incremental: true
 state.backend.local-recovery: true
 
-# 并行度配置（需求 2.2, 6.3）
+# 并行度配置
 parallelism.default: 4
 
-# 重启策略（需求 4.1）
-# 使用 exponential-delay 策略，提供更智能的重启机制
+# ===== 大数据量处理优化 =====
+# 增加网络缓冲区大小（处理大批量数据）
+taskmanager.network.memory.fraction: 0.3
+taskmanager.network.memory.min: 64mb
+taskmanager.network.memory.max: 1gb
+
+# 增加 Netty 缓冲区
+taskmanager.network.netty.client.connectTimeoutSec: 120
+taskmanager.network.netty.sendReceiveBufferSize: 0
+
+# 增加 Source 缓冲区大小
+source.idle.timeout: 0
+
+# 重启策略
 restart-strategy: exponential-delay
 restart-strategy.exponential-delay.initial-backoff: 10s
 restart-strategy.exponential-delay.max-backoff: 2min
@@ -49,16 +67,10 @@ restart-strategy.exponential-delay.reset-backoff-threshold: 10min
 restart-strategy.exponential-delay.jitter-factor: 0.1
 
 # 作业自动恢复配置
-# 在 HA 模式下，JobManager 故障后自动恢复作业
 jobmanager.execution.failover-strategy: region
-
-# 监控配置（需求 7.1）
-metrics.reporter.prometheus.class: org.apache.flink.metrics.prometheus.PrometheusReporter
-metrics.reporter.prometheus.port: 9249
 
 # 日志配置
 env.log.dir: /opt/flink/logs
 
-# 类加载器配置（解决 JDBC 驱动加载问题）
-# parent-first: 优先使用父类加载器，确保 JDBC 驱动在所有线程中可用
+# 类加载器配置
 classloader.resolve-order: parent-first

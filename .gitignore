@@ -38,6 +38,7 @@ flink-savepoints/
 # Output
 /data/
 /output/
+*.inprogress.*
 
 # Temporary files
 *.tmp
@@ -47,3 +48,16 @@ flink-savepoints/
 
 # Test
 test-output/
+.jqwik-database
+
+# Test SQL files
+sql/test-*.sql
+sql/insert-test-data.sql
+
+# Migrated JSON configs (data now in database)
+monitor/config/cdc_tasks/*.json
+monitor/config/datasources/*.json
+
+# Environment
+.env
+!.env.example

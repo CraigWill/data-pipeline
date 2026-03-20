@@ -17,7 +17,6 @@ TASK_MANAGER_NUMBER_OF_TASK_SLOTS=${TASK_MANAGER_NUMBER_OF_TASK_SLOTS:-4}
 TASK_MANAGER_RPC_PORT=${TASK_MANAGER_RPC_PORT:-6122}
 TASK_MANAGER_DATA_PORT=${TASK_MANAGER_DATA_PORT:-6121}
 TASK_MANAGER_MEMORY_PROCESS_SIZE=${TASK_MANAGER_MEMORY_PROCESS_SIZE:-1728m}
-TASK_MANAGER_MEMORY_MANAGED_SIZE=${TASK_MANAGER_MEMORY_MANAGED_SIZE:-512m}
 TASK_MANAGER_NETWORK_MEMORY_MIN=${TASK_MANAGER_NETWORK_MEMORY_MIN:-64m}
 TASK_MANAGER_NETWORK_MEMORY_MAX=${TASK_MANAGER_NETWORK_MEMORY_MAX:-256m}
 
@@ -52,30 +51,31 @@ jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
 
 # TaskManager配置
 taskmanager.memory.process.size: ${TASK_MANAGER_MEMORY_PROCESS_SIZE}
-taskmanager.memory.managed.size: ${TASK_MANAGER_MEMORY_MANAGED_SIZE}
 taskmanager.numberOfTaskSlots: ${TASK_MANAGER_NUMBER_OF_TASK_SLOTS}
 taskmanager.rpc.port: ${TASK_MANAGER_RPC_PORT}
 taskmanager.data.port: ${TASK_MANAGER_DATA_PORT}
 taskmanager.bind-host: 0.0.0.0
 
-# 网络配置
-taskmanager.network.memory.min: ${TASK_MANAGER_NETWORK_MEMORY_MIN}
-taskmanager.network.memory.max: ${TASK_MANAGER_NETWORK_MEMORY_MAX}
-taskmanager.network.memory.fraction: 0.1
+# 网络配置（使用比例而非固定大小，避免内存超限）
+taskmanager.memory.network.fraction: 0.1
+taskmanager.memory.network.min: 64mb
+taskmanager.memory.network.max: 256mb
+taskmanager.memory.managed.fraction: 0.3
 
-# 数据交换配置
-taskmanager.network.numberOfBuffers: 2048
+# 心跳超时配置（防止 LogMiner/GC 导致的心跳超时）
+heartbeat.interval: 10000
+heartbeat.timeout: 180000
+heartbeat.rpc-failure-threshold: 5
 
-# 监控配置
-metrics.reporter.prom.class: org.apache.flink.metrics.prometheus.PrometheusReporter
-metrics.reporter.prom.port: 9249
+# Akka/Pekko RPC 超时配置
+akka.ask.timeout: 60s
+akka.lookup.timeout: 60s
+akka.client.timeout: 60s
 
 # 临时目录配置
 io.tmp.dirs: /opt/flink/tmp
 
-# 类加载器配置（解决 JDBC 驱动加载问题）
-# child-first: 用户 JAR 的 jackson 2.15 优先于 Flink 的 shaded jackson 2.14
-# oracle.jdbc parent-first: 确保 /opt/flink/lib/ojdbc8.jar 被 DriverManager 正确注册
+# 类加载器配置
 classloader.resolve-order: child-first
 classloader.parent-first-patterns.additional: oracle.jdbc
 EOF

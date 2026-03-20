@@ -37,15 +37,13 @@ CREATE TABLE flink_user.cdc_tasks (
     output_path VARCHAR2(500),
     parallelism NUMBER(3) DEFAULT 4,
     split_size NUMBER(10) DEFAULT 8096,
-    status VARCHAR2(20) DEFAULT 'CREATED',
-    flink_job_id VARCHAR2(100),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT fk_datasource FOREIGN KEY (datasource_id) 
         REFERENCES flink_user.cdc_datasources(id) ON DELETE CASCADE
 );
 
-COMMENT ON TABLE flink_user.cdc_tasks IS 'CDC任务配置表';
+COMMENT ON TABLE flink_user.cdc_tasks IS 'CDC任务配置表（静态模板，运行状态见 runtime_jobs）';
 COMMENT ON COLUMN flink_user.cdc_tasks.id IS '任务唯一标识';
 COMMENT ON COLUMN flink_user.cdc_tasks.name IS '任务名称';
 COMMENT ON COLUMN flink_user.cdc_tasks.datasource_id IS '关联的数据源ID';
@@ -54,12 +52,9 @@ COMMENT ON COLUMN flink_user.cdc_tasks.tables IS '表名列表(JSON数组格式)
 COMMENT ON COLUMN flink_user.cdc_tasks.output_path IS '输出路径';
 COMMENT ON COLUMN flink_user.cdc_tasks.parallelism IS '并行度';
 COMMENT ON COLUMN flink_user.cdc_tasks.split_size IS '分片大小';
-COMMENT ON COLUMN flink_user.cdc_tasks.status IS '任务状态: CREATED, RUNNING, STOPPED, FAILED';
-COMMENT ON COLUMN flink_user.cdc_tasks.flink_job_id IS 'Flink作业ID';
 
 -- 3. 创建索引
 CREATE INDEX idx_tasks_datasource ON flink_user.cdc_tasks(datasource_id);
-CREATE INDEX idx_tasks_status ON flink_user.cdc_tasks(status);
 CREATE INDEX idx_tasks_created ON flink_user.cdc_tasks(created_at);
 
 -- 4. 创建更新时间触发器

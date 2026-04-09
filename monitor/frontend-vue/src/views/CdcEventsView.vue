@@ -298,11 +298,16 @@ onMounted(async () => {
 
 onUnmounted(() => {
   stopSSE()
+  
+  // 清理图表实例
   if (chartInstance) {
     chartInstance.destroy()
+    chartInstance = null
   }
+  
   if (trendChartInstance) {
     trendChartInstance.destroy()
+    trendChartInstance = null
   }
 })
 
@@ -321,13 +326,17 @@ async function loadDailyStats() {
   try {
     const response = await cdcEventsAPI.dailyStats(selectedChartTable.value)
     if (response.success && response.data) {
-      chartTables.value = response.data.tables || []
+      // 确保 tables 是数组
+      chartTables.value = Array.isArray(response.data.tables) ? response.data.tables : []
       chartTotal.value = response.data.total || 0
       await nextTick()
       renderChart(response.data)
     }
   } catch (error) {
     console.error('加载日期统计失败:', error)
+    // 设置默认值避免错误
+    chartTables.value = []
+    chartTotal.value = 0
   }
 }
 
@@ -351,12 +360,16 @@ async function loadAvailableDates() {
 }
 
 async function loadFiles() {
+  console.log('📂 loadFiles called, selectedDate:', selectedDate.value)
   filesLoading.value = true
   try {
     const response = await cdcEventsAPI.files(selectedDate.value)
+    console.log('📂 API response:', response)
     if (response.success && response.data) {
       files.value = response.data.files || []
+      console.log('📂 Files loaded:', files.value.length)
     } else {
+      console.log('📂 No data in response')
       files.value = []
     }
   } catch (error) {
@@ -375,6 +388,11 @@ function viewFileContent(file) {
 }
 
 async function loadFileContent(page) {
+  if (!currentFile.value) {
+    console.error('loadFileContent: currentFile is null')
+    return
+  }
+  
   contentLoading.value = true
   contentPage.value = page
   try {
@@ -459,46 +477,108 @@ function startSSE() {
   const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api'
   const sseUrl = `${baseUrl}/cdc/events/stream`
   
-  eventSource = new EventSource(sseUrl)
+  // 使用 fetch + ReadableStream 替代 EventSource，支持 JWT 认证
+  const token = localStorage.getItem('token')
   
-  eventSource.addEventListener('stats', (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      stats.value = data
-      
-      // 添加到趋势图
-      addTrendDataPoint(data.eventsPerSecond || 0)
-    } catch (e) {
-      console.error('解析 SSE 数据失败:', e)
+  fetch(sseUrl, {
+    headers: {
+      'Authorization': token ? `Bearer ${token}` : '',
+      'Accept': 'text/event-stream'
     }
   })
-  
-  eventSource.addEventListener('heartbeat', (event) => {
-    try {
-      const data = JSON.parse(event.data)
-      stats.value = data
-      
-      // 心跳时也更新趋势图（保持连续性）
-      addTrendDataPoint(data.eventsPerSecond || 0)
-    } catch (e) {
-      console.error('解析心跳数据失败:', e)
+  .then(response => {
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
     }
-  })
-  
-  eventSource.onerror = () => {
-    sseConnected.value = false
-    stopSSE()
-    setTimeout(startSSE, 3000)
-  }
-  
-  eventSource.onopen = () => {
+    
     sseConnected.value = true
-  }
+    
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    
+    // 保存 reader 以便后续关闭
+    eventSource = { reader, close: () => reader.cancel() }
+    
+    // 递归读取流数据
+    function readStream() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          console.log('SSE 流结束')
+          sseConnected.value = false
+          setTimeout(startSSE, 3000)
+          return
+        }
+        
+        // 解码数据并添加到缓冲区
+        buffer += decoder.decode(value, { stream: true })
+        
+        // 处理缓冲区中的完整消息
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || '' // 保留不完整的行
+        
+        let eventType = ''
+        let eventData = ''
+        
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            eventType = line.substring(6).trim()
+          } else if (line.startsWith('data:')) {
+            eventData = line.substring(5).trim()
+          } else if (line === '' && eventData) {
+            // 空行表示消息结束，处理事件
+            try {
+              const data = JSON.parse(eventData)
+              
+              // 验证数据结构
+              if (data && typeof data === 'object') {
+                stats.value = data
+                
+                // 添加到趋势图
+                if (typeof data.eventsPerSecond === 'number') {
+                  addTrendDataPoint(data.eventsPerSecond)
+                }
+              }
+              
+              if (eventType === 'stats') {
+                console.log('收到 stats 事件:', data)
+              }
+            } catch (e) {
+              console.error('解析 SSE 数据失败:', e, eventData)
+            }
+            
+            // 重置状态
+            eventType = ''
+            eventData = ''
+          }
+        }
+        
+        // 继续读取
+        readStream()
+      }).catch(error => {
+        console.error('SSE 读取错误:', error)
+        sseConnected.value = false
+        stopSSE()
+        setTimeout(startSSE, 3000)
+      })
+    }
+    
+    readStream()
+  })
+  .catch(error => {
+    console.error('SSE 连接失败:', error)
+    sseConnected.value = false
+    setTimeout(startSSE, 3000)
+  })
 }
 
 function stopSSE() {
   if (eventSource) {
-    eventSource.close()
+    if (eventSource.close) {
+      eventSource.close()
+    } else if (eventSource.reader) {
+      eventSource.reader.cancel()
+    }
     eventSource = null
   }
   sseConnected.value = false
@@ -522,6 +602,13 @@ function initTrendChart() {
   if (!trendChartCanvas.value) {
     console.error('❌ Trend chart canvas not found!')
     return
+  }
+  
+  // 如果已经存在图表实例，先销毁它
+  if (trendChartInstance) {
+    console.log('🔄 Destroying existing trend chart instance')
+    trendChartInstance.destroy()
+    trendChartInstance = null
   }
   
   try {
@@ -626,13 +713,19 @@ function addTrendDataPoint(value) {
   
   console.log(`📊 Added trend point: ${timeLabel} = ${value}, total points: ${trendDataPoints.value.length}`)
   
+  // 如果图表还没初始化，尝试初始化
+  if (!trendChartInstance && trendChartCanvas.value) {
+    console.log('📊 Chart not initialized, initializing now...')
+    initTrendChart()
+  }
+  
   // 更新图表
   updateTrendChart()
 }
 
 function updateTrendChart() {
   if (!trendChartInstance) {
-    console.error('❌ Trend chart instance not found, cannot update')
+    console.warn('⚠️ Trend chart instance not found, skipping update')
     return
   }
   

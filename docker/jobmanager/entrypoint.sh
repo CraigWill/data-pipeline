@@ -138,6 +138,16 @@ export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} -Xmx${JOB_MANAGER_HEAP_SIZE} 
 export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} -XX:+UseG1GC"
 export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} -XX:MaxGCPauseMillis=200"
 
+# Java 17 模块系统配置（解决反射访问限制）
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.util=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.lang=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.io=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.net=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.nio=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/sun.net.dns=ALL-UNNAMED"
+
 # 如果提供了额外的Java选项
 if [ -n "$EXTRA_JAVA_OPTS" ]; then
     export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} ${EXTRA_JAVA_OPTS}"
@@ -158,7 +168,8 @@ echo "Starting Flink JobManager process..."
 echo "=========================================="
 
 # 启动JobManager（后台运行）
-/docker-entrypoint.sh jobmanager &
+# 直接使用 Flink 的启动脚本
+$FLINK_HOME/bin/jobmanager.sh start-foreground &
 JOBMANAGER_PID=$!
 
 # 自动作业提交配置

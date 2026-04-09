@@ -1,0 +1,122 @@
+# 实时数据管道系统配置文件
+# 所有配置项都可以通过环境变量覆盖，格式为: PIPELINE_<SECTION>_<KEY>
+# 例如: PIPELINE_DATABASE_HOST, PIPELINE_FLINK_PARALLELISM
+
+# Spring 配置
+spring:
+  main:
+    # 允许循环引用（用于 Spring Security 配置）
+    allow-circular-references: true
+  
+  # 数据源配置（用于 RuntimeJob 持久化）
+  datasource:
+    url: jdbc:oracle:thin:@${DATABASE_HOST:localhost}:${DATABASE_PORT:1521}:${DATABASE_SID:helowin}
+    username: ${DATABASE_USERNAME:finance_user}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    # 连接池配置
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+# 数据库配置
+database:
+  # OceanBase数据库主机地址
+  host: localhost
+  # 数据库端口
+  port: 2881
+  # 数据库用户名
+  username: root
+  # 数据库密码（必须通过环境变量设置）
+  password: ${DATABASE_PASSWORD}
+  # 要监控的Schema
+  schema: test_schema
+  # 要监控的表列表
+  tables:
+    - users
+    - orders
+    - products
+  # 连接超时时间（秒）
+  connectionTimeout: 30
+  # 自动重连间隔（秒）
+  reconnectInterval: 30
+
+# Flink配置
+flink:
+  # 默认并行度
+  parallelism: 4
+  # Checkpoint间隔（毫秒），5分钟
+  checkpointInterval: 300000
+  # Checkpoint超时时间（毫秒），10分钟
+  checkpointTimeout: 600000
+  # 两次Checkpoint之间的最小间隔（毫秒），1分钟
+  minPauseBetweenCheckpoints: 60000
+  # 最大并发Checkpoint数
+  maxConcurrentCheckpoints: 1
+  # 保留的Checkpoint数量
+  retainedCheckpoints: 3
+  # 状态后端类型: hashmap, rocksdb
+  stateBackendType: hashmap
+  # Checkpoint存储目录
+  checkpointDir: file:///tmp/flink-checkpoints
+  # 容忍的Checkpoint失败次数
+  tolerableCheckpointFailures: 3
+  # 重启策略: fixed-delay, failure-rate, none
+  restartStrategy: fixed-delay
+  # 重启尝试次数
+  restartAttempts: 3
+  # 重启延迟（毫秒）
+  restartDelay: 10000
+
+# 输出配置
+output:
+  # 输出目录路径
+  path: /data/output
+  # 输出格式: json, parquet, csv
+  format: json
+  # 文件大小阈值（字节），1GB
+  rollingSizeBytes: 1073741824
+  # 时间间隔阈值（毫秒），1小时
+  rollingIntervalMs: 3600000
+  # 压缩算法: none, gzip, snappy
+  compression: none
+  # 写入失败最大重试次数
+  maxRetries: 3
+  # 重试间隔（秒）
+  retryBackoff: 2
+
+# 监控配置
+monitoring:
+  # 是否启用监控
+  enabled: true
+  # Metrics报告间隔（秒）
+  metricsInterval: 60
+  # 延迟告警阈值（毫秒），60秒
+  latencyThreshold: 60000
+  # Checkpoint失败率告警阈值（百分比），10%
+  checkpointFailureRateThreshold: 0.1
+  # 负载告警阈值（百分比），80%
+  loadThreshold: 0.8
+  # 反压告警阈值（0-1）
+  backpressureThreshold: 0.8
+  # 健康检查端口
+  healthCheckPort: 8081
+  # 告警通知方式: log, email, webhook
+  alertMethod: log
+  # Webhook URL（当alertMethod为webhook时）
+  # webhookUrl: https://your-webhook-url.com/alert
+
+# JWT 安全配置
+jwt:
+  # JWT 密钥（必须通过环境变量 JWT_SECRET 设置）
+  secret: ${JWT_SECRET}
+  # Token 过期时间（毫秒），默认 24 小时
+  expiration: ${JWT_EXPIRATION:86400000}
+
+# 密码加密配置
+encryption:
+  # AES 加密密钥（必须通过环境变量 AES_ENCRYPTION_KEY 设置）
+  aes-key: ${AES_ENCRYPTION_KEY}

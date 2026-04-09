@@ -10,8 +10,8 @@ database:
   port: 2881
   # 数据库用户名
   username: root
-  # 数据库密码
-  password: password
+  # 数据库密码（必须通过环境变量设置）
+  password: ${DATABASE_PASSWORD}
   # 要监控的Schema
   schema: test_schema
   # 要监控的表列表

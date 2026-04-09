@@ -125,6 +125,16 @@ export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} -XX:MaxGCPauseMillis=200"
 export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} -XX:+HeapDumpOnOutOfMemoryError"
 export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} -XX:HeapDumpPath=/opt/flink/logs/"
 
+# Java 17 模块系统配置（解决反射访问限制）
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.util=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.lang=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.io=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.net=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/java.nio=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} --add-opens=java.base/sun.net.dns=ALL-UNNAMED"
+
 # 如果提供了额外的Java选项
 if [ -n "$EXTRA_JAVA_OPTS" ]; then
     export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} ${EXTRA_JAVA_OPTS}"
@@ -173,5 +183,5 @@ echo "Starting Flink TaskManager process..."
 echo "=========================================="
 
 # 启动TaskManager
-# 使用Flink官方的docker-entrypoint.sh
-exec /docker-entrypoint.sh taskmanager
+# 直接使用 Flink 的启动脚本
+exec $FLINK_HOME/bin/taskmanager.sh start-foreground

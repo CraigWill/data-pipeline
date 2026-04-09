@@ -1,52 +1,80 @@
-# Dockerfile for Flink TaskManager
+# Dockerfile for Flink TaskManager - 私有镜像
 # 需求: 8.2, 8.4 - 提供Flink TaskManager的Docker镜像，包含所有必要依赖
+# 基于 Eclipse Temurin 17 从头构建，不依赖官方 Flink 镜像
 
-FROM flink:1.20.0-java11
+FROM eclipse-temurin:17-jre
+
+# Flink 版本
+ENV FLINK_VERSION=1.20.3 \
+    SCALA_VERSION=2.12 \
+    FLINK_HOME=/opt/flink \
+    FLINK_USER=flink \
+    FLINK_UID=9999 \
+    FLINK_GID=9999 \
+    DEBIAN_FRONTEND=noninteractive
 
 # 设置工作目录
 WORKDIR /opt/flink
 
-# 安装必要的系统依赖
-USER root
-RUN apt-get update && \
+# 安装必要的系统依赖（添加重试和错误处理）
+RUN set -ex && \
+    for i in 1 2 3; do \
+        apt-get update && break || sleep 5; \
+    done && \
     apt-get install -y --no-install-recommends \
-    curl \
-    netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+        bash \
+        curl \
+        wget \
+        netcat-openbsd \
+        ca-certificates \
+        procps \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# 创建 flink 用户和组
+RUN groupadd -r -g ${FLINK_GID} ${FLINK_USER} && \
+    useradd -r -u ${FLINK_UID} -g ${FLINK_GID} -m -d /home/${FLINK_USER} -s /bin/bash ${FLINK_USER}
+
+# 下载并安装 Flink（添加重试机制）
+RUN set -ex && \
+    for i in 1 2 3; do \
+        wget -q https://archive.apache.org/dist/flink/flink-${FLINK_VERSION}/flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz && break || sleep 10; \
+    done && \
+    tar -xzf flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz && \
+    mv flink-${FLINK_VERSION}/* /opt/flink/ && \
+    rm -rf flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz flink-${FLINK_VERSION}
 
 # 创建必要的目录
 RUN mkdir -p /opt/flink/checkpoints && \
     mkdir -p /opt/flink/savepoints && \
     mkdir -p /opt/flink/logs && \
-    mkdir -p /opt/flink/lib && \
     mkdir -p /opt/flink/data && \
-    chown -R flink:flink /opt/flink
+    mkdir -p /opt/flink/usrlib && \
+    chown -R ${FLINK_USER}:${FLINK_USER} /opt/flink
 
-# 复制自定义entrypoint脚本
-COPY --chown=flink:flink docker/taskmanager/entrypoint.sh /opt/flink/bin/custom-entrypoint.sh
-RUN chmod +x /opt/flink/bin/custom-entrypoint.sh
-
-# 下载 Oracle JDBC 驱动到 Flink lib 目录（父类加载器）
-# 这样可以避免 ChildFirstClassLoader 导致的驱动加载问题
-# ojdbc8 19.3.0.0 兼容 Oracle 11g（21.x 的 O5LOGON 认证协议与 11g 不兼容，导致 ORA-01005）
-RUN curl -L https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.jar \
-    -o /opt/flink/lib/ojdbc8.jar && \
-    chown flink:flink /opt/flink/lib/ojdbc8.jar
-
-# 切换回flink用户
-USER flink
+# 下载 Oracle JDBC 驱动到 Flink lib 目录（添加重试机制）
+RUN set -ex && \
+    for i in 1 2 3; do \
+        curl -L https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.jar \
+            -o /opt/flink/lib/ojdbc8.jar && break || sleep 10; \
+    done && \
+    chown ${FLINK_USER}:${FLINK_USER} /opt/flink/lib/ojdbc8.jar
 
 # 复制应用程序JAR包
-COPY --chown=flink:flink target/realtime-data-pipeline-*.jar /opt/flink/usrlib/realtime-data-pipeline.jar
+COPY --chown=${FLINK_USER}:${FLINK_USER} flink-jobs/target/flink-jobs-*.jar /opt/flink/usrlib/flink-jobs.jar
 
-# 备份原始Flink配置文件
-RUN cp /opt/flink/conf/flink-conf.yaml /opt/flink/conf/flink-conf.yaml.original || true
-
-# 复制Flink配置文件（如果存在）
-COPY --chown=flink:flink docker/taskmanager/flink-conf.yaml /opt/flink/conf/flink-conf.yaml
+# 复制Flink配置文件
+COPY --chown=${FLINK_USER}:${FLINK_USER} docker/taskmanager/flink-conf.yaml /opt/flink/conf/flink-conf.yaml
 
 # 复制Log4j配置
-COPY --chown=flink:flink docker/taskmanager/log4j.properties /opt/flink/conf/log4j.properties
+COPY --chown=${FLINK_USER}:${FLINK_USER} docker/taskmanager/log4j.properties /opt/flink/conf/log4j.properties
+
+# 复制自定义entrypoint脚本
+COPY --chown=${FLINK_USER}:${FLINK_USER} docker/taskmanager/entrypoint.sh /opt/flink/bin/custom-entrypoint.sh
+RUN chmod +x /opt/flink/bin/custom-entrypoint.sh
+
+# 切换到 flink 用户
+USER ${FLINK_USER}
 
 # 暴露TaskManager端口
 # 6121: Data交换端口
@@ -56,15 +84,12 @@ COPY --chown=flink:flink docker/taskmanager/log4j.properties /opt/flink/conf/log
 EXPOSE 6121 6122 8080 9249
 
 # 设置环境变量
-ENV FLINK_HOME=/opt/flink
 ENV PATH=$FLINK_HOME/bin:$PATH
 
 # 健康检查配置
-# 需求: 8.8 - 提供容器健康检查配置
 # TaskManager通过检查进程是否存在来判断健康状态
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
     CMD pgrep -f "org.apache.flink.runtime.taskexecutor.TaskManagerRunner" || exit 1
 
 # 启动TaskManager
-# 使用自定义entrypoint脚本支持环境变量配置（需求 8.6）
 ENTRYPOINT ["/opt/flink/bin/custom-entrypoint.sh"]

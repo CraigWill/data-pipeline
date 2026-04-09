@@ -1,0 +1,92 @@
+# Dockerfile for Flink JobManager - 私有镜像（优化版本）
+# 需求: 8.1, 8.4 - 提供Flink JobManager的Docker镜像，包含所有必要依赖
+# 基于 Eclipse Temurin 17 从头构建，使用国内镜像源加速
+
+FROM eclipse-temurin:17-jre
+
+# Flink 版本
+ENV FLINK_VERSION=1.20.0 \
+    SCALA_VERSION=2.12 \
+    FLINK_HOME=/opt/flink \
+    FLINK_USER=flink \
+    FLINK_UID=9999 \
+    FLINK_GID=9999 \
+    DEBIAN_FRONTEND=noninteractive
+
+# 设置工作目录
+WORKDIR /opt/flink
+
+# 使用阿里云 Debian 镜像源
+RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources || \
+    sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list
+
+# 安装必要的系统依赖（使用国内镜像源）
+RUN set -ex && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        bash \
+        curl \
+        netcat-openbsd \
+        ca-certificates \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# 创建 flink 用户和组
+RUN groupadd -r -g ${FLINK_GID} ${FLINK_USER} && \
+    useradd -r -u ${FLINK_UID} -g ${FLINK_GID} -m -d /home/${FLINK_USER} -s /bin/bash ${FLINK_USER}
+
+# 下载并安装 Flink（使用清华大学镜像源，优先使用 curl）
+RUN set -ex && \
+    FLINK_TAR="flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz" && \
+    curl -fSL "https://mirrors.tuna.tsinghua.edu.cn/apache/flink/flink-${FLINK_VERSION}/${FLINK_TAR}" -o /tmp/flink.tgz || \
+    curl -fSL "https://mirrors.aliyun.com/apache/flink/flink-${FLINK_VERSION}/${FLINK_TAR}" -o /tmp/flink.tgz || \
+    curl -fSL "https://mirrors.ustc.edu.cn/apache/flink/flink-${FLINK_VERSION}/${FLINK_TAR}" -o /tmp/flink.tgz || \
+    curl -fSL "https://archive.apache.org/dist/flink/flink-${FLINK_VERSION}/${FLINK_TAR}" -o /tmp/flink.tgz && \
+    tar -xzf /tmp/flink.tgz -C /tmp && \
+    mv /tmp/flink-${FLINK_VERSION}/* /opt/flink/ && \
+    rm -rf /tmp/flink.tgz /tmp/flink-${FLINK_VERSION}
+
+# 创建必要的目录
+RUN mkdir -p /opt/flink/checkpoints && \
+    mkdir -p /opt/flink/savepoints && \
+    mkdir -p /opt/flink/ha && \
+    mkdir -p /opt/flink/logs && \
+    mkdir -p /opt/flink/usrlib && \
+    chown -R ${FLINK_USER}:${FLINK_USER} /opt/flink
+
+# 下载 Oracle JDBC 驱动（使用阿里云 Maven 镜像）
+RUN set -ex && \
+    curl -L https://maven.aliyun.com/repository/public/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.jar \
+        -o /opt/flink/lib/ojdbc8.jar || \
+    curl -L https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.jar \
+        -o /opt/flink/lib/ojdbc8.jar && \
+    chown ${FLINK_USER}:${FLINK_USER} /opt/flink/lib/ojdbc8.jar
+
+# 复制应用程序JAR包
+COPY --chown=${FLINK_USER}:${FLINK_USER} flink-jobs/target/flink-jobs-*.jar /opt/flink/usrlib/flink-jobs.jar
+
+# 复制Flink配置文件
+COPY --chown=${FLINK_USER}:${FLINK_USER} docker/jobmanager/flink-conf.yaml /opt/flink/conf/flink-conf.yaml
+
+# 复制Log4j配置
+COPY --chown=${FLINK_USER}:${FLINK_USER} docker/jobmanager/log4j.properties /opt/flink/conf/log4j.properties
+
+# 复制自定义entrypoint脚本
+COPY --chown=${FLINK_USER}:${FLINK_USER} docker/jobmanager/entrypoint.sh /opt/flink/bin/custom-entrypoint.sh
+RUN chmod +x /opt/flink/bin/custom-entrypoint.sh
+
+# 切换到 flink 用户
+USER ${FLINK_USER}
+
+# 暴露JobManager端口
+EXPOSE 6123 8081 6124 9249
+
+# 设置环境变量
+ENV PATH=$FLINK_HOME/bin:$PATH
+
+# 健康检查配置
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8081/overview || exit 1
+
+# 启动JobManager
+ENTRYPOINT ["/opt/flink/bin/custom-entrypoint.sh"]

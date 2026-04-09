@@ -43,9 +43,7 @@ services:
 
   # Flink JobManager服务（主节点）
   jobmanager:
-    build:
-      context: .
-      dockerfile: docker/jobmanager/Dockerfile
+    image: flink-jobmanager:latest
     container_name: flink-jobmanager
     hostname: jobmanager
     depends_on:
@@ -81,7 +79,7 @@ services:
       - DATABASE_HOST=${DATABASE_HOST:-localhost}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
       - DATABASE_USERNAME=${DATABASE_USERNAME:-system}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-password}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - DATABASE_SID=${DATABASE_SID:-helowin}
       - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
       - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
@@ -130,9 +128,7 @@ services:
 
   # Flink JobManager Standby（备用节点）
   jobmanager-standby:
-    build:
-      context: .
-      dockerfile: docker/jobmanager/Dockerfile
+    image: flink-jobmanager:latest
     container_name: flink-jobmanager-standby
     hostname: jobmanager-standby
     depends_on:
@@ -168,7 +164,7 @@ services:
       - DATABASE_HOST=${DATABASE_HOST:-localhost}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
       - DATABASE_USERNAME=${DATABASE_USERNAME:-system}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-password}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - DATABASE_SID=${DATABASE_SID:-helowin}
       - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
       - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
@@ -209,9 +205,7 @@ services:
   # Flink TaskManager服务
   # 默认启动3个节点，支持动态扩展: docker-compose up -d --scale taskmanager=N
   taskmanager:
-    build:
-      context: .
-      dockerfile: docker/taskmanager/Dockerfile
+    image: flink-taskmanager:latest
     # 注意: 使用scale时不要设置container_name
     # container_name: flink-taskmanager-1
     depends_on:
@@ -245,7 +239,7 @@ services:
       - DATABASE_HOST=${DATABASE_HOST:-localhost}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
       - DATABASE_USERNAME=${DATABASE_USERNAME:-finance_user}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD:-password}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
       - DATABASE_SID=${DATABASE_SID:-helowin}
       - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
       - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
@@ -306,10 +300,21 @@ services:
       - OUTPUT_PATH=/app/output/cdc
       - CONFIG_DIR=/app/config
       - ORACLE_CONTAINER=oracle11g
+      - DATABASE_HOST=${DATABASE_HOST:-host.docker.internal}
+      - DATABASE_PORT=${DATABASE_PORT:-1521}
+      - DATABASE_USERNAME=${DATABASE_USERNAME:-finance_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_SID=${DATABASE_SID:-helowin}
       - TZ=Asia/Shanghai
+      # JWT 安全配置（必须通过环境变量设置）
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_EXPIRATION=${JWT_EXPIRATION:-86400000}
+      # AES 密码加密配置（必须通过环境变量设置）
+      - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
     volumes:
       - ./output:/app/output
       - ./monitor/config:/app/config
+      - ./flink-jobs/target:/opt/flink/usrlib:ro
     networks:
       - flink-network
     restart: unless-stopped

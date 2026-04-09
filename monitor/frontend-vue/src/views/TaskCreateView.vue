@@ -25,12 +25,17 @@
         <h3 class="mb-3">选择数据源</h3>
         <div class="form-group">
           <label>数据源 *</label>
-          <select v-model="selectedDatasource" required>
-            <option value="">请选择数据源</option>
-            <option v-for="ds in datasources" :key="ds.id" :value="ds.id">
-              {{ ds.name }} ({{ ds.host }}:{{ ds.port }})
-            </option>
-          </select>
+          <div class="custom-select-wrapper">
+            <select v-model="selectedDatasource" required class="custom-select">
+              <option value="">请选择数据源</option>
+              <option v-for="ds in datasources" :key="ds.id" :value="ds.id">
+                {{ ds.name }} ({{ ds.host }}:{{ ds.port }})
+              </option>
+            </select>
+            <svg class="select-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
         </div>
         <p class="text-muted text-sm mt-2">
           如果没有可用的数据源，请先到"数据源管理"页面创建数据源。
@@ -42,12 +47,17 @@
         <h3 class="mb-3">选择 Schema</h3>
         <div class="form-group">
           <label>Schema *</label>
-          <select v-model="selectedSchema" @change="loadTables" required>
-            <option value="">请选择 Schema</option>
-            <option v-for="schema in schemas" :key="schema" :value="schema">
-              {{ schema }}
-            </option>
-          </select>
+          <div class="custom-select-wrapper">
+            <select v-model="selectedSchema" @change="loadTables" required class="custom-select">
+              <option value="">请选择 Schema</option>
+              <option v-for="schema in schemas" :key="schema" :value="schema">
+                {{ schema }}
+              </option>
+            </select>
+            <svg class="select-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+              <path d="M4 6L8 10L12 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
         </div>
       </div>
 
@@ -397,5 +407,88 @@ function showAlert(type, message) {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 16px;
+}
+
+/* 自定义下拉菜单样式 */
+.custom-select-wrapper {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.custom-select {
+  width: 100%;
+  padding: 12px 40px 12px 16px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #172B4D;
+  background: #FAFBFC;
+  border: 2px solid #DFE1E6;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+}
+
+.custom-select:hover {
+  background: #F4F5F7;
+  border-color: #B3BAC5;
+}
+
+.custom-select:focus {
+  outline: none;
+  background: #fff;
+  border-color: #4C9AFF;
+  box-shadow: 0 0 0 3px rgba(76, 154, 255, 0.15);
+}
+
+.custom-select option {
+  padding: 12px;
+  font-size: 14px;
+  color: #172B4D;
+  background: #fff;
+}
+
+.custom-select option:hover {
+  background: #DEEBFF;
+}
+
+.custom-select option:checked {
+  background: #0052CC;
+  color: #fff;
+  font-weight: 600;
+}
+
+.select-icon {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #5E6C84;
+  pointer-events: none;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.custom-select:focus + .select-icon {
+  color: #0052CC;
+  transform: translateY(-50%) rotate(180deg);
+}
+
+.custom-select:hover + .select-icon {
+  color: #172B4D;
+}
+
+/* 禁用状态 */
+.custom-select:disabled {
+  background: #F4F5F7;
+  color: #A5ADBA;
+  cursor: not-allowed;
+  border-color: #DFE1E6;
+}
+
+.custom-select:disabled + .select-icon {
+  color: #A5ADBA;
 }
 </style>

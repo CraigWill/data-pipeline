@@ -1,313 +1,170 @@
 <template>
   <div class="login-container">
     <div class="login-box">
-      <div class="login-header">
-        <h1>Flink CDC 监控系统</h1>
-        <p>实时数据采集与监控平台</p>
-      </div>
-
-      <div v-if="alert.show" :class="['alert', `alert-${alert.type}`]">
-        {{ alert.message }}
-      </div>
-
-      <form @submit.prevent="handleLogin" class="login-form">
+      <h2>实时数据管道监控系统</h2>
+      <form @submit.prevent="handleLogin">
         <div class="form-group">
-          <label for="username">用户名</label>
-          <input
-            id="username"
-            v-model="form.username"
-            type="text"
-            required
+          <label>用户名</label>
+          <input 
+            v-model="username" 
+            type="text" 
             placeholder="请输入用户名"
-            autocomplete="username"
-          />
-        </div>
-
-        <div class="form-group">
-          <label for="password">密码</label>
-          <input
-            id="password"
-            v-model="form.password"
-            type="password"
             required
-            placeholder="请输入密码"
-            autocomplete="current-password"
           />
         </div>
-
-        <div class="form-group checkbox-group">
-          <label>
-            <input v-model="form.remember" type="checkbox" />
-            <span>记住我</span>
-          </label>
+        <div class="form-group">
+          <label>密码</label>
+          <input 
+            v-model="password" 
+            type="password" 
+            placeholder="请输入密码"
+            required
+          />
         </div>
-
-        <button type="submit" class="btn btn-primary btn-block" :disabled="loading">
-          <span v-if="loading">登录中...</span>
-          <span v-else>登录</span>
+        <div v-if="error" class="error-message">{{ error }}</div>
+        <button type="submit" :disabled="loading">
+          {{ loading ? '登录中...' : '登录' }}
         </button>
       </form>
-
-      <div class="login-footer">
-        <p class="text-muted">默认账号: admin / admin</p>
-        <p class="text-xs">© 2026 Flink CDC 监控系统</p>
+      <div class="default-account">
+        <p>默认账户: admin / admin123</p>
       </div>
     </div>
   </div>
 </template>
 
-<script setup>
-import { ref, onMounted } from 'vue'
-import { useRouter } from 'vue-router'
+<script>
+import { authAPI } from '@/api'
 
-const router = useRouter()
-
-const form = ref({
-  username: '',
-  password: '',
-  remember: false
-})
-
-const loading = ref(false)
-const alert = ref({ show: false, type: '', message: '' })
-
-onMounted(() => {
-  // 检查是否已登录
-  const token = localStorage.getItem('token')
-  if (token) {
-    router.push('/')
-  }
-
-  // 检查是否记住了用户名
-  const rememberedUsername = localStorage.getItem('rememberedUsername')
-  if (rememberedUsername) {
-    form.value.username = rememberedUsername
-    form.value.remember = true
-  }
-})
-
-async function handleLogin() {
-  if (!form.value.username || !form.value.password) {
-    showAlert('error', '请输入用户名和密码')
-    return
-  }
-
-  loading.value = true
-
-  try {
-    // 简单的本地验证（实际项目中应该调用后端 API）
-    await simulateLogin(form.value.username, form.value.password)
-
-    // 保存登录状态
-    const token = generateToken()
-    localStorage.setItem('token', token)
-    localStorage.setItem('username', form.value.username)
-    localStorage.setItem('loginTime', new Date().toISOString())
-
-    // 记住用户名
-    if (form.value.remember) {
-      localStorage.setItem('rememberedUsername', form.value.username)
-    } else {
-      localStorage.removeItem('rememberedUsername')
+export default {
+  name: 'LoginView',
+  data() {
+    return {
+      username: '',
+      password: '',
+      error: '',
+      loading: false
     }
+  },
+  methods: {
+    async handleLogin() {
+      this.error = ''
+      this.loading = true
 
-    showAlert('success', '登录成功！')
+      try {
+        const response = await authAPI.login({
+          username: this.username,
+          password: this.password
+        })
 
-    // 跳转到首页
-    setTimeout(() => {
-      router.push('/')
-    }, 500)
-  } catch (error) {
-    showAlert('error', error.message)
-  } finally {
-    loading.value = false
+        if (response.success) {
+          // 保存 token
+          localStorage.setItem('token', response.data.token)
+          localStorage.setItem('username', response.data.username)
+          
+          // 跳转到首页
+          this.$router.push('/')
+        } else {
+          this.error = response.message || '登录失败'
+        }
+      } catch (err) {
+        console.error('登录错误:', err)
+        this.error = '用户名或密码错误'
+      } finally {
+        this.loading = false
+      }
+    }
   }
-}
-
-// 模拟登录（实际项目中应该调用后端 API）
-function simulateLogin(username, password) {
-  return new Promise((resolve, reject) => {
-    setTimeout(() => {
-      // 简单的用户验证
-      const validUsers = {
-        'admin': 'admin',
-        'user': 'user123',
-        'test': 'test123'
-      }
-
-      if (validUsers[username] && validUsers[username] === password) {
-        resolve()
-      } else {
-        reject(new Error('用户名或密码错误'))
-      }
-    }, 800)
-  })
-}
-
-// 生成简单的 token
-function generateToken() {
-  return 'token_' + Math.random().toString(36).substr(2) + Date.now().toString(36)
-}
-
-function showAlert(type, message) {
-  alert.value = { show: true, type, message }
-  setTimeout(() => {
-    alert.value.show = false
-  }, 3000)
 }
 </script>
 
 <style scoped>
 .login-container {
-  min-height: 100vh;
   display: flex;
-  align-items: center;
   justify-content: center;
-  background: #F4F5F7;
-  padding: 20px;
+  align-items: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
 }
 
 .login-box {
-  background: #fff;
-  border-radius: 4px;
-  box-shadow: 0 1px 1px rgba(9,30,66,0.25), 0 0 0 1px rgba(9,30,66,0.08);
+  background: white;
+  padding: 40px;
+  border-radius: 10px;
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
   width: 100%;
   max-width: 400px;
-  padding: 40px 40px 32px;
 }
 
-.login-header {
+h2 {
   text-align: center;
-  margin-bottom: 28px;
-}
-
-.login-header h1 {
-  font-size: 20px;
-  font-weight: 700;
-  color: #172B4D;
-  margin-bottom: 6px;
-}
-
-.login-header p {
-  font-size: 13px;
-  color: #5E6C84;
-}
-
-.login-form {
-  margin-bottom: 16px;
+  margin-bottom: 30px;
+  color: #333;
 }
 
 .form-group {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
-.form-group label {
+label {
   display: block;
-  margin-bottom: 4px;
-  font-size: 11px;
-  font-weight: 700;
-  color: #5E6C84;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  margin-bottom: 5px;
+  color: #555;
+  font-weight: 500;
 }
 
-.form-group input[type="text"],
-.form-group input[type="password"] {
+input {
   width: 100%;
-  padding: 8px 10px;
-  border: 2px solid #DFE1E6;
-  border-radius: 4px;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 5px;
   font-size: 14px;
-  color: #172B4D;
-  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+input:focus {
   outline: none;
+  border-color: #667eea;
 }
 
-.form-group input:hover {
-  border-color: #B3BAC5;
-}
-
-.form-group input:focus {
-  border-color: #4C9AFF;
-  box-shadow: 0 0 0 2px rgba(76,154,255,0.2);
-}
-
-.checkbox-group {
-  display: flex;
-  align-items: center;
-}
-
-.checkbox-group label {
-  display: flex;
-  align-items: center;
-  margin-bottom: 0;
-  cursor: pointer;
-  font-size: 13px;
-  color: #172B4D;
-  text-transform: none;
-  letter-spacing: 0;
-  font-weight: 400;
-}
-
-.checkbox-group input[type="checkbox"] {
-  width: auto;
-  margin-right: 8px;
-  cursor: pointer;
-  accent-color: #0052CC;
-}
-
-.btn-block {
+button {
   width: 100%;
-  height: 36px;
-  font-size: 14px;
-  font-weight: 600;
-  background: #0052CC;
-  color: #fff;
+  padding: 12px;
+  background: #667eea;
+  color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
+  font-size: 16px;
   cursor: pointer;
-  transition: background 0.15s;
+  transition: background 0.3s;
 }
 
-.btn-block:hover {
-  background: #0065FF;
+button:hover:not(:disabled) {
+  background: #5568d3;
 }
 
-.btn-block:disabled {
-  opacity: 0.5;
+button:disabled {
+  background: #ccc;
   cursor: not-allowed;
 }
 
-.login-footer {
+.error-message {
+  color: #e74c3c;
+  margin-bottom: 15px;
   text-align: center;
+  font-size: 14px;
+}
+
+.default-account {
   margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid #DFE1E6;
+  padding-top: 20px;
+  border-top: 1px solid #eee;
+  text-align: center;
 }
 
-.login-footer p {
-  margin: 6px 0;
+.default-account p {
+  color: #999;
   font-size: 12px;
-  color: #97A0AF;
-}
-
-.alert {
-  padding: 10px 14px;
-  border-radius: 4px;
-  margin-bottom: 16px;
-  font-size: 13px;
-  border-left: 4px solid transparent;
-}
-
-.alert-success {
-  background: #E3FCEF;
-  color: #006644;
-  border-color: #00875A;
-}
-
-.alert-error {
-  background: #FFEBE6;
-  color: #BF2600;
-  border-color: #DE350B;
+  margin: 0;
 }
 </style>

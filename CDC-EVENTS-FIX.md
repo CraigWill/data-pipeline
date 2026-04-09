@@ -1,315 +1,82 @@
-# CDC 事件监控问题修复
+# CDC 实时数据流修复总结
 
 ## 问题描述
+前端访问 `/api/cdc/events/stream` SSE 端点时返回 401 Unauthorized 错误，导致实时数据流无法显示。
 
-用户反馈 CDC 事件监控页面显示"暂无 CDC 事件"，但实际上后端已经捕获了大量事件数据。
-
-## 问题分析
-
-### 1. 后端数据验证
-
-通过 API 测试发现后端数据正常：
-
-```bash
-curl http://localhost:5001/api/cdc/events/stats
-```
-
-返回：
-```json
-{
-  "success": true,
-  "data": {
-    "totalEvents": 59230,
-    "insertEvents": 59230,
-    "updateEvents": 0,
-    "deleteEvents": 0
-  }
-}
-```
-
-### 2. 问题根源
-
-前端代码在处理 API 响应时出现错误：
-
-**错误代码**:
-```javascript
-async function loadEvents() {
-  const response = await cdcEventsAPI.list({...})
-  events.value = response.data.events || []  // ❌ 错误
-}
-```
-
-**问题分析**:
-- API 拦截器返回 `response.data`，即 `{success: true, data: {...}}`
-- 前端代码访问 `response.data.events` 实际上是访问 `undefined.events`
-- 应该访问 `response.data.events`（第一个 data 是 ApiResponse 的 data 字段）
+## 根本原因
+EventSource API 不支持自定义 HTTP 头（如 Authorization），因此无法发送 JWT token。而 SecurityConfig 中将所有 `/api/**` 端点都设置为需要认证，导致 SSE 端点被拦截。
 
 ## 解决方案
+在 `SecurityConfig.java` 中将 SSE 流端点添加到白名单：
 
-### 修复代码
-
-**文件**: `monitor/frontend-vue/src/views/CdcEventsView.vue`
-
-```javascript
-async function loadEvents() {
-  loading.value = true
-  try {
-    const response = await cdcEventsAPI.list({
-      table: filters.value.table,
-      eventType: filters.value.eventType,
-      page: currentPage.value,
-      size: pageSize.value
-    })
-    
-    // ✅ 正确处理响应
-    // response = {success: true, data: {events, stats, total, totalPages}}
-    if (response.success && response.data) {
-      events.value = response.data.events || []
-      stats.value = response.data.stats || stats.value
-      totalPages.value = response.data.totalPages || 1
-    } else {
-      events.value = []
-      console.error('API 返回失败:', response.error || response.message)
-    }
-  } catch (error) {
-    console.error('加载 CDC 事件失败:', error)
-    events.value = []
-  } finally {
-    loading.value = false
-  }
-}
-
-async function loadTables() {
-  try {
-    const response = await cdcEventsAPI.tables()
-    // ✅ 正确处理响应
-    if (response.success && response.data) {
-      tables.value = response.data || []
-    }
-  } catch (error) {
-    console.error('加载表列表失败:', error)
-  }
-}
+```java
+.authorizeRequests()
+    // 公开端点
+    .antMatchers("/api/auth/**").permitAll()
+    .antMatchers("/actuator/health").permitAll()
+    // SSE 流端点（EventSource 不支持自定义 header）
+    .antMatchers("/api/cdc/events/stream").permitAll()
+    // 所有其他 API 需要认证
+    .antMatchers("/api/**").authenticated()
+    .anyRequest().permitAll();
 ```
 
 ## 修复步骤
-
-### 1. 更新前端代码
-
-```bash
-# 修改 monitor/frontend-vue/src/views/CdcEventsView.vue
-# 更新 loadEvents 和 loadTables 函数
-```
-
-### 2. 重新构建前端
-
-```bash
-cd monitor/frontend-vue
-npm run build
-```
-
-### 3. 重新构建 Docker 镜像
-
-```bash
-docker-compose build monitor-frontend
-```
-
-### 4. 重新部署
-
-```bash
-docker-compose up -d monitor-frontend
-```
+1. 修改 `monitor-backend/src/main/java/com/realtime/monitor/config/SecurityConfig.java`
+2. 重新编译：`mvn clean package -pl monitor-backend -am -DskipTests`
+3. 重建 Docker 镜像：`docker-compose build monitor-backend`
+4. 重启容器：`docker-compose up -d monitor-backend`
 
 ## 验证结果
 
-### 测试脚本
+### SSE 连接成功
+```
+新增 SSE 订阅者，当前订阅数: 1
+新增 SSE 订阅者，当前订阅数: 2
+```
 
-创建了 `test-cdc-events.sh` 测试脚本：
-
+### 实时数据流正常
 ```bash
-chmod +x test-cdc-events.sh
-./test-cdc-events.sh
+$ curl -N http://localhost:5001/api/cdc/events/stream
+event:stats
+data:{"date":"2026-03-30","deleteEvents":16,"updateEvents":2,"totalEvents":18,"insertEvents":0,"eventsPerSecond":0.0}
+
+event:heartbeat
+data:{"date":"2026-03-30","deleteEvents":16,"updateEvents":2,"totalEvents":18,"insertEvents":0,"eventsPerSecond":0.0}
 ```
 
-### 测试结果
+### CDC 数据捕获正常
+- **今日统计**: 18 个事件（16 DELETE + 2 UPDATE）
+- **最新文件**: `output/cdc/2026-03-30--14/`
+- **最新事件**: 8 条 DELETE 记录（14:16:22）
 
-```
-✅ 获取表列表成功
-   表列表: ['IDS_ACCOUNT_INFO', 'IDS_TRANS_INFO', 'IDS_TEST_CDC']
-
-✅ 获取统计信息成功
-   总事件数: 59230
-   INSERT: 59230
-   UPDATE: 0
-   DELETE: 0
-
-✅ 获取事件列表成功
-   总记录数: 59230
-   总页数: 11846
-   当前页: 1
-   返回事件数: 5
-
-✅ 按表名过滤成功
-   IDS_TRANS_INFO 表事件数: 3
-
-✅ 前端页面可访问
-   访问地址: http://localhost:8888/events
+### 示例数据
+```csv
+2026-03-30 14:16:22.160,DELETE,1772234906940,ACC1772234906,User_1772234906,CHECKING,87511.39,ACTIVE,...
+2026-03-30 14:16:22.258,DELETE,1772101202378,ACC094450111277,User_42948,SAVINGS,8276.71,ACTIVE,...
 ```
 
-## 当前状态
+## 技术说明
 
-### 数据统计
+### EventSource 限制
+- EventSource API 是浏览器原生的 SSE 客户端
+- 不支持自定义 HTTP 头（包括 Authorization）
+- 只能通过 URL 参数传递认证信息（不安全）
+- 或者将端点设为公开访问（当前方案）
 
-- **总事件数**: 59,230
-- **INSERT 事件**: 59,230
-- **UPDATE 事件**: 0
-- **DELETE 事件**: 0
+### 安全考虑
+- SSE 端点现在是公开的，任何人都可以订阅
+- 数据是只读的，不涉及敏感操作
+- 如需更严格的安全控制，可以考虑：
+  - 使用 WebSocket 替代 SSE（支持自定义头）
+  - 通过 URL 参数传递 token（不推荐）
+  - 实现基于 IP 的访问控制
 
-### 数据来源
+## 相关文件
+- `monitor-backend/src/main/java/com/realtime/monitor/config/SecurityConfig.java`
+- `monitor-backend/src/main/java/com/realtime/monitor/controller/CdcEventsController.java`
+- `monitor-backend/src/main/java/com/realtime/monitor/service/CdcStatsService.java`
+- `monitor/frontend-vue/src/views/CdcEventsView.vue`
 
-事件数据来自以下表：
-- IDS_ACCOUNT_INFO
-- IDS_TRANS_INFO
-- IDS_TEST_CDC
-
-### 输出文件
-
-CDC 事件数据存储在：
-```
-output/cdc/
-├── 2026-02-26--13/
-├── 2026-02-26--14/
-├── 2026-02-26--15/
-├── 2026-03-09--09/
-└── ...
-```
-
-## 功能验证
-
-### 1. 访问页面
-
-```
-http://localhost:8888/events
-```
-
-### 2. 登录
-
-```
-用户名: admin
-密码: admin
-```
-
-### 3. 查看统计
-
-页面顶部显示四个统计卡片：
-- 📝 总事件数: 59,230
-- ➕ INSERT 事件: 59,230
-- ✏️ UPDATE 事件: 0
-- 🗑️ DELETE 事件: 0
-
-### 4. 过滤事件
-
-- 按表名筛选: IDS_TRANS_INFO
-- 按事件类型: INSERT
-- 自动刷新: 5秒
-
-### 5. 查看详情
-
-每个事件卡片显示：
-- 事件类型（绿色标签）
-- 表名
-- 时间戳
-- 变更数据（JSON 格式）
-
-## API 响应格式说明
-
-### 后端返回格式
-
-```json
-{
-  "success": true,
-  "data": {
-    "events": [...],
-    "stats": {...},
-    "total": 59230,
-    "totalPages": 11846,
-    "currentPage": 1
-  }
-}
-```
-
-### 前端接收格式
-
-由于 API 拦截器的处理：
-
-```javascript
-// api/index.js
-api.interceptors.response.use(
-  response => {
-    return response.data  // 返回 axios response 的 data 字段
-  }
-)
-```
-
-前端收到的就是：
-```javascript
-{
-  success: true,
-  data: {
-    events: [...],
-    stats: {...},
-    ...
-  }
-}
-```
-
-所以访问数据时应该：
-```javascript
-response.data.events  // ✅ 正确
-response.data.data.events  // ❌ 错误
-```
-
-## 经验教训
-
-### 1. API 响应处理
-
-- 明确了解 API 拦截器的处理逻辑
-- 统一响应格式的访问方式
-- 添加错误处理和日志
-
-### 2. 调试方法
-
-- 先验证后端 API 是否正常
-- 检查前端网络请求和响应
-- 使用浏览器控制台查看错误
-
-### 3. 测试脚本
-
-- 创建自动化测试脚本
-- 覆盖主要功能点
-- 便于快速验证
-
-## 相关文档
-
-- [CDC 事件监控功能文档](CDC-EVENTS-MONITORING.md)
-- [部署成功报告](DEPLOYMENT-SUCCESS.md)
-- [登录功能文档](monitor/frontend-vue/LOGIN-FEATURE.md)
-
-## 更新日志
-
-### 2026-03-09 10:45
-
-- ✅ 修复前端 API 响应处理逻辑
-- ✅ 更新 loadEvents 函数
-- ✅ 更新 loadTables 函数
-- ✅ 重新构建和部署前端
-- ✅ 创建测试脚本
-- ✅ 验证所有功能正常
-
----
-
-**修复时间**: 2026-03-09 10:45  
-**修复状态**: ✅ 完成  
-**功能状态**: ✅ 正常运行
-
-🎉 CDC 事件监控功能现在可以正常显示 59,230 个事件！
+## 状态
+✅ 已修复 - SSE 实时数据流正常工作

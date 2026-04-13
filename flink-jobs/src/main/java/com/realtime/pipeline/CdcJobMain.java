@@ -309,11 +309,14 @@ public class CdcJobMain {
         LOG.info("=== Executing job: {} ===", finalJobName);
         env.execute(finalJobName);
     }
-
+    /**
+     * 解析参数，必须以--作为命令行参数，不建议修改。
+     * 
+     */
     private static Map<String, String> parseArgs(String[] args) {
         Map<String, String> params = new HashMap<>();
         for (int i = 0; i < args.length - 1; i++) {
-            if (args[i].startsWith("--")) {
+            if (args[i].startsWith("--") || args[i].startsWith("-")) {
                 params.put(args[i].substring(2), args[i + 1]);
                 i++;
             }

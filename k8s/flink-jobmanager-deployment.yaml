@@ -1,0 +1,147 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-jobmanager
+  namespace: flink
+spec:
+  replicas: 2  # 高可用：2个 JobManager 实例
+  selector:
+    matchLabels:
+      app: flink
+      component: jobmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: jobmanager
+    spec:
+      serviceAccountName: flink
+      containers:
+      - name: jobmanager
+        image: flink-jobmanager:latest
+        imagePullPolicy: IfNotPresent
+        args: ["jobmanager"]
+        ports:
+        - containerPort: 6123
+          name: rpc
+        - containerPort: 6124
+          name: blob-server
+        - containerPort: 8081
+          name: webui
+        livenessProbe:
+          httpGet:
+            path: /overview
+            port: 8081
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /overview
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        env:
+        - name: JOB_MANAGER_RPC_ADDRESS
+          value: "flink-jobmanager"
+        - name: JOB_MANAGER_RPC_PORT
+          value: "6123"
+        - name: JOB_MANAGER_HEAP_SIZE
+          value: "1024m"
+        - name: REST_PORT
+          value: "8081"
+        - name: PARALLELISM_DEFAULT
+          value: "4"
+        - name: CHECKPOINT_INTERVAL
+          value: "300000"
+        - name: CHECKPOINT_DIR
+          value: "file:///opt/flink/checkpoints"
+        - name: SAVEPOINT_DIR
+          value: "file:///opt/flink/savepoints"
+        - name: STATE_BACKEND
+          value: "hashmap"
+        # Kubernetes HA 配置
+        - name: HA_MODE
+          value: "kubernetes"
+        - name: HA_STORAGE_DIR
+          value: "file:///opt/flink/ha"
+        # 数据库配置（从 Secret 读取）
+        - name: DATABASE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-host
+        - name: DATABASE_PORT
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-port
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-password
+        - name: DATABASE_SID
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-sid
+        - name: DATABASE_SCHEMA
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-schema
+        - name: DATABASE_TABLES
+          value: "trans_info"
+        - name: OUTPUT_PATH
+          value: "/opt/flink/output/cdc"
+        - name: TZ
+          value: "Asia/Shanghai"
+        - name: AUTO_SUBMIT_JOB
+          value: "false"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "1000m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: flink-config-volume
+          mountPath: /opt/flink/conf
+        - name: flink-checkpoints
+          mountPath: /opt/flink/checkpoints
+        - name: flink-savepoints
+          mountPath: /opt/flink/savepoints
+        - name: flink-ha
+          mountPath: /opt/flink/ha
+        - name: flink-logs
+          mountPath: /opt/flink/logs
+      volumes:
+      - name: flink-config-volume
+        configMap:
+          name: flink-config
+          items:
+          - key: flink-conf.yaml
+            path: flink-conf.yaml
+          - key: log4j-console.properties
+            path: log4j-console.properties
+      - name: flink-checkpoints
+        persistentVolumeClaim:
+          claimName: flink-checkpoints-pvc
+      - name: flink-savepoints
+        persistentVolumeClaim:
+          claimName: flink-savepoints-pvc
+      - name: flink-ha
+        persistentVolumeClaim:
+          claimName: flink-ha-pvc
+      - name: flink-logs
+        emptyDir: {}

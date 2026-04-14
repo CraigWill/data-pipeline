@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flink-config
+  namespace: flink
+data:
+  flink-conf.yaml: |+
+    # Flink Configuration for Kubernetes HA
+    
+    # Kubernetes HA 配置（替代 ZooKeeper）
+    high-availability.type: kubernetes
+    high-availability.storageDir: file:///opt/flink/ha
+    
+    # Kubernetes 配置
+    kubernetes.cluster-id: flink-cluster
+    kubernetes.namespace: flink
+    
+    # JobManager 配置
+    jobmanager.rpc.address: flink-jobmanager
+    jobmanager.rpc.port: 6123
+    jobmanager.bind-host: 0.0.0.0
+    jobmanager.memory.process.size: 1600m
+    
+    # Web UI 配置
+    rest.port: 8081
+    rest.address: 0.0.0.0
+    rest.bind-address: 0.0.0.0
+    
+    # TaskManager 配置
+    taskmanager.bind-host: 0.0.0.0
+    taskmanager.rpc.port: 6122
+    taskmanager.data.port: 6121
+    taskmanager.memory.process.size: 1728m
+    taskmanager.memory.managed.fraction: 0.3
+    taskmanager.numberOfTaskSlots: 4
+    
+    # 心跳超时配置（解决 LogMiner 导致的心跳超时）
+    heartbeat.interval: 10000
+    heartbeat.timeout: 180000
+    heartbeat.rpc-failure-threshold: 5
+    
+    # Akka/Pekko RPC 超时配置
+    akka.ask.timeout: 60s
+    akka.lookup.timeout: 60s
+    akka.client.timeout: 60s
+    
+    # Checkpoint 配置
+    state.backend: hashmap
+    state.checkpoints.dir: file:///opt/flink/checkpoints
+    state.savepoints.dir: file:///opt/flink/savepoints
+    execution.checkpointing.interval: 60000
+    execution.checkpointing.mode: EXACTLY_ONCE
+    execution.checkpointing.timeout: 600000
+    execution.checkpointing.min-pause: 30000
+    execution.checkpointing.max-concurrent-checkpoints: 1
+    execution.checkpointing.tolerable-failed-checkpoints: 10
+    
+    # 状态后端配置
+    state.backend.incremental: true
+    state.backend.local-recovery: true
+    
+    # 并行度配置
+    parallelism.default: 4
+    
+    # 网络缓冲区配置
+    taskmanager.network.memory.fraction: 0.2
+    taskmanager.network.memory.min: 128mb
+    taskmanager.network.memory.max: 512mb
+    
+    # 重启策略
+    restart-strategy: exponential-delay
+    restart-strategy.exponential-delay.initial-backoff: 10s
+    restart-strategy.exponential-delay.max-backoff: 2min
+    restart-strategy.exponential-delay.backoff-multiplier: 2.0
+    restart-strategy.exponential-delay.reset-backoff-threshold: 10min
+    restart-strategy.exponential-delay.jitter-factor: 0.1
+    
+    # 作业自动恢复配置
+    jobmanager.execution.failover-strategy: region
+    
+    # 类加载器配置
+    classloader.resolve-order: parent-first
+  
+  log4j-console.properties: |+
+    rootLogger.level = INFO
+    rootLogger.appenderRef.console.ref = ConsoleAppender
+    
+    appender.console.name = ConsoleAppender
+    appender.console.type = CONSOLE
+    appender.console.layout.type = PatternLayout
+    appender.console.layout.pattern = %d{yyyy-MM-dd HH:mm:ss,SSS} %-5p %-60c %x - %m%n

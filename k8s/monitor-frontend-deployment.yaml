@@ -1,0 +1,63 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitor-frontend
+  namespace: flink
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: monitor-frontend
+  template:
+    metadata:
+      labels:
+        app: monitor-frontend
+    spec:
+      containers:
+      - name: monitor-frontend
+        image: monitor-frontend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        env:
+        - name: TZ
+          value: "Asia/Shanghai"
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitor-frontend
+  namespace: flink
+spec:
+  type: LoadBalancer  # 或 NodePort，根据需要调整
+  ports:
+  - port: 80
+    targetPort: 80
+    name: http
+    # nodePort: 30888  # 如果使用 NodePort，取消注释
+  selector:
+    app: monitor-frontend

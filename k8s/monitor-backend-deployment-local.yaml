@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitor-backend
+  namespace: flink
+spec:
+  replicas: 1  # 本地环境：单个实例
+  selector:
+    matchLabels:
+      app: monitor-backend
+  template:
+    metadata:
+      labels:
+        app: monitor-backend
+    spec:
+      containers:
+      - name: monitor-backend
+        image: monitor-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5001
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 5001
+          initialDelaySeconds: 40
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 5001
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        env:
+        - name: FLINK_REST_URL
+          value: "http://flink-jobmanager:8081"
+        - name: FLINK_REST_URLS
+          value: "http://flink-jobmanager:8081"
+        - name: OUTPUT_PATH
+          value: "/app/output/cdc"
+        - name: CONFIG_DIR
+          value: "/app/config"
+        # 数据库配置
+        - name: DATABASE_HOST
+          value: "host.docker.internal"
+        - name: DATABASE_PORT
+          value: "1521"
+        - name: DATABASE_USERNAME
+          value: "finance_user"
+        - name: DATABASE_PASSWORD
+          value: "finance_user"
+        - name: DATABASE_SID
+          value: "helowin"
+        - name: TZ
+          value: "Asia/Shanghai"
+        # JWT 安全配置
+        - name: JWT_SECRET
+          value: "your-jwt-secret-here-min-32-chars-for-development"
+        - name: JWT_EXPIRATION
+          value: "86400000"
+        # AES 密码加密配置
+        - name: AES_ENCRYPTION_KEY
+          value: "dev-aes-key-1234"
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: flink-data
+          mountPath: /app/output
+          subPath: output
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: flink-data
+        hostPath:
+          path: /tmp/flink-data
+          type: DirectoryOrCreate
+      - name: config
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitor-backend
+  namespace: flink
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5001
+    targetPort: 5001
+    name: http
+  selector:
+    app: monitor-backend

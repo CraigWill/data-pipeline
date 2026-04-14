@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flink-taskmanager
+  namespace: flink
+spec:
+  replicas: 2  # 本地环境：2 个 TaskManager
+  selector:
+    matchLabels:
+      app: flink
+      component: taskmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: taskmanager
+    spec:
+      serviceAccountName: flink
+      containers:
+      - name: taskmanager
+        image: flink-taskmanager:latest
+        imagePullPolicy: IfNotPresent
+        args: ["taskmanager"]
+        ports:
+        - containerPort: 6122
+          name: rpc
+        - containerPort: 6121
+          name: data
+        livenessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - org.apache.flink.runtime.taskexecutor.TaskManagerRunner
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          exec:
+            command:
+            - pgrep
+            - -f
+            - org.apache.flink.runtime.taskexecutor.TaskManagerRunner
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        env:
+        - name: JOB_MANAGER_RPC_ADDRESS
+          value: "flink-jobmanager"
+        - name: JOB_MANAGER_RPC_PORT
+          value: "6123"
+        - name: TASK_MANAGER_HEAP_SIZE
+          value: "1024m"
+        - name: TASK_MANAGER_MEMORY_PROCESS_SIZE
+          value: "1728m"
+        - name: TASK_MANAGER_NUMBER_OF_TASK_SLOTS
+          value: "4"
+        - name: TASK_MANAGER_RPC_PORT
+          value: "6122"
+        - name: TASK_MANAGER_DATA_PORT
+          value: "6121"
+        - name: TASK_MANAGER_NETWORK_MEMORY_MIN
+          value: "128m"
+        - name: TASK_MANAGER_NETWORK_MEMORY_MAX
+          value: "512m"
+        # 本地环境不使用 HA
+        - name: HA_MODE
+          value: "NONE"
+        # 数据库配置
+        - name: DATABASE_HOST
+          value: "host.docker.internal"
+        - name: DATABASE_PORT
+          value: "1521"
+        - name: DATABASE_USERNAME
+          value: "finance_user"
+        - name: DATABASE_PASSWORD
+          value: "finance_user"
+        - name: DATABASE_SID
+          value: "helowin"
+        - name: DATABASE_SCHEMA
+          value: "finance_user"
+        - name: DATABASE_TABLES
+          value: "trans_info"
+        - name: OUTPUT_PATH
+          value: "/opt/flink/output/cdc"
+        - name: TZ
+          value: "Asia/Shanghai"
+        resources:
+          requests:
+            memory: "1Gi"
+            cpu: "500m"
+          limits:
+            memory: "4Gi"
+            cpu: "2000m"
+        volumeMounts:
+        - name: flink-config-volume
+          mountPath: /opt/flink/conf
+        - name: flink-data
+          mountPath: /opt/flink/checkpoints
+          subPath: checkpoints
+        - name: flink-data
+          mountPath: /opt/flink/savepoints
+          subPath: savepoints
+        - name: flink-data
+          mountPath: /opt/flink/output
+          subPath: output
+        - name: flink-logs
+          mountPath: /opt/flink/logs
+      volumes:
+      - name: flink-config-volume
+        configMap:
+          name: flink-config
+          items:
+          - key: flink-conf.yaml
+            path: flink-conf.yaml
+          - key: log4j-console.properties
+            path: log4j-console.properties
+      - name: flink-data
+        hostPath:
+          path: /tmp/flink-data
+          type: DirectoryOrCreate
+      - name: flink-logs
+        emptyDir: {}

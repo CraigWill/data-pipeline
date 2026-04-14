@@ -1,0 +1,121 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitor-backend
+  namespace: flink
+spec:
+  replicas: 2  # 高可用：2个实例
+  selector:
+    matchLabels:
+      app: monitor-backend
+  template:
+    metadata:
+      labels:
+        app: monitor-backend
+    spec:
+      containers:
+      - name: monitor-backend
+        image: monitor-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5001
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 5001
+          initialDelaySeconds: 40
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 5001
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        env:
+        - name: FLINK_REST_URL
+          value: "http://flink-jobmanager:8081"
+        - name: FLINK_REST_URLS
+          value: "http://flink-jobmanager:8081"
+        - name: OUTPUT_PATH
+          value: "/app/output/cdc"
+        - name: CONFIG_DIR
+          value: "/app/config"
+        # 数据库配置（从 Secret 读取）
+        - name: DATABASE_HOST
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-host
+        - name: DATABASE_PORT
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-port
+        - name: DATABASE_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-username
+        - name: DATABASE_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-password
+        - name: DATABASE_SID
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: database-sid
+        - name: TZ
+          value: "Asia/Shanghai"
+        # JWT 安全配置
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: jwt-secret
+        - name: JWT_EXPIRATION
+          value: "86400000"
+        # AES 密码加密配置
+        - name: AES_ENCRYPTION_KEY
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: aes-encryption-key
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: flink-output
+          mountPath: /app/output
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: flink-output
+        persistentVolumeClaim:
+          claimName: flink-output-pvc
+      - name: config
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitor-backend
+  namespace: flink
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5001
+    targetPort: 5001
+    name: http
+  selector:
+    app: monitor-backend

@@ -1,0 +1,36 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-jobmanager
+  namespace: flink
+spec:
+  type: ClusterIP
+  ports:
+  - name: rpc
+    port: 6123
+    targetPort: 6123
+  - name: blob-server
+    port: 6124
+    targetPort: 6124
+  - name: webui
+    port: 8081
+    targetPort: 8081
+  selector:
+    app: flink
+    component: jobmanager
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: flink-jobmanager-rest
+  namespace: flink
+spec:
+  type: LoadBalancer  # 或 NodePort，根据需要调整
+  ports:
+  - name: rest
+    port: 8081
+    targetPort: 8081
+    # nodePort: 30081  # 如果使用 NodePort，取消注释
+  selector:
+    app: flink
+    component: jobmanager

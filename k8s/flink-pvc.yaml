@@ -1,0 +1,51 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flink-checkpoints-pvc
+  namespace: flink
+spec:
+  accessModes:
+  - ReadWriteMany  # 多个 Pod 需要同时访问
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: nfs-client  # 根据你的存储类调整
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flink-savepoints-pvc
+  namespace: flink
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 10Gi
+  # storageClassName: nfs-client
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flink-ha-pvc
+  namespace: flink
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 1Gi
+  # storageClassName: nfs-client
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: flink-output-pvc
+  namespace: flink
+spec:
+  accessModes:
+  - ReadWriteMany
+  resources:
+    requests:
+      storage: 50Gi
+  # storageClassName: nfs-client

@@ -67,6 +67,25 @@ check_docker_compose() {
     fi
 }
 
+# 检查 Oracle 网络连接
+check_oracle_network() {
+    local oracle_container="oracle11g"
+    local flink_network="flink-network"
+    
+    # 检查 Oracle 容器是否运行
+    if docker ps --format '{{.Names}}' | grep -q "^${oracle_container}$"; then
+        # 检查 Flink 网络是否存在
+        if docker network ls --format '{{.Name}}' | grep -q "^${flink_network}$"; then
+            # 检查 Oracle 是否在 Flink 网络中
+            if ! docker network inspect ${flink_network} --format '{{range .Containers}}{{.Name}}{{"\n"}}{{end}}' 2>/dev/null | grep -q "^${oracle_container}$"; then
+                echo -e "${YELLOW}将 ${oracle_container} 连接到 ${flink_network}...${NC}"
+                docker network connect ${flink_network} ${oracle_container} 2>/dev/null || true
+                echo -e "${GREEN}✓ 网络连接成功${NC}"
+            fi
+        fi
+    fi
+}
+
 # 检查 .env 文件
 check_env() {
     if [ ! -f .env ]; then
@@ -353,6 +372,7 @@ main() {
     check_docker
     check_docker_compose
     check_env
+    check_oracle_network
     
     echo -e "${GREEN}=== 实时数据管道启动脚本 ===${NC}"
     echo ""

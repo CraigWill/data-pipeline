@@ -5,21 +5,22 @@ metadata:
   namespace: flink
 data:
   flink-conf.yaml: |+
-    # Flink Configuration for Kubernetes HA
+    # Flink Configuration for Kubernetes
     
-    # Kubernetes HA 配置（替代 ZooKeeper）
-    high-availability.type: kubernetes
-    high-availability.storageDir: file:///opt/flink/ha
-    
-    # Kubernetes 配置
-    kubernetes.cluster-id: flink-cluster
-    kubernetes.namespace: flink
+    # 本地环境不使用 HA（单节点模式）
+    # high-availability.type: kubernetes
+    # high-availability.storageDir: file:///opt/flink/ha
+    # kubernetes.cluster-id: flink-cluster
+    # kubernetes.namespace: flink
     
     # JobManager 配置
     jobmanager.rpc.address: flink-jobmanager
     jobmanager.rpc.port: 6123
     jobmanager.bind-host: 0.0.0.0
     jobmanager.memory.process.size: 1600m
+
+    # BlobServer 固定端口（必须与 Service 暴露的端口一致，避免随机端口导致 TaskManager 连接失败）
+    blob.server.port: 6124
     
     # Web UI 配置
     rest.port: 8081

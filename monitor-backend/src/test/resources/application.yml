@@ -1,0 +1,39 @@
+# Test application configuration
+# Overrides main application.yml for unit/integration tests
+
+spring:
+  main:
+    allow-circular-references: true
+  # Disable DataSource auto-configuration — we mock the DataSource bean
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceAutoConfiguration
+      - org.springframework.boot.autoconfigure.orm.jpa.HibernateJpaAutoConfiguration
+      - org.springframework.boot.autoconfigure.jdbc.DataSourceTransactionManagerAutoConfiguration
+  datasource:
+    url: jdbc:h2:mem:testdb
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+
+# JWT config — use test values so ${JWT_SECRET} placeholder resolves
+jwt:
+  secret: test-secret-key-for-unit-tests-only-32chars!!
+  expiration: 86400000
+
+# AES encryption key — use test value so ${AES_ENCRYPTION_KEY} placeholder resolves
+encryption:
+  aes-key: test-aes-key-16b
+
+# Admin initial password for tests
+admin:
+  initial-password: test-admin-password-for-unit-tests
+
+# Flink config — point to a non-existent URL (FlinkService is mocked)
+flink:
+  rest:
+    url: http://localhost:18081
+
+# Output path — use temp dir
+output:
+  path: /tmp/test-output

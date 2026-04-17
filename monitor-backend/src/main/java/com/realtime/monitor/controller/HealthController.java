@@ -6,6 +6,7 @@ import com.realtime.monitor.service.FlinkService;
 import com.realtime.monitor.service.OutputFileService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -45,6 +46,7 @@ public class HealthController {
     }
     
     
+        @PreAuthorize("hasRole('ADMIN')")
         @GetMapping("/system/info")
         public ApiResponse<Map<String, Object>> getSystemInfo() {
             try {

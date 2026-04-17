@@ -6,6 +6,7 @@ import com.realtime.monitor.repository.DataSourceRepository;
 import com.realtime.monitor.util.PasswordEncryptionUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
@@ -27,6 +28,7 @@ public class AdminController {
      * 重新加密所有数据源密码
      * 用于修复密码格式问题
      */
+    @PreAuthorize("hasRole('ADMIN')")
     @PostMapping("/datasources/reencrypt")
     public ApiResponse<Map<String, Object>> reencryptDataSourcePasswords() {
         try {

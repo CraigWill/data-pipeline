@@ -6,9 +6,12 @@ import com.realtime.monitor.service.CdcStatsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 
@@ -24,8 +27,18 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CdcEventsController {
 
+    private static final String BASE_DIR = System.getProperty("cdc.events.base-dir", "/opt/flink/output");
+
     private final CdcEventsService cdcEventsService;
     private final CdcStatsService cdcStatsService;
+
+    private void validatePath(String path) {
+        Path requested = Paths.get(path).normalize();
+        Path base = Paths.get(BASE_DIR).normalize();
+        if (!requested.startsWith(base)) {
+            throw new IllegalArgumentException("Path traversal detected: " + path);
+        }
+    }
 
     /**
      * 获取 CDC 事件列表
@@ -167,16 +180,20 @@ public class CdcEventsController {
      * 获取文件内容（分页）
      */
     @GetMapping("/files/content")
-    public ApiResponse<Map<String, Object>> getFileContent(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getFileContent(
             @RequestParam String path,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "100") int size) {
         try {
+            validatePath(path);
             Map<String, Object> result = cdcEventsService.getFileContent(path, page, size);
-            return ApiResponse.success(result);
+            return ResponseEntity.ok(ApiResponse.success(result));
+        } catch (IllegalArgumentException e) {
+            log.warn("Path traversal attempt blocked: {}", path);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         } catch (Exception e) {
             log.error("获取文件内容失败: {}", path, e);
-            return ApiResponse.error(e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));
         }
     }
 

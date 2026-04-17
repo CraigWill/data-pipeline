@@ -126,7 +126,12 @@ public class RuntimeJobRepository {
     public void updateStatus(String id, String status, String errorMessage) {
         String sql = "UPDATE " + TABLE + " SET status = ?, error_message = ?, end_time = ? WHERE id = ?";
         Timestamp now = status.equals("RUNNING") ? null : Timestamp.from(Instant.now());
-        jdbcTemplate.update(sql, status, errorMessage, now, id);
+        // Oracle VARCHAR2 最大 2000 字节，截断过长的错误信息
+        String truncatedError = errorMessage;
+        if (truncatedError != null && truncatedError.length() > 1900) {
+            truncatedError = truncatedError.substring(0, 1900) + "...(truncated)";
+        }
+        jdbcTemplate.update(sql, status, truncatedError, now, id);
         log.info("更新作业状态: {} -> {}", id, status);
     }
 

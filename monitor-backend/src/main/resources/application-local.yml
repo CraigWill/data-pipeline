@@ -1,0 +1,30 @@
+# 本地主机部署配置（无容器，内嵌 Tomcat）
+# 激活方式: -Dspring.profiles.active=local
+
+server:
+  port: 5001
+
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@${DATABASE_HOST:localhost}:${DATABASE_PORT:1521}:${DATABASE_SID:helowin}
+    username: ${DATABASE_USERNAME:finance_user}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 30000
+
+# Flink REST API 地址（本地 Flink 集群）
+app:
+  flink:
+    rest-urls:
+      - ${FLINK_REST_URL:http://localhost:8081}
+
+# 日志输出到文件
+logging:
+  file:
+    name: logs/local/backend.log
+  level:
+    root: INFO
+    com.realtime: DEBUG

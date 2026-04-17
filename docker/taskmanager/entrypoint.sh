@@ -43,8 +43,11 @@ mkdir -p /opt/flink/logs
 mkdir -p /opt/flink/data
 
 # 动态生成flink-conf.yaml（环境变量覆盖）
+# 在 Kubernetes 中，/opt/flink/conf 是只读的 ConfigMap，需要写到临时目录
 echo "Configuring Flink..."
-cat > /opt/flink/conf/flink-conf.yaml.dynamic << EOF
+DYNAMIC_CONF_DIR="/tmp/flink-conf"
+mkdir -p "$DYNAMIC_CONF_DIR"
+cat > "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
 # JobManager配置
 jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}
 jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
@@ -81,8 +84,8 @@ classloader.parent-first-patterns.additional: oracle.jdbc
 EOF
 
 # 配置高可用（如果启用）
-if [ "$HA_MODE" != "NONE" ]; then
-    echo "Configuring High Availability..."
+if [ "$HA_MODE" != "NONE" ] && [ "$HA_MODE" != "kubernetes" ]; then
+    echo "Configuring High Availability (ZooKeeper mode)..."
     
     if [ -z "$HA_ZOOKEEPER_QUORUM" ]; then
         echo "WARNING: HA_MODE is enabled but HA_ZOOKEEPER_QUORUM is not set"
@@ -90,7 +93,16 @@ if [ "$HA_MODE" != "NONE" ]; then
         # 创建 HA 存储目录
         mkdir -p /opt/flink/ha
         
-        cat >> /opt/flink/conf/flink-conf.yaml.dynamic << EOF
+        if [ -f /opt/flink/conf/flink-conf.yaml ] && [ ! -w /opt/flink/conf/flink-conf.yaml ]; then
+            export FLINK_PROPERTIES="${FLINK_PROPERTIES}
+high-availability: zookeeper
+high-availability.zookeeper.quorum: ${HA_ZOOKEEPER_QUORUM}
+high-availability.zookeeper.path.root: ${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+high-availability.cluster-id: ${HA_CLUSTER_ID:-/default}
+high-availability.storageDir: ${HA_STORAGE_DIR:-file:///opt/flink/ha}
+"
+        else
+            cat >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
 
 # 高可用配置
 high-availability: zookeeper
@@ -99,21 +111,45 @@ high-availability.zookeeper.path.root: ${HA_ZOOKEEPER_PATH_ROOT:-/flink}
 high-availability.cluster-id: ${HA_CLUSTER_ID:-/default}
 high-availability.storageDir: ${HA_STORAGE_DIR:-file:///opt/flink/ha}
 EOF
+        fi
         
         echo "  ZooKeeper Quorum: $HA_ZOOKEEPER_QUORUM"
         echo "  Cluster ID: ${HA_CLUSTER_ID:-/default}"
         echo "  HA Storage Dir: ${HA_STORAGE_DIR:-file:///opt/flink/ha}"
     fi
+elif [ "$HA_MODE" = "kubernetes" ]; then
+    echo "Using Kubernetes native HA (configured in ConfigMap)"
+    mkdir -p /opt/flink/ha
 fi
 
 # 如果存在原始配置文件，合并配置
-if [ -f /opt/flink/conf/flink-conf.yaml.original ]; then
-    echo "Merging with original configuration..."
-    cat /opt/flink/conf/flink-conf.yaml.original >> /opt/flink/conf/flink-conf.yaml.dynamic
+if [ -f /opt/flink/conf/flink-conf.yaml ]; then
+    echo "Merging with existing configuration..."
+    cat /opt/flink/conf/flink-conf.yaml >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic"
 fi
 
-# 使用动态配置
-mv /opt/flink/conf/flink-conf.yaml.dynamic /opt/flink/conf/flink-conf.yaml
+# 在 Kubernetes 环境中，使用环境变量 FLINK_PROPERTIES 或直接使用现有配置
+if [ -f /opt/flink/conf/flink-conf.yaml ] && [ ! -w /opt/flink/conf/flink-conf.yaml ]; then
+    echo "Running in Kubernetes with read-only ConfigMap, using existing configuration..."
+    export FLINK_PROPERTIES="
+jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}
+jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
+taskmanager.memory.process.size: ${TASK_MANAGER_MEMORY_PROCESS_SIZE}
+taskmanager.numberOfTaskSlots: ${TASK_MANAGER_NUMBER_OF_TASK_SLOTS}
+taskmanager.rpc.port: ${TASK_MANAGER_RPC_PORT}
+taskmanager.data.port: ${TASK_MANAGER_DATA_PORT}
+taskmanager.bind-host: 0.0.0.0
+taskmanager.memory.network.fraction: 0.1
+taskmanager.memory.network.min: 64mb
+taskmanager.memory.network.max: 256mb
+taskmanager.memory.managed.fraction: 0.3
+heartbeat.interval: 10000
+heartbeat.timeout: 180000
+"
+else
+    echo "Using dynamic configuration..."
+    mv "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" /opt/flink/conf/flink-conf.yaml
+fi
 
 # 创建临时目录
 mkdir -p /opt/flink/tmp

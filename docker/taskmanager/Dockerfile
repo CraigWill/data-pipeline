@@ -60,8 +60,8 @@ RUN set -ex && \
     done && \
     chown ${FLINK_USER}:${FLINK_USER} /opt/flink/lib/ojdbc8.jar
 
-# 复制应用程序JAR包
-COPY --chown=${FLINK_USER}:${FLINK_USER} flink-jobs/target/flink-jobs-*.jar /opt/flink/usrlib/flink-jobs.jar
+# 复制应用程序JAR包（保留原始文件名）
+COPY --chown=${FLINK_USER}:${FLINK_USER} flink-jobs/target/flink-jobs-*.jar /opt/flink/usrlib/
 
 # 复制Flink配置文件
 COPY --chown=${FLINK_USER}:${FLINK_USER} docker/taskmanager/flink-conf.yaml /opt/flink/conf/flink-conf.yaml

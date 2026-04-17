@@ -16,9 +16,31 @@ spec:
         component: jobmanager
     spec:
       serviceAccountName: flink
+      securityContext:
+        fsGroup: 9999
+      initContainers:
+      - name: fix-permissions
+        image: flink-jobmanager:v3-jarfix
+        imagePullPolicy: IfNotPresent
+        command: ['sh', '-c', 'chown -R 9999:9999 /data/checkpoints /data/savepoints /data/ha /data/output']
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: flink-data
+          mountPath: /data/checkpoints
+          subPath: checkpoints
+        - name: flink-data
+          mountPath: /data/savepoints
+          subPath: savepoints
+        - name: flink-data
+          mountPath: /data/ha
+          subPath: ha
+        - name: flink-data
+          mountPath: /data/output
+          subPath: output
       containers:
       - name: jobmanager
-        image: flink-jobmanager:latest
+        image: flink-jobmanager:v3-jarfix
         imagePullPolicy: IfNotPresent
         args: ["jobmanager"]
         ports:

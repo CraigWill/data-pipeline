@@ -113,10 +113,19 @@ monitoring:
 jwt:
   # JWT 密钥（必须通过环境变量 JWT_SECRET 设置）
   secret: ${JWT_SECRET}
-  # Token 过期时间（毫秒），默认 24 小时
-  expiration: ${JWT_EXPIRATION:86400000}
+  # Token 过期时间（毫秒），默认 2 小时
+  expiration: ${JWT_EXPIRATION:7200000}
+
+# 管理员初始密码（必须通过环境变量 ADMIN_INITIAL_PASSWORD 设置）
+admin:
+  initial-password: ${ADMIN_INITIAL_PASSWORD}
 
 # 密码加密配置
 encryption:
   # AES 加密密钥（必须通过环境变量 AES_ENCRYPTION_KEY 设置）
   aes-key: ${AES_ENCRYPTION_KEY}
+
+# CORS 配置
+cors:
+  # 允许的前端来源（逗号分隔，生产环境必须设置为实际域名）
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,http://localhost:8080}

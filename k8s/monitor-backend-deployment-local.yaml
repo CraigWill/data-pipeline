@@ -53,19 +53,19 @@ spec:
         - name: DATABASE_USERNAME
           value: "finance_user"
         - name: DATABASE_PASSWORD
-          value: "finance_user"
+          value: "CO9AKFeKC6vYyJ5yd6bXSQ=="
         - name: DATABASE_SID
           value: "helowin"
         - name: TZ
           value: "Asia/Shanghai"
         # JWT 安全配置
         - name: JWT_SECRET
-          value: "your-jwt-secret-here-min-32-chars-for-development"
+          value: "xGTMWGPrwsj9s1DtwQuQhl0GfLaetGcy0KXMAeaKIEIgv46z+SM3sg4+4q1GIlX2ApDK5GUw4wbEFCUn1Aa8LQ=="
         - name: JWT_EXPIRATION
           value: "86400000"
         # AES 密码加密配置
         - name: AES_ENCRYPTION_KEY
-          value: "dev-aes-key-1234"
+          value: "E5TDKE7NvyphzdaW0SIUfAhZl2v9sRnjHl1Egqx9arM="
         resources:
           requests:
             memory: "512Mi"

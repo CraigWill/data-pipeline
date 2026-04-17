@@ -4,6 +4,7 @@ import com.realtime.monitor.dto.ApiResponse;
 import com.realtime.monitor.service.FlinkService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -17,8 +18,17 @@ import java.util.Map;
 @RequestMapping("/api/jobs")
 @RequiredArgsConstructor
 public class JobController {
-    
+
+    private static final String SAVEPOINT_BASE = System.getProperty("flink.savepoint.base-dir", "file:///opt/flink/savepoints");
+
     private final FlinkService flinkService;
+
+    private void validateSavepointDirectory(String dir) {
+        if (dir == null || !dir.startsWith(SAVEPOINT_BASE)) {
+            throw new IllegalArgumentException(
+                "targetDirectory must be under " + SAVEPOINT_BASE);
+        }
+    }
     
     @GetMapping
     public ApiResponse<List<Map<String, Object>>> getJobs() {
@@ -65,15 +75,19 @@ public class JobController {
      * 带 Savepoint 停止作业（推荐方式，不丢失数据）
      */
     @PostMapping("/{jobId}/stop")
-    public ApiResponse<Map<String, Object>> stopJobWithSavepoint(
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stopJobWithSavepoint(
             @PathVariable String jobId,
             @RequestParam(defaultValue = "file:///opt/flink/savepoints") String targetDirectory) {
         try {
+            validateSavepointDirectory(targetDirectory);
             Map<String, Object> result = flinkService.stopJobWithSavepoint(jobId, targetDirectory);
-            return ApiResponse.success(result, "作业已停止，Savepoint 已创建");
+            return ResponseEntity.ok(ApiResponse.success(result, "作业已停止，Savepoint 已创建"));
+        } catch (IllegalArgumentException e) {
+            log.warn("Invalid savepoint directory: {}", targetDirectory);
+            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
-            return ApiResponse.error(e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));
         }
     }
     

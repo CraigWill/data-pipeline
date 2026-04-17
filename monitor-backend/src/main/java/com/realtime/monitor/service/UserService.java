@@ -2,12 +2,14 @@ package com.realtime.monitor.service;
 
 import com.realtime.monitor.entity.User;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.Collections;
@@ -23,17 +25,22 @@ public class UserService implements UserDetailsService {
     // 临时存储用户（生产环境应使用数据库）
     private final Map<String, User> users = new HashMap<>();
 
-    public UserService(PasswordEncoder passwordEncoder) {
+    public UserService(PasswordEncoder passwordEncoder,
+                       @Value("${admin.initial-password:}") String initialPassword) {
         this.passwordEncoder = passwordEncoder;
-        // 初始化默认管理员账户
-        initDefaultUsers();
+        initDefaultUsers(initialPassword);
     }
 
-    private void initDefaultUsers() {
+    private void initDefaultUsers(String initialPassword) {
+        if (!StringUtils.hasText(initialPassword)) {
+            throw new IllegalStateException(
+                "环境变量 ADMIN_INITIAL_PASSWORD 未设置！" +
+                "请在 .env 文件中设置此变量。生成示例: openssl rand -base64 16");
+        }
         User admin = new User();
         admin.setId(1L);
         admin.setUsername("admin");
-        admin.setPassword(passwordEncoder.encode("admin123")); // 默认密码
+        admin.setPassword(passwordEncoder.encode(initialPassword));
         admin.setEmail("admin@example.com");
         admin.setRole("ROLE_ADMIN");
         admin.setEnabled(true);
@@ -41,7 +48,7 @@ public class UserService implements UserDetailsService {
         admin.setUpdatedAt(LocalDateTime.now());
         users.put("admin", admin);
 
-        log.info("默认管理员账户已创建: username=admin, password=admin123");
+        log.info("默认管理员账户已初始化: username=admin");
     }
 
     @Override

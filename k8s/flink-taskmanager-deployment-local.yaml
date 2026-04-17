@@ -16,9 +16,26 @@ spec:
         component: taskmanager
     spec:
       serviceAccountName: flink
+      initContainers:
+      - name: fix-permissions
+        image: flink-taskmanager:v3-jarfix
+        imagePullPolicy: IfNotPresent
+        command: ['sh', '-c', 'chown -R 9999:9999 /data/checkpoints /data/savepoints /data/output']
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+        - name: flink-data
+          mountPath: /data/checkpoints
+          subPath: checkpoints
+        - name: flink-data
+          mountPath: /data/savepoints
+          subPath: savepoints
+        - name: flink-data
+          mountPath: /data/output
+          subPath: output
       containers:
       - name: taskmanager
-        image: flink-taskmanager:latest
+        image: flink-taskmanager:v3-jarfix
         imagePullPolicy: IfNotPresent
         args: ["taskmanager"]
         ports:

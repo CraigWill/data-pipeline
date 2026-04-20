@@ -562,6 +562,7 @@ public class CdcEventsService {
 
     /**
      * 获取文件内容（分页）
+     * 所有从文件读取的字符串字段均经过 HTML 实体编码，防止 XSS。
      */
     public Map<String, Object> getFileContent(String filePath, int page, int size) {
         List<Map<String, Object>> rows = new ArrayList<>();
@@ -587,10 +588,15 @@ public class CdcEventsService {
                     if (currentLine >= startLine && currentLine < endLine) {
                         Map<String, Object> row = new HashMap<>();
                         row.put("lineNumber", currentLine + 1);
-                        row.put("content", line);
-                        // 解析 CSV 字段
-                        String[] fields = line.split(",", -1);
-                        row.put("fields", fields);
+                        // HTML-encode the raw line to prevent XSS when rendered in a browser
+                        row.put("content", org.springframework.web.util.HtmlUtils.htmlEscape(line));
+                        // HTML-encode every CSV field individually
+                        String[] rawFields = line.split(",", -1);
+                        String[] encodedFields = new String[rawFields.length];
+                        for (int i = 0; i < rawFields.length; i++) {
+                            encodedFields[i] = org.springframework.web.util.HtmlUtils.htmlEscape(rawFields[i]);
+                        }
+                        row.put("fields", encodedFields);
                         rows.add(row);
                     }
                     currentLine++;
@@ -610,7 +616,8 @@ public class CdcEventsService {
         result.put("totalPages", (int) Math.ceil((double) totalLines / size));
         result.put("currentPage", page);
         result.put("pageSize", size);
-        result.put("filePath", filePath);
+        // Do not echo the user-supplied path back into the response
+        result.put("filePath", org.springframework.web.util.HtmlUtils.htmlEscape(filePath));
 
         return result;
     }

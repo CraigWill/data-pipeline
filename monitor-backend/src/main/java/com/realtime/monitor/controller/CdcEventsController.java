@@ -36,7 +36,9 @@ public class CdcEventsController {
         Path requested = Paths.get(path).normalize();
         Path base = Paths.get(BASE_DIR).normalize();
         if (!requested.startsWith(base)) {
-            throw new IllegalArgumentException("Path traversal detected: " + path);
+            // Log the actual value server-side only — never reflect it in the response
+            log.warn("Path traversal attempt blocked. Requested: {}", path);
+            throw new IllegalArgumentException("Invalid path: access outside the permitted directory is not allowed");
         }
     }
 
@@ -179,7 +181,7 @@ public class CdcEventsController {
     /**
      * 获取文件内容（分页）
      */
-    @GetMapping("/files/content")
+    @GetMapping(value = "/files/content", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ApiResponse<Map<String, Object>>> getFileContent(
             @RequestParam String path,
             @RequestParam(defaultValue = "1") int page,
@@ -189,8 +191,8 @@ public class CdcEventsController {
             Map<String, Object> result = cdcEventsService.getFileContent(path, page, size);
             return ResponseEntity.ok(ApiResponse.success(result));
         } catch (IllegalArgumentException e) {
-            log.warn("Path traversal attempt blocked: {}", path);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+            // Warning already logged inside validatePath — do not reflect user input
+            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid file path"));
         } catch (Exception e) {
             log.error("获取文件内容失败: {}", path, e);
             return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));

@@ -25,8 +25,9 @@ public class JobController {
 
     private void validateSavepointDirectory(String dir) {
         if (dir == null || !dir.startsWith(SAVEPOINT_BASE)) {
-            throw new IllegalArgumentException(
-                "targetDirectory must be under " + SAVEPOINT_BASE);
+            // Log the actual value server-side only — never reflect it in the response
+            log.warn("Invalid savepoint directory rejected: {}", dir);
+            throw new IllegalArgumentException("Invalid targetDirectory: must be under the permitted savepoint base");
         }
     }
     
@@ -83,8 +84,8 @@ public class JobController {
             Map<String, Object> result = flinkService.stopJobWithSavepoint(jobId, targetDirectory);
             return ResponseEntity.ok(ApiResponse.success(result, "作业已停止，Savepoint 已创建"));
         } catch (IllegalArgumentException e) {
-            log.warn("Invalid savepoint directory: {}", targetDirectory);
-            return ResponseEntity.badRequest().body(ApiResponse.error(e.getMessage()));
+            // Warning already logged inside validateSavepointDirectory — do not reflect user input
+            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid savepoint directory"));
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
             return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));

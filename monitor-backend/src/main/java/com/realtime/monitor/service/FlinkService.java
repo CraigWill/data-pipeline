@@ -8,8 +8,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import jakarta.annotation.PostConstruct;
+import java.net.URI;
 import java.util.*;
 
 /**
@@ -34,7 +36,6 @@ public class FlinkService {
     
     @PostConstruct
     public void init() {
-        // 设置较短的超时，避免 standby 节点长时间阻塞
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
                 new org.springframework.http.client.SimpleClientHttpRequestFactory();
         factory.setConnectTimeout(3000);
@@ -42,17 +43,54 @@ public class FlinkService {
         restTemplate = new RestTemplate(factory);
     }
 
+    // -------------------------------------------------------------------------
+    // URL construction helpers — all URLs go through UriComponentsBuilder so
+    // that path segments are percent-encoded and injection is prevented.
+    // -------------------------------------------------------------------------
+
     /**
-     * 获取所有候选 URL 列表（主 + 备）
+     * Build a safe URI from the leader base URL and one or more path segments.
+     * Each segment is encoded individually, preventing path traversal or host
+     * injection via user-supplied values like jobId / requestId.
      */
+    private URI buildUri(String base, String... pathSegments) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(base);
+        for (String segment : pathSegments) {
+            builder.pathSegment(segment);
+        }
+        return builder.build().toUri();
+    }
+
+    /**
+     * Validate that a candidate base URL uses http/https and does not contain
+     * unexpected characters that could redirect requests to unintended hosts.
+     */
+    private boolean isAllowedBaseUrl(String url) {
+        if (url == null || url.isBlank()) return false;
+        try {
+            URI uri = URI.create(url.trim());
+            String scheme = uri.getScheme();
+            return "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Leader discovery
+    // -------------------------------------------------------------------------
+
     private List<String> getCandidateUrls() {
         List<String> urls = new ArrayList<>();
-        urls.add(appConfig.getFlinkRestUrl());
+        String primary = appConfig.getFlinkRestUrl();
+        if (isAllowedBaseUrl(primary)) {
+            urls.add(primary.trim());
+        }
         String extra = appConfig.getFlinkRestUrls();
         if (extra != null && !extra.isBlank()) {
             for (String u : extra.split(",")) {
                 String trimmed = u.trim();
-                if (!trimmed.isEmpty() && !urls.contains(trimmed)) {
+                if (!trimmed.isEmpty() && isAllowedBaseUrl(trimmed) && !urls.contains(trimmed)) {
                     urls.add(trimmed);
                 }
             }
@@ -60,50 +98,48 @@ public class FlinkService {
         return urls;
     }
 
-    /**
-     * 获取活跃 leader 的 URL，带缓存
-     */
     private String getLeaderUrl() {
         long now = System.currentTimeMillis();
         if (activeLeaderUrl != null && (now - lastLeaderCheckTime) < LEADER_CACHE_TTL) {
             return activeLeaderUrl;
         }
-        // 重新探测 leader
-        for (String url : getCandidateUrls()) {
+        for (String base : getCandidateUrls()) {
             try {
-                String testUrl = url + "/jobs/overview";
-                ResponseEntity<String> resp = restTemplate.getForEntity(testUrl, String.class);
+                URI testUri = buildUri(base, "jobs", "overview");
+                ResponseEntity<String> resp = restTemplate.getForEntity(testUri, String.class);
                 if (resp.getStatusCode().is2xxSuccessful()) {
-                    if (!url.equals(activeLeaderUrl)) {
-                        log.info("Flink leader: {}", url);
+                    if (!base.equals(activeLeaderUrl)) {
+                        log.info("Flink leader: {}", base);
                     }
-                    activeLeaderUrl = url;
+                    activeLeaderUrl = base;
                     lastLeaderCheckTime = now;
-                    return url;
+                    return base;
                 }
             } catch (Exception e) {
-                log.debug("Flink 候选节点 {} 不可用: {}", url, e.getMessage());
+                log.debug("Flink 候选节点 {} 不可用: {}", base, e.getMessage());
             }
         }
-        // 所有节点都不可用，返回主 URL（让调用方处理异常）
         log.warn("未找到可用的 Flink leader，使用默认 URL");
-        return appConfig.getFlinkRestUrl();
+        String fallback = appConfig.getFlinkRestUrl();
+        if (!isAllowedBaseUrl(fallback)) {
+            throw new IllegalStateException("Flink REST URL 配置无效: " + fallback);
+        }
+        return fallback.trim();
     }
 
-    /** 获取活跃 leader URL（供其他服务使用） */
     public String getActiveLeaderUrl() {
         return getLeaderUrl();
     }
-    
-    /**
-     * 获取所有作业列表
-     */
+
+    // -------------------------------------------------------------------------
+    // API methods — all use buildUri() instead of string concatenation
+    // -------------------------------------------------------------------------
+
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getJobs() {
         try {
-            String url = getLeaderUrl() + "/jobs/overview";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
+            URI uri = buildUri(getLeaderUrl(), "jobs", "overview");
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode root = objectMapper.readTree(response.getBody());
                 JsonNode jobs = root.get("jobs");
@@ -120,16 +156,12 @@ public class FlinkService {
         }
         return Collections.emptyList();
     }
-    
-    /**
-     * 获取作业详情
-     */
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> getJobDetail(String jobId) {
         try {
-            String url = getLeaderUrl() + "/jobs/" + jobId;
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
+            URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return objectMapper.readValue(response.getBody(), Map.class);
             }
@@ -138,20 +170,15 @@ public class FlinkService {
         }
         return Collections.emptyMap();
     }
-    
-    /**
-     * 获取作业指标
-     */
+
     public Map<String, Object> getJobMetrics(String jobId) {
         Map<String, Object> jobData = getJobDetail(jobId);
-        
         Map<String, Object> metrics = new HashMap<>();
         metrics.put("job_id", jobId);
         metrics.put("name", jobData.get("name"));
         metrics.put("state", jobData.get("state"));
         metrics.put("start_time", jobData.get("start-time"));
         metrics.put("duration", jobData.get("duration"));
-        
         List<Map<String, Object>> vertices = new ArrayList<>();
         Object verticesObj = jobData.get("vertices");
         if (verticesObj instanceof List) {
@@ -168,44 +195,22 @@ public class FlinkService {
             }
         }
         metrics.put("vertices", vertices);
-        
         return metrics;
     }
-    
+
     /**
-     * 取消作业
-     */
-    /**
-     * 取消作业
-     * 注意：Java 11 的 HttpURLConnection 不支持 PATCH 方法，
-     * 所以用 HttpURLConnection + 反射 hack 来发送 PATCH 请求
+     * 取消作业（使用 RestTemplate + PATCH via exchange，避免反射 hack）
      */
     public void cancelJob(String jobId) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "?mode=cancel";
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
+        // Flink cancel endpoint accepts PATCH
         try {
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
-                    new java.net.URL(url).openConnection();
-            conn.setRequestMethod("POST");
-            // Flink REST API 接受 PATCH，但 HttpURLConnection 不支持
-            // 使用反射强制设置 method 为 PATCH
-            try {
-                java.lang.reflect.Field methodField = java.net.HttpURLConnection.class.getDeclaredField("method");
-                methodField.setAccessible(true);
-                methodField.set(conn, "PATCH");
-            } catch (Exception e) {
-                // 反射失败时回退：直接用 POST 到 yarn-cancel 端点
-                conn.disconnect();
-                conn = (java.net.HttpURLConnection)
-                        new java.net.URL(getLeaderUrl() + "/jobs/" + jobId + "/yarn-cancel").openConnection();
-                conn.setRequestMethod("GET");
-            }
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setDoOutput(false);
-
-            int code = conn.getResponseCode();
-            conn.disconnect();
-            if (code < 200 || code >= 300) {
-                throw new RuntimeException("取消作业失败: HTTP " + code);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> entity = new HttpEntity<>("{\"mode\":\"cancel\"}", headers);
+            ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.PATCH, entity, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException("取消作业失败: HTTP " + response.getStatusCode());
             }
             log.info("作业已取消: {}", jobId);
         } catch (RuntimeException re) {
@@ -214,16 +219,12 @@ public class FlinkService {
             throw new RuntimeException("取消作业失败: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * 获取集群概览
-     */
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> getClusterOverview() {
         try {
-            String url = getLeaderUrl() + "/overview";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
+            URI uri = buildUri(getLeaderUrl(), "overview");
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return objectMapper.readValue(response.getBody(), Map.class);
             }
@@ -232,16 +233,12 @@ public class FlinkService {
         }
         return Collections.emptyMap();
     }
-    
-    /**
-     * 获取 TaskManager 列表
-     */
+
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getTaskManagers() {
         try {
-            String url = getLeaderUrl() + "/taskmanagers";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
+            URI uri = buildUri(getLeaderUrl(), "taskmanagers");
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode root = objectMapper.readTree(response.getBody());
                 JsonNode taskmanagers = root.get("taskmanagers");
@@ -258,16 +255,12 @@ public class FlinkService {
         }
         return Collections.emptyList();
     }
-    
-    /**
-     * 获取 JobManager 配置
-     */
+
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getJobManagerConfig() {
         try {
-            String url = getLeaderUrl() + "/jobmanager/config";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
+            URI uri = buildUri(getLeaderUrl(), "jobmanager", "config");
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return objectMapper.readValue(response.getBody(), List.class);
             }
@@ -276,53 +269,39 @@ public class FlinkService {
         }
         return Collections.emptyList();
     }
-    
-    /**
-     * 获取运行中的作业
-     */
+
     public List<Map<String, Object>> getRunningJobs() {
-        List<Map<String, Object>> allJobs = getJobs();
         List<Map<String, Object>> runningJobs = new ArrayList<>();
-        
-        for (Map<String, Object> job : allJobs) {
+        for (Map<String, Object> job : getJobs()) {
             if ("RUNNING".equals(job.get("state"))) {
                 runningJobs.add(job);
             }
         }
-        
         return runningJobs;
     }
-    
-    /**
-     * 检查 Flink 连接状态
-     */
+
     public boolean isFlinkHealthy() {
         try {
-            String url = getLeaderUrl() + "/overview";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
+            URI uri = buildUri(getLeaderUrl(), "overview");
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             return response.getStatusCode().is2xxSuccessful();
         } catch (Exception e) {
             log.warn("Flink 连接检查失败: {}", e.getMessage());
             return false;
         }
     }
-    
-    /**
-     * 触发 Savepoint（不停止作业，仅创建快照）
-     */
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> triggerSavepoint(String jobId, String targetDirectory) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "/savepoints";
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "savepoints");
         try {
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("target-directory", targetDirectory);
             requestBody.put("cancel-job", false);
-
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+            ResponseEntity<String> response = restTemplate.postForEntity(uri, entity, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
                 String requestId = (String) result.get("request-id");
@@ -337,74 +316,50 @@ public class FlinkService {
         }
     }
 
-    /**
-     * 带 Savepoint 停止作业（推荐方式，不丢失数据）
-     * 
-     * 这会触发一个 savepoint，然后停止作业。
-     * 作业可以从这个 savepoint 恢复，不会丢失任何数据。
-     */
     @SuppressWarnings("unchecked")
     public Map<String, Object> stopJobWithSavepoint(String jobId, String targetDirectory) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "/stop";
-        
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "stop");
         try {
-            // 构建请求体
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("targetDirectory", targetDirectory);
-            requestBody.put("drain", false);  // 不等待所有数据处理完成
-            
+            requestBody.put("drain", false);
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-            
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
-            
+            ResponseEntity<String> response = restTemplate.postForEntity(uri, entity, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
                 String requestId = (String) result.get("request-id");
-                
-                // 等待 savepoint 完成
                 if (requestId != null) {
                     Map<String, Object> savepointResult = waitForSavepoint(jobId, requestId);
                     result.putAll(savepointResult);
                 }
-                
                 log.info("作业 {} 已停止，Savepoint: {}", jobId, result.get("location"));
                 return result;
             }
-            
             throw new RuntimeException("停止作业失败: HTTP " + response.getStatusCode());
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
             throw new RuntimeException("停止作业失败: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * 等待 Savepoint 完成
-     */
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> waitForSavepoint(String jobId, String requestId) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "/savepoints/" + requestId;
-        
-        int maxRetries = 60;  // 最多等待60秒
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "savepoints", requestId);
+        int maxRetries = 60;
         for (int i = 0; i < maxRetries; i++) {
             try {
                 Thread.sleep(1000);
-                
-                ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
+                ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
                 if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                     Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
                     Map<String, Object> status = (Map<String, Object>) result.get("status");
-                    
                     if (status != null) {
                         String statusId = (String) status.get("id");
                         if ("COMPLETED".equals(statusId)) {
                             Map<String, Object> operation = (Map<String, Object>) result.get("operation");
-                            if (operation != null) {
-                                return operation;
-                            }
-                            return result;
+                            return operation != null ? operation : result;
                         } else if ("FAILED".equals(statusId)) {
                             Map<String, Object> operation = (Map<String, Object>) result.get("operation");
                             String failureCause = operation != null ? (String) operation.get("failure-cause") : "Unknown";
@@ -421,19 +376,14 @@ public class FlinkService {
                 log.warn("检查 Savepoint 状态失败: {}", e.getMessage());
             }
         }
-        
         throw new RuntimeException("等待 Savepoint 超时");
     }
-    
-    /**
-     * 获取作业的 Checkpoint 信息
-     */
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> getCheckpoints(String jobId) {
         try {
-            String url = getLeaderUrl() + "/jobs/" + jobId + "/checkpoints";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
+            URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "checkpoints");
+            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return objectMapper.readValue(response.getBody(), Map.class);
             }

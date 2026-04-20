@@ -3,6 +3,7 @@ package com.realtime.monitor.service;
 import com.realtime.monitor.dto.CdcSubmitRequest;
 import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
+import com.realtime.monitor.util.PasswordEncryptionUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -25,15 +26,36 @@ public class CdcTaskService {
     private final RuntimeJobService runtimeJobService;
 
     /**
+     * 从 DataSourceConfig 中解析出可直接用于 JDBC 的明文密码。
+     *
+     * 前端可能传来两种形式：
+     *   1. 明文密码（ad-hoc 测试/发现场景）
+     *   2. 已加密密码（从 DataSourceService.loadDataSource 返回后再传入）
+     *
+     * 规则：先尝试 AES/GCM 解密；若解密失败则视为明文直接使用。
+     * 这样无论前端传来哪种形式，都能得到正确的明文密码用于 JDBC 连接。
+     */
+    private String resolvePlainPassword(DataSourceConfig config) {
+        String raw = config.getPassword();
+        if (raw == null || raw.isEmpty()) {
+            return raw;
+        }
+        try {
+            return PasswordEncryptionUtil.decryptAES(raw);
+        } catch (Exception e) {
+            // 解密失败 → 密码本身就是明文，直接使用
+            log.debug("密码解密失败，视为明文使用（这在 ad-hoc 场景下是正常的）");
+            return raw;
+        }
+    }
+
+    /**
      * 测试数据库连接
      */
     public Map<String, Object> testConnection(DataSourceConfig config) {
         String jdbcUrl = buildJdbcUrl(config);
-        
-        // 前端传来的是明文密码，直接使用
-        String password = config.getPassword();
-        log.debug("使用明文密码测试连接");
-        
+        String password = resolvePlainPassword(config);
+
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
              Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT 1 FROM DUAL")) {
@@ -51,15 +73,12 @@ public class CdcTaskService {
      */
     public List<String> discoverSchemas(DataSourceConfig config) throws Exception {
         String jdbcUrl = buildJdbcUrl(config);
+        String password = resolvePlainPassword(config);
         String sql = "SELECT DISTINCT owner FROM all_tables " +
                 "WHERE owner NOT IN ('SYS','SYSTEM','OUTLN','DBSNMP','APPQOSSYS'," +
                 "'WMSYS','EXFSYS','CTXSYS','XDB','ANONYMOUS'," +
                 "'ORDSYS','ORDDATA','MDSYS','OLAPSYS') " +
                 "ORDER BY owner";
-
-        // 前端传来的是明文密码，直接使用
-        String password = config.getPassword();
-        log.debug("使用明文密码发现 Schema");
 
         List<String> schemas = new ArrayList<>();
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
@@ -77,6 +96,7 @@ public class CdcTaskService {
      */
     public List<Map<String, Object>> discoverTables(DataSourceConfig config, String schema) throws Exception {
         String jdbcUrl = buildJdbcUrl(config);
+        String password = resolvePlainPassword(config);
         String sql = "SELECT t.table_name, " +
                 "CAST(NVL(t.num_rows, 0) AS NUMBER(10)) AS row_count, " +
                 "(SELECT COUNT(*) FROM all_tab_columns c WHERE c.owner = ? AND c.table_name = t.table_name) AS col_count " +
@@ -86,10 +106,6 @@ public class CdcTaskService {
                 "AND t.table_name NOT LIKE '%$%' " +
                 "AND t.temporary = 'N' " +
                 "ORDER BY t.table_name, t.num_rows DESC NULLS LAST";
-
-        // 前端传来的是明文密码，直接使用
-        String password = config.getPassword();
-        log.debug("使用明文密码发现表");
 
         Map<String, Map<String, Object>> uniqueTables = new LinkedHashMap<>();
 
@@ -335,12 +351,18 @@ public class CdcTaskService {
         taskConfig.setParallelism(request.getParallelism());
         taskConfig.setSplitSize(request.getSplitSize());
 
-        // 设置数据库配置
+        // 设置数据库配置，对前端传入的明文密码进行加密后存储
         TaskConfig.DatabaseConfig dbConfig = new TaskConfig.DatabaseConfig();
         dbConfig.setHost(request.getHostname());
         dbConfig.setPort(request.getPort());
         dbConfig.setUsername(request.getUsername());
-        dbConfig.setPassword(request.getPassword());
+        // 加密密码：前端传来明文，存储前加密
+        try {
+            dbConfig.setPassword(PasswordEncryptionUtil.encryptAES(request.getPassword()));
+        } catch (Exception e) {
+            log.error("submitDirect 密码加密失败", e);
+            throw new RuntimeException("密码加密失败", e);
+        }
         dbConfig.setSid(request.getDatabase());
         dbConfig.setSchema(request.getSchema());
         taskConfig.setDatabase(dbConfig);

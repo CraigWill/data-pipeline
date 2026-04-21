@@ -1,3 +1,7 @@
+# kiro
+.kiro/
+monitor/frontend-vue/node_modules/
+.local-pids/
 # Maven
 target/
 pom.xml.tag
@@ -60,4 +64,5 @@ monitor/config/datasources/*.json
 
 # Environment
 .env
+.env.local
 !.env.example

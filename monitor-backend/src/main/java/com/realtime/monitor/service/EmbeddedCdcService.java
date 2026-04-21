@@ -29,8 +29,10 @@ import java.util.*;
 public class EmbeddedCdcService {
 
     private static final String CDC_MAIN_CLASS = "com.realtime.pipeline.CdcJobMain";
-    /** flink-jobs JAR 路径（从 JobManager 容器挂载的共享目录） */
-    private static final String LOCAL_JAR_PATH = "/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar";
+
+    /** flink-jobs JAR 路径，可通过配置覆盖（本地开发 vs 容器部署） */
+    @org.springframework.beans.factory.annotation.Value("${flink.job.jar-path:/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar}")
+    private String localJarPath;
 
     private final AppConfig appConfig;
     private final DataSourceService dataSourceService;
@@ -74,6 +76,10 @@ public class EmbeddedCdcService {
             programArgs.add("--splitSize"); programArgs.add(String.valueOf(
                     request.getSplitSize() > 0 ? request.getSplitSize() : 8096));
             
+            // Checkpoint/Savepoint 目录（本地 vs Docker 路径不同）
+            programArgs.add("--checkpointDir"); programArgs.add(appConfig.getCheckpointDir());
+            programArgs.add("--savepointDir"); programArgs.add(appConfig.getSavepointDir());
+
             // 添加作业名称参数
             if (request.getJobName() != null && !request.getJobName().isEmpty()) {
                 programArgs.add("--jobName");
@@ -214,9 +220,9 @@ public class EmbeddedCdcService {
      * 上传本地 JAR 到 Flink 集群（流式上传，避免 OOM）
      */
     private String uploadJar() throws Exception {
-        File jarFile = new File(LOCAL_JAR_PATH);
+        File jarFile = new File(localJarPath);
         if (!jarFile.exists()) {
-            throw new RuntimeException("本地 JAR 文件不存在: " + LOCAL_JAR_PATH);
+            throw new RuntimeException("本地 JAR 文件不存在: " + localJarPath);
         }
 
         String url = flinkService.getActiveLeaderUrl() + "/jars/upload";

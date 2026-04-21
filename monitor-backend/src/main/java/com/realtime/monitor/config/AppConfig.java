@@ -27,6 +27,12 @@ public class AppConfig {
     
     @Value("${config.dir:/app/config}")
     private String configDir;
+
+    @Value("${flink.checkpoint.dir:file:///opt/flink/checkpoints}")
+    private String checkpointDir;
+
+    @Value("${flink.savepoint.dir:file:///opt/flink/savepoints}")
+    private String savepointDir;
     
     @Value("${oracle.container:oracle11g}")
     private String oracleContainer;

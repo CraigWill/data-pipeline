@@ -144,7 +144,34 @@ public class CdcTaskService {
 
     private String buildJdbcUrl(DataSourceConfig config) {
         return String.format("jdbc:oracle:thin:@%s:%d:%s",
-                config.getHost(), config.getPort(), config.getSid());
+                resolveHost(config.getHost()), config.getPort(), config.getSid());
+    }
+
+    /**
+     * 将 Docker 内部主机名转换为本地可访问地址。
+     *
+     * 数据源配置可能在 Docker 环境中保存，使用 host.docker.internal 作为主机名。
+     * 在本地（非 Docker）环境中，该主机名无法解析，需替换为 localhost。
+     */
+    private String resolveHost(String host) {
+        if ("host.docker.internal".equalsIgnoreCase(host)) {
+            // Check if we're running inside Docker: /proc/1/cgroup exists and contains "docker"
+            boolean insideDocker = false;
+            try {
+                java.nio.file.Path cgroupPath = java.nio.file.Paths.get("/proc/1/cgroup");
+                if (java.nio.file.Files.exists(cgroupPath)) {
+                    String content = java.nio.file.Files.readString(cgroupPath);
+                    insideDocker = content.contains("docker") || content.contains("kubepods");
+                }
+            } catch (Exception ignored) {
+                // /proc not available (macOS/Windows) → definitely not inside Docker
+            }
+            if (!insideDocker) {
+                log.debug("Replacing host.docker.internal with localhost for local execution");
+                return "localhost";
+            }
+        }
+        return host;
     }
 
     /**

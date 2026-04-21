@@ -5,6 +5,7 @@ import com.realtime.monitor.service.CdcEventsService;
 import com.realtime.monitor.service.CdcStatsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -18,27 +19,35 @@ import java.util.Map;
 /**
  * CDC 事件监控 API
  */
-/**
- * CDC 事件监控 API
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/cdc/events")
 @RequiredArgsConstructor
 public class CdcEventsController {
 
-    private static final String BASE_DIR = System.getProperty("cdc.events.base-dir", "/opt/flink/output");
+    /** Must match the same property used by CdcEventsService so validation and file access use the same root */
+    @Value("${output.path:./output/cdc}")
+    private String baseDir;
 
     private final CdcEventsService cdcEventsService;
     private final CdcStatsService cdcStatsService;
 
     private void validatePath(String path) {
-        Path requested = Paths.get(path).normalize();
-        Path base = Paths.get(BASE_DIR).normalize();
-        if (!requested.startsWith(base)) {
-            // Log the actual value server-side only — never reflect it in the response
-            log.warn("Path traversal attempt blocked. Requested: {}", path);
-            throw new IllegalArgumentException("Invalid path: access outside the permitted directory is not allowed");
+        try {
+            // Resolve the user-supplied path against baseDir so that relative
+            // paths like "2026-04-15--11/file.csv" are anchored to the base dir.
+            // Then normalize to collapse any ".." segments.
+            Path base = Paths.get(baseDir).normalize().toAbsolutePath();
+            Path resolved = base.resolve(path).normalize().toAbsolutePath();
+            if (!resolved.startsWith(base)) {
+                log.warn("Path traversal attempt blocked. Requested: {}", path);
+                throw new IllegalArgumentException("Invalid path: access outside the permitted directory is not allowed");
+            }
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("Path validation error for: {}", path);
+            throw new IllegalArgumentException("Invalid path");
         }
     }
 

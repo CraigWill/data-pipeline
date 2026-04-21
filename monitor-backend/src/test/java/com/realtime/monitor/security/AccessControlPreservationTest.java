@@ -152,7 +152,7 @@ class AccessControlPreservationTest {
                 .thenReturn(mockResult);
 
         mockMvc.perform(get("/api/cdc/events/files/content")
-                        .param("path", "/opt/flink/output/test.log"))
+                        .param("path", "test.log"))
                 .andExpect(status().isOk()); // 200
     }
 

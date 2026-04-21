@@ -8,6 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.HtmlUtils;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import jakarta.annotation.PostConstruct;
@@ -41,6 +42,47 @@ public class FlinkService {
         factory.setConnectTimeout(3000);
         factory.setReadTimeout(10000);
         restTemplate = new RestTemplate(factory);
+    }
+
+    // -------------------------------------------------------------------------
+    // XSS sanitization — HTML-escape all string values in Maps/Lists returned
+    // from the Flink REST API before they reach the frontend.
+    // -------------------------------------------------------------------------
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> sanitize(Map<String, Object> map) {
+        if (map == null || map.isEmpty()) return map;
+        Map<String, Object> safe = new HashMap<>(map.size());
+        for (Map.Entry<String, Object> entry : map.entrySet()) {
+            safe.put(entry.getKey(), sanitizeValue(entry.getValue()));
+        }
+        return safe;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> sanitizeList(List<Map<String, Object>> list) {
+        if (list == null || list.isEmpty()) return list;
+        List<Map<String, Object>> safe = new ArrayList<>(list.size());
+        for (Map<String, Object> item : list) {
+            safe.add(sanitize(item));
+        }
+        return safe;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object sanitizeValue(Object value) {
+        if (value instanceof String) {
+            return HtmlUtils.htmlEscape((String) value);
+        } else if (value instanceof Map) {
+            return sanitize((Map<String, Object>) value);
+        } else if (value instanceof List) {
+            List<Object> safeList = new ArrayList<>();
+            for (Object item : (List<?>) value) {
+                safeList.add(sanitizeValue(item));
+            }
+            return safeList;
+        }
+        return value; // numbers, booleans, nulls pass through
     }
 
     // -------------------------------------------------------------------------
@@ -148,7 +190,7 @@ public class FlinkService {
                     for (JsonNode job : jobs) {
                         result.add(objectMapper.convertValue(job, Map.class));
                     }
-                    return result;
+                    return sanitizeList(result);
                 }
             }
         } catch (Exception e) {
@@ -163,7 +205,7 @@ public class FlinkService {
             URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
             ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), Map.class);
+                return sanitize(objectMapper.readValue(response.getBody(), Map.class));
             }
         } catch (Exception e) {
             log.error("获取作业详情失败: {}", jobId, e);
@@ -226,7 +268,7 @@ public class FlinkService {
             URI uri = buildUri(getLeaderUrl(), "overview");
             ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), Map.class);
+                return sanitize(objectMapper.readValue(response.getBody(), Map.class));
             }
         } catch (Exception e) {
             log.error("获取集群概览失败", e);
@@ -247,7 +289,7 @@ public class FlinkService {
                     for (JsonNode tm : taskmanagers) {
                         result.add(objectMapper.convertValue(tm, Map.class));
                     }
-                    return result;
+                    return sanitizeList(result);
                 }
             }
         } catch (Exception e) {
@@ -262,7 +304,8 @@ public class FlinkService {
             URI uri = buildUri(getLeaderUrl(), "jobmanager", "config");
             ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), List.class);
+                List<Map<String, Object>> raw = objectMapper.readValue(response.getBody(), List.class);
+                return sanitizeList(raw);
             }
         } catch (Exception e) {
             log.error("获取 JobManager 配置失败", e);
@@ -306,7 +349,7 @@ public class FlinkService {
                 Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
                 String requestId = (String) result.get("request-id");
                 if (requestId != null) {
-                    return waitForSavepoint(jobId, requestId);
+                    return sanitize(waitForSavepoint(jobId, requestId));
                 }
             }
             throw new RuntimeException("触发 savepoint 失败: HTTP " + response.getStatusCode());
@@ -335,7 +378,7 @@ public class FlinkService {
                     result.putAll(savepointResult);
                 }
                 log.info("作业 {} 已停止，Savepoint: {}", jobId, result.get("location"));
-                return result;
+                return sanitize(result);
             }
             throw new RuntimeException("停止作业失败: HTTP " + response.getStatusCode());
         } catch (Exception e) {
@@ -385,7 +428,7 @@ public class FlinkService {
             URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "checkpoints");
             ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), Map.class);
+                return sanitize(objectMapper.readValue(response.getBody(), Map.class));
             }
         } catch (Exception e) {
             log.error("获取 Checkpoint 信息失败: {}", jobId, e);

@@ -111,7 +111,7 @@ services:
     restart: unless-stopped
     # 健康检查配置（需求 8.8）
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      test: ["CMD-SHELL", "pgrep -f StandaloneSessionClusterEntrypoint || exit 1"]
       interval: 30s
       timeout: 10s
       start_period: 60s
@@ -188,7 +188,7 @@ services:
       - flink-network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      test: ["CMD-SHELL", "pgrep -f StandaloneSessionClusterEntrypoint || exit 1"]
       interval: 30s
       timeout: 10s
       start_period: 60s
@@ -287,7 +287,7 @@ services:
   monitor-backend:
     build:
       context: .
-      dockerfile: monitor/Dockerfile
+      dockerfile: monitor-backend/Dockerfile
     container_name: flink-monitor-backend
     depends_on:
       jobmanager:
@@ -311,6 +311,8 @@ services:
       - JWT_EXPIRATION=${JWT_EXPIRATION:-86400000}
       # AES 密码加密配置（必须通过环境变量设置）
       - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
+      # 管理员初始密码
+      - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
     volumes:
       - ./output:/app/output
       - ./monitor/config:/app/config

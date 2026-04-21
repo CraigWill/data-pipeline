@@ -34,21 +34,29 @@ mkdir -p "$LOG_DIR" "$PID_DIR"
 # 环境变量加载
 # ==========================================
 load_env() {
-    if [ -f "$PROJECT_ROOT/.env" ]; then
+    if [ -f "$PROJECT_ROOT/.env.local" ]; then
+        set -a
+        source "$PROJECT_ROOT/.env.local"
+        set +a
+        echo -e "${GREEN}✓ 已加载 .env.local（本地开发配置）${NC}"
+    elif [ -f "$PROJECT_ROOT/.env" ]; then
         set -a
         source "$PROJECT_ROOT/.env"
         set +a
-        echo -e "${GREEN}✓ 已加载 .env${NC}"
+        echo -e "${YELLOW}⚠ 未找到 .env.local，已加载 .env（Docker 配置，部分路径可能不适用）${NC}"
     else
-        echo -e "${YELLOW}⚠ 未找到 .env，使用默认值（请先复制 .env.example 为 .env）${NC}"
+        echo -e "${YELLOW}⚠ 未找到 .env.local 或 .env，使用默认值${NC}"
     fi
 
-    # 本地运行：将 Docker 容器名替换为 localhost
-    # Oracle 容器通过端口映射暴露到宿主机 localhost
+    # 本地运行：如果 DATABASE_HOST 仍是 Docker 容器名，替换为 localhost
     if [ "${DATABASE_HOST}" = "oracle11g" ] || [ "${DATABASE_HOST}" = "oracle" ]; then
-        echo -e "${YELLOW}  ⚠ DATABASE_HOST=${DATABASE_HOST} 是 Docker 容器名，本地运行改为 localhost${NC}"
+        echo -e "${YELLOW}  ⚠ DATABASE_HOST=${DATABASE_HOST} 是容器名，本地运行改为 localhost${NC}"
         export DATABASE_HOST=localhost
     fi
+
+    # 本地运行：覆盖 Docker 容器路径为本地路径
+    export CHECKPOINT_DIR="${CHECKPOINT_DIR:-file:///tmp/flink-checkpoints}"
+    export SAVEPOINT_DIR="${SAVEPOINT_DIR:-file:///tmp/flink-savepoints}"
 
     # 其他本地运行必需的默认值
     export DATABASE_PORT="${DATABASE_PORT:-1521}"
@@ -217,6 +225,7 @@ start_backend() {
         -DJWT_SECRET="$JWT_SECRET" \
         -DJWT_EXPIRATION="${JWT_EXPIRATION:-86400000}" \
         -DAES_ENCRYPTION_KEY="$AES_ENCRYPTION_KEY" \
+        -DADMIN_INITIAL_PASSWORD="$ADMIN_INITIAL_PASSWORD" \
         -DTZ=Asia/Shanghai \
         -jar "$JAR" \
         > "$LOG_DIR/backend.log" 2>&1 &
@@ -287,6 +296,25 @@ start_flink() {
 
     # 确保 checkpoint 目录存在
     mkdir -p /tmp/flink-checkpoints /tmp/flink-savepoints
+
+    # Java 17+ 模块系统：Flink 1.20 需要 --add-opens 才能在 Java 17+ 上运行
+    export JVM_ARGS="${JVM_ARGS} --add-opens=java.base/java.util=ALL-UNNAMED"
+    export JVM_ARGS="${JVM_ARGS} --add-opens=java.base/java.lang=ALL-UNNAMED"
+    export JVM_ARGS="${JVM_ARGS} --add-opens=java.base/java.lang.reflect=ALL-UNNAMED"
+    export JVM_ARGS="${JVM_ARGS} --add-opens=java.base/java.io=ALL-UNNAMED"
+    export JVM_ARGS="${JVM_ARGS} --add-opens=java.base/java.net=ALL-UNNAMED"
+    export JVM_ARGS="${JVM_ARGS} --add-opens=java.base/java.nio=ALL-UNNAMED"
+    export JVM_ARGS="${JVM_ARGS} --add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+
+    # Flink 使用 FLINK_ENV_JAVA_OPTS 传递额外 JVM 参数
+    export FLINK_ENV_JAVA_OPTS="${FLINK_ENV_JAVA_OPTS} ${JVM_ARGS}"
+
+    # 覆盖 Flink 配置中的 Docker 路径为本地路径
+    # Flink 1.20 使用 FLINK_PROPERTIES 环境变量覆盖 flink-conf.yaml
+    export FLINK_PROPERTIES="${FLINK_PROPERTIES}
+state.checkpoints.dir: file:///tmp/flink-checkpoints
+state.savepoints.dir: file:///tmp/flink-savepoints
+"
 
     "$FLINK_HOME/bin/start-cluster.sh" 2>&1 | grep -v "^$"
 

@@ -24,6 +24,7 @@ import org.springframework.security.web.authentication.WebAuthenticationDetailsS
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -49,10 +50,12 @@ public class SecurityConfig {
                                           UserDetailsService userDetailsService) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
-            .cors(Customizer.withDefaults())
+            .cors(cors -> cors.disable())
             .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                // Allow async re-dispatches (SSE) without re-authentication
+                .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 // 公开端点
                 .requestMatchers("/api/auth/login", "/api/auth/logout").permitAll()
                 .requestMatchers("/actuator/health").permitAll()

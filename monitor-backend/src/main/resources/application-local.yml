@@ -21,6 +21,15 @@ app:
     rest-urls:
       - ${FLINK_REST_URL:http://localhost:8081}
 
+# Flink job JAR 路径（本地开发：使用 Maven 构建输出）
+flink:
+  job:
+    jar-path: ${FLINK_JOB_JAR_PATH:flink-jobs/target/flink-jobs-1.0.0-SNAPSHOT.jar}
+  checkpoint:
+    dir: ${CHECKPOINT_DIR:file:///tmp/flink-checkpoints}
+  savepoint:
+    dir: ${SAVEPOINT_DIR:file:///tmp/flink-savepoints}
+
 # 日志输出到文件
 logging:
   file:

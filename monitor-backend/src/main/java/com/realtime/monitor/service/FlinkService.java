@@ -8,12 +8,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
-import org.springframework.web.util.HtmlUtils;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import jakarta.annotation.PostConstruct;
 import java.net.URI;
 import java.util.*;
+
+import static com.realtime.monitor.util.XssSanitizer.sanitize;
+import static com.realtime.monitor.util.XssSanitizer.sanitizeList;
 
 /**
  * Flink REST API 服务
@@ -42,47 +44,6 @@ public class FlinkService {
         factory.setConnectTimeout(3000);
         factory.setReadTimeout(10000);
         restTemplate = new RestTemplate(factory);
-    }
-
-    // -------------------------------------------------------------------------
-    // XSS sanitization — HTML-escape all string values in Maps/Lists returned
-    // from the Flink REST API before they reach the frontend.
-    // -------------------------------------------------------------------------
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> sanitize(Map<String, Object> map) {
-        if (map == null || map.isEmpty()) return map;
-        Map<String, Object> safe = new HashMap<>(map.size());
-        for (Map.Entry<String, Object> entry : map.entrySet()) {
-            safe.put(entry.getKey(), sanitizeValue(entry.getValue()));
-        }
-        return safe;
-    }
-
-    @SuppressWarnings("unchecked")
-    private List<Map<String, Object>> sanitizeList(List<Map<String, Object>> list) {
-        if (list == null || list.isEmpty()) return list;
-        List<Map<String, Object>> safe = new ArrayList<>(list.size());
-        for (Map<String, Object> item : list) {
-            safe.add(sanitize(item));
-        }
-        return safe;
-    }
-
-    @SuppressWarnings("unchecked")
-    private Object sanitizeValue(Object value) {
-        if (value instanceof String) {
-            return HtmlUtils.htmlEscape((String) value);
-        } else if (value instanceof Map) {
-            return sanitize((Map<String, Object>) value);
-        } else if (value instanceof List) {
-            List<Object> safeList = new ArrayList<>();
-            for (Object item : (List<?>) value) {
-                safeList.add(sanitizeValue(item));
-            }
-            return safeList;
-        }
-        return value; // numbers, booleans, nulls pass through
     }
 
     // -------------------------------------------------------------------------

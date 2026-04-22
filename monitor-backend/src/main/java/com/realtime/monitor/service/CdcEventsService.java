@@ -1,5 +1,6 @@
 package com.realtime.monitor.service;
 
+import com.realtime.monitor.util.XssSanitizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -589,12 +590,12 @@ public class CdcEventsService {
                         Map<String, Object> row = new HashMap<>();
                         row.put("lineNumber", currentLine + 1);
                         // HTML-encode the raw line to prevent XSS when rendered in a browser
-                        row.put("content", org.springframework.web.util.HtmlUtils.htmlEscape(line));
+                        row.put("content", XssSanitizer.sanitizeString(line));
                         // HTML-encode every CSV field individually
                         String[] rawFields = line.split(",", -1);
                         String[] encodedFields = new String[rawFields.length];
                         for (int i = 0; i < rawFields.length; i++) {
-                            encodedFields[i] = org.springframework.web.util.HtmlUtils.htmlEscape(rawFields[i]);
+                            encodedFields[i] = XssSanitizer.sanitizeString(rawFields[i]);
                         }
                         row.put("fields", encodedFields);
                         rows.add(row);
@@ -617,7 +618,7 @@ public class CdcEventsService {
         result.put("currentPage", page);
         result.put("pageSize", size);
         // Do not echo the user-supplied path back into the response
-        result.put("filePath", org.springframework.web.util.HtmlUtils.htmlEscape(filePath));
+        result.put("filePath", XssSanitizer.sanitizeString(filePath));
 
         return result;
     }

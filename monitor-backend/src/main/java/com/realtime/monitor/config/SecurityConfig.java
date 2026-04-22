@@ -10,7 +10,6 @@ import org.springframework.lang.NonNull;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
-import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
@@ -53,6 +52,15 @@ public class SecurityConfig {
             .cors(cors -> cors.disable())
             .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+            .headers(headers -> headers
+                // X-Content-Type-Options: nosniff — 防止 MIME 类型嗅探
+                .contentTypeOptions(contentType -> {})
+                // X-Frame-Options: DENY — 防止点击劫持
+                .frameOptions(frame -> frame.deny())
+                // X-XSS-Protection: 1; mode=block
+                .xssProtection(xss -> xss.headerValue(
+                    org.springframework.security.web.header.writers.XXssProtectionHeaderWriter.HeaderValue.ENABLED_MODE_BLOCK))
+            )
             .authorizeHttpRequests(auth -> auth
                 // Allow async re-dispatches (SSE) without re-authentication
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()

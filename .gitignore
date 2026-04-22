@@ -1,7 +1,7 @@
 # kiro
 .kiro/
 monitor/frontend-vue/node_modules/
-.local-pids/
+.local-pids/*.pid
 # Maven
 target/
 pom.xml.tag

@@ -7,6 +7,13 @@ spring:
   main:
     # 允许循环引用（用于 Spring Security 配置）
     allow-circular-references: true
+
+  # Session Cookie 安全配置
+  session:
+    cookie:
+      http-only: true
+      secure: false        # 生产环境设为 true（HTTPS）
+      same-site: lax
   
   # 数据源配置（用于 RuntimeJob 持久化）
   datasource:

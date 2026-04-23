@@ -5,14 +5,11 @@ import com.realtime.monitor.service.CdcEventsService;
 import com.realtime.monitor.service.CdcStatsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 
@@ -25,31 +22,8 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class CdcEventsController {
 
-    /** Must match the same property used by CdcEventsService so validation and file access use the same root */
-    @Value("${output.path:./output/cdc}")
-    private String baseDir;
-
     private final CdcEventsService cdcEventsService;
     private final CdcStatsService cdcStatsService;
-
-    private void validatePath(String path) {
-        try {
-            // Resolve the user-supplied path against baseDir so that relative
-            // paths like "2026-04-15--11/file.csv" are anchored to the base dir.
-            // Then normalize to collapse any ".." segments.
-            Path base = Paths.get(baseDir).normalize().toAbsolutePath();
-            Path resolved = base.resolve(path).normalize().toAbsolutePath();
-            if (!resolved.startsWith(base)) {
-                log.warn("Path traversal attempt blocked. Requested: {}", path);
-                throw new IllegalArgumentException("Invalid path: access outside the permitted directory is not allowed");
-            }
-        } catch (IllegalArgumentException e) {
-            throw e;
-        } catch (Exception e) {
-            log.warn("Path validation error for: {}", path);
-            throw new IllegalArgumentException("Invalid path");
-        }
-    }
 
     /**
      * 获取 CDC 事件列表
@@ -188,23 +162,19 @@ public class CdcEventsController {
     }
 
     /**
-     * 获取文件内容（分页）
+     * 获取文件内容（分页）— 通过文件 ID 访问，不暴露文件路径
      */
     @GetMapping(value = "/files/content", produces = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<ApiResponse<Map<String, Object>>> getFileContent(
-            @RequestParam String path,
+            @RequestParam String fileId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "100") int size) {
         try {
-            validatePath(path);
-            Map<String, Object> result = cdcEventsService.getFileContent(path, page, size);
+            Map<String, Object> result = cdcEventsService.getFileContentById(fileId, page, size);
             return ResponseEntity.ok(ApiResponse.success(result));
-        } catch (IllegalArgumentException e) {
-            // Warning already logged inside validatePath — do not reflect user input
-            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid file path"));
         } catch (Exception e) {
-            log.error("获取文件内容失败: {}", path, e);
-            return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));
+            log.error("获取文件内容失败: fileId={}", fileId, e);
+            return ResponseEntity.internalServerError().body(ApiResponse.error("获取文件内容失败"));
         }
     }
 

@@ -140,7 +140,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="file in files" :key="file.path">
+          <tr v-for="file in files" :key="file.id">
             <td class="file-name">{{ file.name }}</td>
             <td><span class="table-badge">{{ file.table }}</span></td>
             <td>{{ file.hour }}</td>
@@ -397,7 +397,7 @@ async function loadFileContent(page) {
   contentPage.value = page
   try {
     const response = await cdcEventsAPI.fileContent(
-      currentFile.value.path, 
+      currentFile.value.id, 
       page, 
       contentPageSize
     )

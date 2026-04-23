@@ -67,6 +67,7 @@ public class SecurityConfig {
                 // 公开端点
                 .requestMatchers("/api/auth/login", "/api/auth/logout").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/error").permitAll()
                 // 所有其他 API 需要认证（包括 SSE 流端点）
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().authenticated()

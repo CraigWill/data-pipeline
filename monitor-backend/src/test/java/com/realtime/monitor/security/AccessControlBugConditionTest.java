@@ -118,22 +118,20 @@ class AccessControlBugConditionTest {
     }
 
     /**
-     * Test 4 — Bug condition: path traversal in GET /api/cdc/events/files/content
+     * Test 4 — Bug condition: invalid fileId in GET /api/cdc/events/files/content
      *
-     * Current (buggy): path parameter is passed directly to the service with no
-     * validation → attacker can read arbitrary files → returns 200 (or 500 if file
-     * doesn't exist, but never 400).
-     * Expected (fixed): should return 400 Bad Request for traversal paths.
+     * Current (fixed): fileId is looked up in the database, not used as a path.
+     * An invalid fileId returns empty result (no path traversal possible).
      *
      * Validates: Requirement 1.9
      */
     @Test
     @WithMockUser
-    @DisplayName("Authenticated GET /api/cdc/events/files/content?path=../../../etc/passwd should return 400 (currently passes through — bug)")
-    void authenticated_getFileContent_pathTraversal_shouldReturn400() throws Exception {
+    @DisplayName("Authenticated GET /api/cdc/events/files/content?fileId=nonexistent should return 200 with empty result")
+    void authenticated_getFileContent_invalidFileId_shouldReturn200Empty() throws Exception {
         mockMvc.perform(get("/api/cdc/events/files/content")
-                        .param("path", "../../../etc/passwd"))
-                .andExpect(status().isBadRequest()); // 400
+                        .param("fileId", "nonexistent-id"))
+                .andExpect(status().isOk()); // 200 with empty result (ID not found)
     }
 
     /**

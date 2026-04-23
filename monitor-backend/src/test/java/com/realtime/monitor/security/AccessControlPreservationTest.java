@@ -134,25 +134,19 @@ class AccessControlPreservationTest {
     }
 
     /**
-     * Preservation: authenticated GET /api/cdc/events/files/content with valid path → 200
+     * Preservation: authenticated GET /api/cdc/events/files/content with fileId → 200
      *
-     * On unfixed code there is no path validation, so the request reaches the
-     * service. The mocked service returns a result map, so the controller returns 200.
+     * The endpoint now uses fileId (database lookup) instead of path.
+     * An unknown fileId returns 200 with empty result (not an error).
      *
      * Validates: Requirement 3.4
      */
     @Test
     @WithMockUser
-    @DisplayName("Authenticated GET /api/cdc/events/files/content with valid path should return 200")
-    void authenticated_getFileContent_validPath_shouldReturn200() throws Exception {
-        Map<String, Object> mockResult = new HashMap<>();
-        mockResult.put("content", "log line 1\nlog line 2");
-        mockResult.put("total", 2);
-        when(cdcEventsService.getFileContent(anyString(), anyInt(), anyInt()))
-                .thenReturn(mockResult);
-
+    @DisplayName("Authenticated GET /api/cdc/events/files/content with fileId should return 200")
+    void authenticated_getFileContent_validFileId_shouldReturn200() throws Exception {
         mockMvc.perform(get("/api/cdc/events/files/content")
-                        .param("path", "test.log"))
+                        .param("fileId", "test-file-id"))
                 .andExpect(status().isOk()); // 200
     }
 

@@ -168,8 +168,11 @@ public class FlinkService {
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return sanitize(objectMapper.readValue(response.getBody(), Map.class));
             }
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            // 404 — job no longer exists on Flink, expected for completed/cancelled jobs
+            log.debug("作业不存在于 Flink 集群: {}", jobId);
         } catch (Exception e) {
-            log.error("获取作业详情失败: {}", jobId, e);
+            log.warn("获取作业详情失败: {} — {}", jobId, e.getMessage());
         }
         return Collections.emptyMap();
     }

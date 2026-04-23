@@ -29,6 +29,8 @@ public class CdcEventsService {
     
     @Value("${output.path:./output/cdc}")
     private String outputPath;
+
+    private final com.realtime.monitor.repository.CdcFileRepository cdcFileRepository;
     
     /**
      * 获取 CDC 事件列表
@@ -522,16 +524,26 @@ public class CdcEventsService {
                         File[] csvFiles = dateDir.listFiles((d, name) -> name.endsWith(".csv"));
                         if (csvFiles != null) {
                             for (File csvFile : csvFiles) {
-                                Map<String, Object> fileInfo = new HashMap<>();
-                                fileInfo.put("name", csvFile.getName());
-                                fileInfo.put("path", dateDir.getName() + "/" + csvFile.getName());
-                                fileInfo.put("table", extractTableName(csvFile.getName()));
-                                fileInfo.put("size", csvFile.length());
-                                fileInfo.put("sizeFormatted", formatFileSize(csvFile.length()));
-                                fileInfo.put("lineCount", countLinesOptimized(csvFile));
-                                
-                                // 使用文件修改时间格式化为年月日时分秒
+                                String relativePath = dateDir.getName() + "/" + csvFile.getName();
+                                String tableName = extractTableName(csvFile.getName());
+                                long fileSize = csvFile.length();
+                                long lineCount = countLinesOptimized(csvFile);
                                 long timestamp = csvFile.lastModified();
+
+                                // 注册文件到数据库，获取 ID（前端只看到 ID，不看到路径）
+                                String fileId = cdcFileRepository.registerFile(
+                                    relativePath, csvFile.getName(), tableName,
+                                    fileSize, lineCount, timestamp);
+
+                                Map<String, Object> fileInfo = new HashMap<>();
+                                fileInfo.put("id", fileId);
+                                fileInfo.put("name", csvFile.getName());
+                                // 不再暴露 path 给前端
+                                fileInfo.put("table", tableName);
+                                fileInfo.put("size", fileSize);
+                                fileInfo.put("sizeFormatted", formatFileSize(fileSize));
+                                fileInfo.put("lineCount", lineCount);
+                                
                                 String formattedTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                                     .format(new java.util.Date(timestamp));
                                 fileInfo.put("hour", formattedTime);
@@ -562,7 +574,30 @@ public class CdcEventsService {
     }
 
     /**
-     * 获取文件内容（分页）
+     * 根据文件 ID 获取文件内容（分页）。
+     * 前端传入 fileId，后端从数据库查出真实路径，前端永远不接触文件路径。
+     */
+    public Map<String, Object> getFileContentById(String fileId, int page, int size) {
+        String filePath = cdcFileRepository.getFilePath(fileId);
+        if (filePath == null) {
+            log.warn("无效的文件 ID: {}", fileId);
+            Map<String, Object> empty = new HashMap<>();
+            empty.put("rows", new ArrayList<>());
+            empty.put("total", 0);
+            empty.put("totalPages", 0);
+            empty.put("currentPage", 1);
+            empty.put("fileId", fileId);
+            return empty;
+        }
+        Map<String, Object> result = getFileContent(filePath, page, size);
+        // 用 fileId 替换 filePath，不暴露路径
+        result.remove("filePath");
+        result.put("fileId", fileId);
+        return result;
+    }
+
+    /**
+     * 获取文件内容（分页）— 内部方法，接受真实路径。
      * 所有从文件读取的字符串字段均经过 HTML 实体编码，防止 XSS。
      */
     public Map<String, Object> getFileContent(String filePath, int page, int size) {

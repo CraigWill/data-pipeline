@@ -600,12 +600,33 @@ public class CdcEventsService {
      * 获取文件内容（分页）— 内部方法，接受真实路径。
      * 所有从文件读取的字符串字段均经过 HTML 实体编码，防止 XSS。
      */
+    private String normalizePath(String base, String relative) {
+        if (relative == null) {
+            throw new SecurityException("非法的文件路径参数");
+        }
+        if (relative.contains("..") || relative.contains("//") || relative.contains("\\") || relative.startsWith("/")) {
+            throw new SecurityException("非法的文件路径参数");
+        }
+        try {
+            File file = new File(base, relative);
+            String canonicalPath = file.getCanonicalPath();
+            String baseCanonical = new File(base).getCanonicalPath();
+            if (!canonicalPath.startsWith(baseCanonical)) {
+                throw new SecurityException("路径遍历检测：文件不在预期目录内");
+            }
+        } catch (Exception e) {
+            throw new SecurityException("解析文件路径失败");
+        }
+        return relative;
+    }
+
     public Map<String, Object> getFileContent(String filePath, int page, int size) {
         List<Map<String, Object>> rows = new ArrayList<>();
         long totalLines = 0;
 
         try {
-            File file = new File(outputPath, filePath);
+            String normalizedPath = normalizePath(outputPath, filePath);
+            File file = new File(outputPath, normalizedPath);
             if (!file.exists() || !file.isFile()) {
                 return createEmptyContentResult(filePath);
             }

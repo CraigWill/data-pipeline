@@ -5,7 +5,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-import jakarta.annotation.PostConstruct;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.List;
@@ -24,30 +23,6 @@ public class CdcFileRepository {
     private final JdbcTemplate jdbcTemplate;
 
     private static final String TABLE = "cdc_files";
-
-    @PostConstruct
-    public void ensureTable() {
-        try {
-            jdbcTemplate.execute(
-                "CREATE TABLE " + TABLE + " (" +
-                "  id VARCHAR2(64) PRIMARY KEY," +
-                "  file_path VARCHAR2(1024) NOT NULL," +
-                "  file_name VARCHAR2(512)," +
-                "  table_name VARCHAR2(256)," +
-                "  file_size NUMBER DEFAULT 0," +
-                "  line_count NUMBER DEFAULT 0," +
-                "  last_modified TIMESTAMP," +
-                "  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP" +
-                ")"
-            );
-            log.info("CDC 文件映射表已创建");
-        } catch (Exception e) {
-            // 表已存在，忽略
-            if (!e.getMessage().contains("ORA-00955") && !e.getMessage().contains("already exists")) {
-                log.warn("创建 CDC 文件映射表失败（可能已存在）: {}", e.getMessage());
-            }
-        }
-    }
 
     /**
      * 注册文件并返回 ID。如果路径已存在则返回已有 ID。

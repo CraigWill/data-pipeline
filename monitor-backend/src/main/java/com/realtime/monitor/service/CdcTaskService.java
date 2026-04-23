@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -143,8 +145,11 @@ public class CdcTaskService {
     }
 
     private String buildJdbcUrl(DataSourceConfig config) {
+        String host = resolveHost(config.getHost());
+        String safeHost = URLEncoder.encode(host, StandardCharsets.UTF_8);
+
         return String.format("jdbc:oracle:thin:@%s:%d:%s",
-                resolveHost(config.getHost()), config.getPort(), config.getSid());
+                safeHost, config.getPort(), config.getSid());
     }
 
     /**

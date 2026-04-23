@@ -11,14 +11,20 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
 
+/**
+ * JWT Token 提供者
+ * 
+ * ⚠️ 安全提示：请将 jwt.secret 配置项设置为从环境变量读取的强密钥
+ * 生成命令：openssl rand -base64 32
+ */
 @Slf4j
 @Component
 public class JwtTokenProvider {
 
-    @Value("${jwt.secret:your-256-bit-secret-key-change-this-in-production-environment-please-use-strong-key}")
+    @Value("${jwt.secret}")
     private String jwtSecret;
 
-    @Value("${jwt.expiration:86400000}") // 24小时
+    @Value("${jwt.expiration:86400000}") // 24 小时
     private long jwtExpiration;
 
     private SecretKey getSigningKey() {

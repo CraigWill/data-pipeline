@@ -9,7 +9,6 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import jakarta.annotation.PostConstruct;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
@@ -36,10 +35,6 @@ public class RuntimeJobService {
         this.embeddedCdcService = embeddedCdcService;
     }
 
-    /**
-     * 应用启动时加载运行中的作业，并自动恢复
-     */
-    @PostConstruct
     public void loadRunningJobsOnStartup() {
         log.info("加载运行中的作业...");
         // 延迟执行，等待 Flink 集群就绪

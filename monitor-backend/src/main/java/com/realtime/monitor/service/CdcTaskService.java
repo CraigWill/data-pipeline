@@ -1,18 +1,29 @@
 package com.realtime.monitor.service;
 
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
+import org.springframework.stereotype.Service;
+
 import com.realtime.monitor.dto.CdcSubmitRequest;
 import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
 import com.realtime.monitor.util.PasswordEncryptionUtil;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
-import java.sql.*;
-import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * CDC 任务管理服务
@@ -27,36 +38,14 @@ public class CdcTaskService {
     private final com.realtime.monitor.repository.TaskRepository taskRepository;
     private final RuntimeJobService runtimeJobService;
 
-    /**
-     * 从 DataSourceConfig 中解析出可直接用于 JDBC 的明文密码。
-     *
-     * 前端可能传来两种形式：
-     *   1. 明文密码（ad-hoc 测试/发现场景）
-     *   2. 已加密密码（从 DataSourceService.loadDataSource 返回后再传入）
-     *
-     * 规则：先尝试 AES/GCM 解密；若解密失败则视为明文直接使用。
-     * 这样无论前端传来哪种形式，都能得到正确的明文密码用于 JDBC 连接。
-     */
-    private String resolvePlainPassword(DataSourceConfig config) {
-        String raw = config.getPassword();
-        if (raw == null || raw.isEmpty()) {
-            return raw;
-        }
-        try {
-            return PasswordEncryptionUtil.decryptAES(raw);
-        } catch (Exception e) {
-            // 解密失败 → 密码本身就是明文，直接使用
-            log.debug("密码解密失败，视为明文使用（这在 ad-hoc 场景下是正常的）");
-            return raw;
-        }
-    }
 
     /**
      * 测试数据库连接
      */
     public Map<String, Object> testConnection(DataSourceConfig config) {
         String jdbcUrl = buildJdbcUrl(config);
-        String password = resolvePlainPassword(config);
+        // config 来自 DataSourceService.loadDataSource 时密码已解密，直接使用
+        String password = config.getPassword();
 
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
              Statement stmt = conn.createStatement();
@@ -75,7 +64,8 @@ public class CdcTaskService {
      */
     public List<String> discoverSchemas(DataSourceConfig config) throws Exception {
         String jdbcUrl = buildJdbcUrl(config);
-        String password = resolvePlainPassword(config);
+        // config 来自 DataSourceService.loadDataSource 时密码已解密，直接使用
+        String password = config.getPassword();
         String sql = "SELECT DISTINCT owner FROM all_tables " +
                 "WHERE owner NOT IN ('SYS','SYSTEM','OUTLN','DBSNMP','APPQOSSYS'," +
                 "'WMSYS','EXFSYS','CTXSYS','XDB','ANONYMOUS'," +
@@ -98,7 +88,8 @@ public class CdcTaskService {
      */
     public List<Map<String, Object>> discoverTables(DataSourceConfig config, String schema) throws Exception {
         String jdbcUrl = buildJdbcUrl(config);
-        String password = resolvePlainPassword(config);
+        // config 来自 DataSourceService.loadDataSource 时密码已解密，直接使用
+        String password = config.getPassword();
         String sql = "SELECT t.table_name, " +
                 "CAST(NVL(t.num_rows, 0) AS NUMBER(10)) AS row_count, " +
                 "(SELECT COUNT(*) FROM all_tab_columns c WHERE c.owner = ? AND c.table_name = t.table_name) AS col_count " +
@@ -160,23 +151,42 @@ public class CdcTaskService {
      */
     private String resolveHost(String host) {
         if ("host.docker.internal".equalsIgnoreCase(host)) {
-            // Check if we're running inside Docker: /proc/1/cgroup exists and contains "docker"
-            boolean insideDocker = false;
-            try {
-                java.nio.file.Path cgroupPath = java.nio.file.Paths.get("/proc/1/cgroup");
-                if (java.nio.file.Files.exists(cgroupPath)) {
-                    String content = java.nio.file.Files.readString(cgroupPath);
-                    insideDocker = content.contains("docker") || content.contains("kubepods");
-                }
-            } catch (Exception ignored) {
-                // /proc not available (macOS/Windows) → definitely not inside Docker
-            }
-            if (!insideDocker) {
+            // 在 Docker 容器内，host.docker.internal 是有效的，不需要替换
+            // 只有在本地（非 Docker）环境中才替换为 localhost
+            if (!isRunningInsideDocker()) {
                 log.debug("Replacing host.docker.internal with localhost for local execution");
                 return "localhost";
             }
         }
         return host;
+    }
+
+    /**
+     * 检测当前是否运行在 Docker 容器内。
+     * 兼容 cgroup v1 和 v2。
+     */
+    private boolean isRunningInsideDocker() {
+        // 方法1: 检查 /.dockerenv 文件（最可靠）
+        if (java.nio.file.Files.exists(java.nio.file.Paths.get("/.dockerenv"))) {
+            return true;
+        }
+        // 方法2: 检查 /proc/1/cgroup（cgroup v1 包含 "docker"）
+        try {
+            java.nio.file.Path cgroupPath = java.nio.file.Paths.get("/proc/1/cgroup");
+            if (java.nio.file.Files.exists(cgroupPath)) {
+                String content = java.nio.file.Files.readString(cgroupPath);
+                if (content.contains("docker") || content.contains("kubepods")) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        // 方法3: 检查容器特有的环境变量（如 HOSTNAME 格式为容器 ID）
+        String hostname = System.getenv("HOSTNAME");
+        if (hostname != null && hostname.matches("[a-f0-9]{12,}")) {
+            return true;
+        }
+        return false;
     }
 
     /**

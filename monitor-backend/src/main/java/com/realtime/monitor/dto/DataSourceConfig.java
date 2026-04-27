@@ -15,6 +15,7 @@ public class DataSourceConfig {
     private String password;
     private String sid;
     private String description;
+    private String status = "UNTESTED"; // UNTESTED, SUCCESS, FAILED
     private String createdAt;
     private String updatedAt;
 }

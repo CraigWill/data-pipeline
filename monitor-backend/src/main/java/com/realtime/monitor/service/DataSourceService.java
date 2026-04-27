@@ -1,13 +1,17 @@
 package com.realtime.monitor.service;
 
-import com.realtime.monitor.dto.DataSourceConfig;
-import com.realtime.monitor.util.PasswordEncryptionUtil;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 import org.springframework.stereotype.Service;
 
-import java.util.*;
-import java.util.stream.Collectors;
+import com.realtime.monitor.dto.DataSourceConfig;
+import com.realtime.monitor.util.PasswordEncryptionUtil;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 数据源管理服务
@@ -28,7 +32,7 @@ public class DataSourceService {
             dsId = "ds-" + System.currentTimeMillis();
             config.setId(dsId);
         }
-
+        
         // 加密密码
         if (config.getPassword() != null && !config.getPassword().isEmpty()) {
             try {
@@ -39,9 +43,16 @@ public class DataSourceService {
                 throw new RuntimeException("密码加密失败", e);
             }
         }
+        
+        // 默认状态
+        config.setStatus("UNTESTED");
 
         dataSourceRepository.save(config);
         return dsId;
+    }
+
+    public void updateDataSourceStatus(String id, String status) {
+        dataSourceRepository.updateStatus(id, status);
     }
 
     /**
@@ -61,13 +72,13 @@ public class DataSourceService {
                     config.setPassword(PasswordEncryptionUtil.decryptAES(config.getPassword()));
                     log.debug("数据源密码已解密: {}", dsId);
                 } else {
-                    log.warn("数据源 {} 的密码可能是明文，尝试直接使用", dsId);
-                    // 如果密码看起来不像加密的，尝试直接使用（可能是旧数据）
-                    // 同时记录警告，建议用户重新创建数据源
+                    log.debug("数据源 {} 的密码为明文格式，直接使用", dsId);
                 }
             } catch (Exception e) {
-                log.error("密码解密失败: dsId={}, error={}", dsId, e.getMessage());
-                throw new RuntimeException("密码解密失败。请删除并重新创建此数据源。", e);
+                // 解密失败 — 可能是 AES 密钥变更（如容器重启后密钥不同）
+                // 保留原始密码值，让后续连接尝试去验证
+                log.warn("数据源 {} 密码解密失败（AES 密钥可能已变更），尝试直接使用原始值: {}",
+                        dsId, e.getMessage());
             }
         }
         
@@ -101,6 +112,7 @@ public class DataSourceService {
                     summary.put("port", config.getPort());
                     summary.put("sid", config.getSid() != null ? config.getSid() : "Unknown");
                     summary.put("description", config.getDescription());
+                    summary.put("status", config.getStatus());
                     summary.put("created_at", config.getCreatedAt());
                     summary.put("updated_at", config.getUpdatedAt());
                     return summary;

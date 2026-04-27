@@ -15,12 +15,26 @@ import java.util.List;
 
 @Slf4j
 @Repository
-@RequiredArgsConstructor
 public class DataSourceRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
     private static final String TABLE = "cdc_datasources";
+
+    public DataSourceRepository(JdbcTemplate jdbcTemplate) {
+        this.jdbcTemplate = jdbcTemplate;
+        ensureStatusColumnExists();
+    }
+
+    private void ensureStatusColumnExists() {
+        try {
+            jdbcTemplate.execute("ALTER TABLE " + TABLE + " ADD status VARCHAR2(20) DEFAULT 'UNTESTED'");
+            log.info("已成功为 {} 表添加 status 字段", TABLE);
+        } catch (Exception e) {
+            // Column likely already exists, ignore
+            log.debug("status 字段可能已存在: {}", e.getMessage());
+        }
+    }
 
     private final RowMapper<DataSourceConfig> rowMapper = new RowMapper<DataSourceConfig>() {
         @Override
@@ -34,6 +48,12 @@ public class DataSourceRepository {
             config.setPassword(rs.getString("password"));
             config.setSid(rs.getString("sid"));
             config.setDescription(rs.getString("description"));
+            try {
+                config.setStatus(rs.getString("status"));
+            } catch (SQLException e) {
+                // Backward compatibility if column doesn't exist yet
+                config.setStatus("UNTESTED");
+            }
             return config;
         }
     };
@@ -43,22 +63,28 @@ public class DataSourceRepository {
                 "USING (SELECT ? AS id FROM dual) s " +
                 "ON (t.id = s.id) " +
                 "WHEN MATCHED THEN " +
-                "  UPDATE SET name=?, host=?, port=?, username=?, password=?, sid=?, description=?, updated_at=? " +
+                "  UPDATE SET name=?, host=?, port=?, username=?, password=?, sid=?, description=?, status=?, updated_at=? " +
                 "WHEN NOT MATCHED THEN " +
-                "  INSERT (id, name, host, port, username, password, sid, description, created_at, updated_at) " +
-                "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "  INSERT (id, name, host, port, username, password, sid, description, status, created_at, updated_at) " +
+                "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         Timestamp now = Timestamp.from(Instant.now());
         jdbcTemplate.update(sql,
                 config.getId(),
                 config.getName(), config.getHost(), config.getPort(),
                 config.getUsername(), config.getPassword(), config.getSid(),
-                config.getDescription(), now,
+                config.getDescription(), config.getStatus(), now,
                 config.getId(), config.getName(), config.getHost(), config.getPort(),
                 config.getUsername(), config.getPassword(), config.getSid(),
-                config.getDescription(), now, now);
+                config.getDescription(), config.getStatus(), now, now);
         
         log.info("保存数据源配置: {}", config.getId());
+    }
+
+    public void updateStatus(String id, String status) {
+        String sql = "UPDATE " + TABLE + " SET status = ?, updated_at = ? WHERE id = ?";
+        jdbcTemplate.update(sql, status, Timestamp.from(Instant.now()), id);
+        log.info("更新数据源状态: {} -> {}", id, status);
     }
 
     public DataSourceConfig findById(String id) {

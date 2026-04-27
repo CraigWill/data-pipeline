@@ -1,14 +1,21 @@
 package com.realtime.monitor.controller;
 
-import com.realtime.monitor.dto.ApiResponse;
-import com.realtime.monitor.service.FlinkService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.*;
-
 import java.util.List;
 import java.util.Map;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.realtime.monitor.dto.ApiResponse;
+import com.realtime.monitor.service.FlinkService;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Flink 作业管理 API
@@ -44,7 +51,11 @@ public class JobController {
     @GetMapping("/{jobId}")
     public ApiResponse<Map<String, Object>> getJobDetail(@PathVariable String jobId) {
         try {
-            return ApiResponse.success(flinkService.getJobDetail(jobId));
+            Map<String, Object> result = flinkService.getJobDetail(jobId);
+            if (result == null) {
+                return ApiResponse.error("Flink 集群不可用");
+            }
+            return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取作业详情失败: {}", jobId, e);
             return ApiResponse.error(e.getMessage());

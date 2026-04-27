@@ -1,21 +1,30 @@
 package com.realtime.monitor.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.realtime.monitor.config.AppConfig;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.*;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import jakarta.annotation.PostConstruct;
-import java.net.URI;
-import java.util.*;
-
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.realtime.monitor.config.AppConfig;
 import static com.realtime.monitor.util.XssSanitizer.sanitize;
 import static com.realtime.monitor.util.XssSanitizer.sanitizeList;
+
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Flink REST API 服务
@@ -39,8 +48,10 @@ public class FlinkService {
     
     @PostConstruct
     public void init() {
-        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        // 使用 HttpComponentsClientHttpRequestFactory 替代 SimpleClientHttpRequestFactory
+        // 因为 HttpURLConnection 不支持 PATCH 方法，而 Flink cancel API 需要 PATCH
+        org.springframework.http.client.HttpComponentsClientHttpRequestFactory factory =
+                new org.springframework.http.client.HttpComponentsClientHttpRequestFactory();
         factory.setConnectTimeout(3000);
         factory.setReadTimeout(10000);
         restTemplate = new RestTemplate(factory);
@@ -154,8 +165,10 @@ public class FlinkService {
                     return sanitizeList(result);
                 }
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取作业列表跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取作业列表失败", e);
+            log.warn("获取作业列表失败: {}", e.getMessage());
         }
         return Collections.emptyList();
     }
@@ -169,16 +182,25 @@ public class FlinkService {
                 return sanitize(objectMapper.readValue(response.getBody(), Map.class));
             }
         } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
-            // 404 — job no longer exists on Flink, expected for completed/cancelled jobs
+            // 404 — job no longer exists on Flink, confirmed not found
             log.debug("作业不存在于 Flink 集群: {}", jobId);
+            return Collections.emptyMap();
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            // 连接失败 — Flink 不可用，无法确认作业状态
+            log.debug("Flink 不可用，无法查询作业 {}: {}", jobId, e.getMessage());
+            return null;
         } catch (Exception e) {
             log.warn("获取作业详情失败: {} — {}", jobId, e.getMessage());
+            return null;
         }
         return Collections.emptyMap();
     }
 
     public Map<String, Object> getJobMetrics(String jobId) {
         Map<String, Object> jobData = getJobDetail(jobId);
+        if (jobData == null) {
+            jobData = Collections.emptyMap();
+        }
         Map<String, Object> metrics = new HashMap<>();
         metrics.put("job_id", jobId);
         metrics.put("name", jobData.get("name"));
@@ -201,19 +223,19 @@ public class FlinkService {
             }
         }
         metrics.put("vertices", vertices);
-        return metrics;
+        return sanitize(metrics);
     }
 
     /**
      * 取消作业（使用 RestTemplate + PATCH via exchange，避免反射 hack）
      */
     public void cancelJob(String jobId) {
-        URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
-        // Flink cancel endpoint accepts PATCH
+        // Flink REST API: PATCH /jobs/:jobid 用于取消作业
         try {
+            URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
-            HttpEntity<String> entity = new HttpEntity<>("{\"mode\":\"cancel\"}", headers);
+            HttpEntity<String> entity = new HttpEntity<>("{}", headers);
             ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.PATCH, entity, String.class);
             if (!response.getStatusCode().is2xxSuccessful()) {
                 throw new RuntimeException("取消作业失败: HTTP " + response.getStatusCode());
@@ -234,8 +256,10 @@ public class FlinkService {
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return sanitize(objectMapper.readValue(response.getBody(), Map.class));
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取集群概览跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取集群概览失败", e);
+            log.warn("获取集群概览失败: {}", e.getMessage());
         }
         return Collections.emptyMap();
     }
@@ -256,8 +280,10 @@ public class FlinkService {
                     return sanitizeList(result);
                 }
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取 TaskManager 列表跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取 TaskManager 列表失败", e);
+            log.warn("获取 TaskManager 列表失败: {}", e.getMessage());
         }
         return Collections.emptyList();
     }
@@ -271,8 +297,10 @@ public class FlinkService {
                 List<Map<String, Object>> raw = objectMapper.readValue(response.getBody(), List.class);
                 return sanitizeList(raw);
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取 JobManager 配置跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取 JobManager 配置失败", e);
+            log.warn("获取 JobManager 配置失败: {}", e.getMessage());
         }
         return Collections.emptyList();
     }
@@ -394,8 +422,10 @@ public class FlinkService {
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 return sanitize(objectMapper.readValue(response.getBody(), Map.class));
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取 Checkpoint 信息跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取 Checkpoint 信息失败: {}", jobId, e);
+            log.warn("获取 Checkpoint 信息失败: {} — {}", jobId, e.getMessage());
         }
         return Collections.emptyMap();
     }

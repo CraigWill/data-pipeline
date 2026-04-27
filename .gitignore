@@ -1,6 +1,7 @@
 # kiro
 .kiro/
 monitor/frontend-vue/node_modules/
+monitor/frontend-vue/dist/*
 .local-pids/*.pid
 # Maven
 target/

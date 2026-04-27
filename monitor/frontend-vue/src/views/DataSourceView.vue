@@ -42,7 +42,12 @@
           <icon-data-base theme="filled" size="22" fill="#0052CC" />
         </div>
         <div class="ds-info">
-          <div class="ds-name">{{ ds.name }}</div>
+          <div class="ds-name">
+            {{ ds.name }}
+            <span :class="['status-badge', `status-${ds.status?.toLowerCase() || 'untested'}`]">
+              {{ ds.status === 'SUCCESS' ? '已连接' : (ds.status === 'FAILED' ? '连接失败' : '未测试') }}
+            </span>
+          </div>
           <div class="ds-conn">
             <icon-link theme="outline" size="12" />
             {{ ds.host }}:{{ ds.port }} / {{ ds.sid }}
@@ -296,33 +301,41 @@ function validate(requirePassword = true) {
 }
 
 async function testConnection() {
-  // 编辑模式且未填密码：直接用已保存的凭据测试
-  if (isEditing.value && !form.value.password?.trim()) {
-    if (!validate(false)) return
-    testing.value = true
-    testResult.value = null
-    try {
-      await api.post(`/datasources/${form.value.id}/test`)
-      testResult.value = { type: 'success', message: '连接成功，数据库可正常访问' }
-    } catch (error) {
-      testResult.value = { type: 'error', message: '连接失败: ' + (error.response?.data?.error || error.message) }
-    } finally {
-      testing.value = false
+  if (!validate(!isEditing.value || !!form.value.password?.trim())) return
+  
+  testing.value = true
+  saving.value = true
+  testResult.value = null
+  
+  const config = {
+    id: form.value.id || `ds-${Date.now()}`,
+    name: form.value.name, host: form.value.host, port: form.value.port,
+    username: form.value.username, password: form.value.password, sid: form.value.sid
+  }
+  
+  try {
+    if (isEditing.value || form.value.id) {
+      await api.put(`/datasources/${config.id}`, config)
+    } else {
+      await api.post('/datasources', config)
+      form.value.id = config.id
+      isEditing.value = true
     }
+  } catch (error) {
+    testResult.value = { type: 'error', message: '保存失败无法测试: ' + error.message }
+    saving.value = false
+    testing.value = false
     return
   }
-  // 新建或已填密码：用表单数据测试
-  if (!validate(true)) return
-  testing.value = true
-  testResult.value = null
+  saving.value = false
+  
   try {
-    await api.post('/cdc/datasource/test', {
-      host: form.value.host, port: form.value.port,
-      username: form.value.username, password: form.value.password, sid: form.value.sid
-    })
+    await api.post(`/datasources/${config.id}/test`)
     testResult.value = { type: 'success', message: '连接成功，数据库可正常访问' }
+    loadDataSources()
   } catch (error) {
     testResult.value = { type: 'error', message: '连接失败: ' + (error.response?.data?.error || error.message) }
+    loadDataSources()
   } finally {
     testing.value = false
   }
@@ -358,8 +371,10 @@ async function testDataSource(ds) {
   try {
     await api.post(`/datasources/${ds.id}/test`)
     showAlert('success', `"${ds.name}" 连接成功`)
+    loadDataSources()
   } catch (error) {
     showAlert('error', `"${ds.name}" 连接失败: ` + error.message)
+    loadDataSources()
   } finally {
     ds._testing = false
   }
@@ -446,7 +461,31 @@ function formatDate(dateStr) {
   flex-shrink: 0;
 }
 .ds-info { flex: 1; min-width: 0; }
-.ds-name { font-size: 14px; font-weight: 600; color: #172B4D; margin-bottom: 3px; }
+.ds-name {
+  font-size: 14px; font-weight: 600; color: #172B4D; margin-bottom: 3px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.status-badge {
+  font-size: 11px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: normal;
+}
+.status-success {
+  background-color: #E3FCEF;
+  color: #006644;
+}
+.status-failed {
+  background-color: #FFEBE6;
+  color: #BF2600;
+}
+.status-untested {
+  background-color: #DFE1E6;
+  color: #42526E;
+}
 .ds-conn {
   display: flex; align-items: center; gap: 4px;
   font-size: 12px; color: #5E6C84; margin-bottom: 2px;

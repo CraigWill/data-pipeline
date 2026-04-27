@@ -22,6 +22,11 @@
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
+        <!-- Apache HttpClient 5 — 支持 PATCH 方法（Flink cancel API 需要） -->
+        <dependency>
+            <groupId>org.apache.httpcomponents.client5</groupId>
+            <artifactId>httpclient5</artifactId>
+        </dependency>
 
         <!-- Spring Boot Actuator -->
         <dependency>
@@ -143,6 +148,9 @@
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
                     <argLine>-Dnet.bytebuddy.experimental=true</argLine>
+                    <environmentVariables>
+                        <AES_ENCRYPTION_KEY>aK9Hh1+R5yOaQe/x4b8G2+sA0tD6uF1iP3kO5wY8rL0=</AES_ENCRYPTION_KEY>
+                    </environmentVariables>
                 </configuration>
             </plugin>
 

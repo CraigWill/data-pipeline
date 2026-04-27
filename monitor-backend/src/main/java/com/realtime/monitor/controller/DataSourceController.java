@@ -81,11 +81,17 @@ public class DataSourceController {
         try {
             DataSourceConfig config = dataSourceService.loadDataSource(dsId);
             Map<String, Object> result = cdcTaskService.testConnection(config);
-            return (boolean) result.get("success") 
+            boolean success = (boolean) result.get("success");
+            
+            // 更新状态
+            dataSourceService.updateDataSourceStatus(dsId, success ? "SUCCESS" : "FAILED");
+            
+            return success 
                     ? ApiResponse.success(result) 
                     : ApiResponse.error((String) result.get("error"));
         } catch (Exception e) {
             log.error("测试数据源连接失败: {}", dsId, e);
+            dataSourceService.updateDataSourceStatus(dsId, "FAILED");
             return ApiResponse.error(e.getMessage());
         }
     }

@@ -1,20 +1,30 @@
 package com.realtime.monitor.service;
 
+import java.io.File;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.realtime.monitor.config.AppConfig;
 import com.realtime.monitor.dto.CdcSubmitRequest;
 import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.*;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 import jakarta.annotation.PostConstruct;
-import java.io.File;
-import java.util.*;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 嵌入式 CDC 服务
@@ -45,7 +55,11 @@ public class EmbeddedCdcService {
 
     @PostConstruct
     public void init() {
-        restTemplate = new RestTemplate();
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(30000);
+        restTemplate = new RestTemplate(factory);
     }
 
     /**
@@ -87,7 +101,11 @@ public class EmbeddedCdcService {
             }
 
             // 3. 通过 REST API 提交作业
-            String url = flinkService.getActiveLeaderUrl() + "/jars/" + jarId + "/run";
+            // 使用 UriComponentsBuilder 防止 URL 注入和目录遍历
+            String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
+                    .pathSegment("jars", jarId, "run")
+                    .build()
+                    .toUriString();
 
             Map<String, Object> body = new HashMap<>();
             body.put("entryClass", CDC_MAIN_CLASS);
@@ -225,7 +243,10 @@ public class EmbeddedCdcService {
             throw new RuntimeException("本地 JAR 文件不存在: " + localJarPath);
         }
 
-        String url = flinkService.getActiveLeaderUrl() + "/jars/upload";
+        String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
+                .pathSegment("jars", "upload")
+                .build()
+                .toUriString();
         log.info("上传 JAR 到 Flink: {} ({}MB)", url, jarFile.length() / 1024 / 1024);
 
         // 使用 HttpURLConnection 流式上传，避免 RestTemplate 将整个文件加载到内存
@@ -282,7 +303,10 @@ public class EmbeddedCdcService {
      */
     private String findJarId() {
         try {
-            String url = flinkService.getActiveLeaderUrl() + "/jars";
+            String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
+                    .pathSegment("jars")
+                    .build()
+                    .toUriString();
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
@@ -309,7 +333,10 @@ public class EmbeddedCdcService {
      */
     private boolean isJarValid(String jarId) {
         try {
-            String url = flinkService.getActiveLeaderUrl() + "/jars";
+            String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
+                    .pathSegment("jars")
+                    .build()
+                    .toUriString();
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode root = objectMapper.readTree(response.getBody());
@@ -353,7 +380,8 @@ public class EmbeddedCdcService {
 
     public Map<String, Object> getJobDetail(String jobId) {
         try {
-            return flinkService.getJobDetail(jobId);
+            Map<String, Object> result = flinkService.getJobDetail(jobId);
+            return result != null ? result : Collections.emptyMap();
         } catch (Exception e) {
             log.error("获取作业详情失败: {}", jobId, e);
             return Map.of("success", false, "error", e.getMessage());

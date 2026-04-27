@@ -168,7 +168,8 @@ watch(selectedDatasource, (newVal) => {
 async function loadDataSources() {
   try {
     const result = await api.get('/datasources')
-    datasources.value = result.data || []
+    // 过滤出连接成功的数据源
+    datasources.value = (result.data || []).filter(ds => ds.status === 'SUCCESS')
   } catch (error) {
     showAlert('error', '加载数据源失败: ' + error.message)
   }

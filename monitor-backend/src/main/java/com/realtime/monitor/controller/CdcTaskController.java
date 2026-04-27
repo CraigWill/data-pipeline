@@ -29,19 +29,6 @@ public class CdcTaskController {
     // 数据源操作（兼容旧接口）
     // ============================================
     
-    @PostMapping("/datasource/test")
-    public ApiResponse<Map<String, Object>> testDataSource(@RequestBody DataSourceConfig config) {
-        try {
-            Map<String, Object> result = cdcTaskService.testConnection(config);
-            return (boolean) result.get("success") 
-                    ? ApiResponse.success(result) 
-                    : ApiResponse.error((String) result.get("error"));
-        } catch (Exception e) {
-            log.error("测试数据源连接失败", e);
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-    
     @PostMapping("/datasource/schemas")
     public ApiResponse<List<String>> getSchemas(@RequestBody DataSourceConfig config) {
         try {

@@ -2,7 +2,6 @@ package com.realtime.monitor.controller;
 
 import com.realtime.monitor.dto.ApiResponse;
 import com.realtime.monitor.dto.CdcSubmitRequest;
-import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
 import com.realtime.monitor.service.CdcTaskService;
 import com.realtime.monitor.service.EmbeddedCdcService;
@@ -24,41 +23,6 @@ public class CdcTaskController {
     
     private final CdcTaskService cdcTaskService;
     private final EmbeddedCdcService embeddedCdcService;
-    
-    // ============================================
-    // 数据源操作（兼容旧接口）
-    // ============================================
-    
-    @PostMapping("/datasource/schemas")
-    public ApiResponse<List<String>> getSchemas(@RequestBody DataSourceConfig config) {
-        try {
-            return ApiResponse.success(cdcTaskService.discoverSchemas(config));
-        } catch (Exception e) {
-            log.error("获取 Schema 列表失败", e);
-            return ApiResponse.error(e.getMessage());
-        }
-    }
-    
-    @PostMapping("/datasource/tables")
-    public ApiResponse<List<Map<String, Object>>> getTables(@RequestBody Map<String, Object> request) {
-        try {
-            @SuppressWarnings("unchecked")
-            Map<String, Object> configMap = (Map<String, Object>) request.get("config");
-            String schema = (String) request.get("schema");
-            
-            DataSourceConfig config = new DataSourceConfig();
-            config.setHost((String) configMap.get("host"));
-            config.setPort((Integer) configMap.get("port"));
-            config.setUsername((String) configMap.get("username"));
-            config.setPassword((String) configMap.get("password"));
-            config.setSid((String) configMap.get("sid"));
-            
-            return ApiResponse.success(cdcTaskService.discoverTables(config, schema));
-        } catch (Exception e) {
-            log.error("获取表列表失败", e);
-            return ApiResponse.error(e.getMessage());
-        }
-    }
     
     // ============================================
     // CDC 任务管理

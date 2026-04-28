@@ -59,11 +59,7 @@ export const taskAPI = {
   getDetail: (id) => api.get(`/cdc/tasks/${id}/detail`),
   create: (data) => api.post('/cdc/tasks', data),
   delete: (id) => api.delete(`/cdc/tasks/${id}`),
-  submit: (id) => api.post(`/cdc/tasks/${id}/submit`),
-  
-  // 数据源相关
-  getSchemas: (data) => api.post('/cdc/datasource/schemas', data),
-  getTables: (data) => api.post('/cdc/datasource/tables', data)
+  submit: (id) => api.post(`/cdc/tasks/${id}/submit`)
 }
 
 // Flink 作业 API

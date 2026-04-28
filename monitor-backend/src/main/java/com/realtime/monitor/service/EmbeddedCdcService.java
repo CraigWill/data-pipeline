@@ -1,11 +1,13 @@
 package com.realtime.monitor.service;
 
 import java.io.File;
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -39,6 +41,7 @@ import lombok.extern.slf4j.Slf4j;
 public class EmbeddedCdcService {
 
     private static final String CDC_MAIN_CLASS = "com.realtime.pipeline.CdcJobMain";
+    private static final Pattern SAFE_PATH_SEGMENT = Pattern.compile("^[a-zA-Z0-9._-]{1,200}$");
 
     /** flink-jobs JAR 路径，可通过配置覆盖（本地开发 vs 容器部署） */
     @org.springframework.beans.factory.annotation.Value("${flink.job.jar-path:/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar}")
@@ -72,7 +75,7 @@ public class EmbeddedCdcService {
 
         try {
             // 1. 获取 JAR ID（先查已上传的，没有则上传）
-            String jarId = getOrUploadJar();
+            String jarId = requireSafePathSegment(getOrUploadJar(), "jarId");
 
             // 2. 构建 programArgs
             List<String> programArgs = new ArrayList<>();
@@ -102,10 +105,7 @@ public class EmbeddedCdcService {
 
             // 3. 通过 REST API 提交作业
             // 使用 UriComponentsBuilder 防止 URL 注入和目录遍历
-            String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
-                    .pathSegment("jars", jarId, "run")
-                    .build()
-                    .toUriString();
+            URI uri = buildFlinkUri("jars", jarId, "run");
 
             Map<String, Object> body = new HashMap<>();
             body.put("entryClass", CDC_MAIN_CLASS);
@@ -128,8 +128,8 @@ public class EmbeddedCdcService {
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(body), headers);
 
-            log.info("提交到: {}", url);
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+            log.info("提交到: {}", uri);
+            ResponseEntity<String> response = restTemplate.postForEntity(uri, entity, String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode result = objectMapper.readTree(response.getBody());
@@ -204,6 +204,34 @@ public class EmbeddedCdcService {
     // ============================================
     // Flink REST API - JAR 管理
     // ============================================
+    private URI buildFlinkUri(String... pathSegments) {
+        URI baseUri = URI.create(flinkService.getActiveLeaderUrl());
+        String scheme = baseUri.getScheme();
+        if (scheme == null || (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))) {
+            throw new IllegalArgumentException("无效的 Flink REST URL scheme: " + scheme);
+        }
+        if (baseUri.getHost() == null || baseUri.getHost().isEmpty()) {
+            throw new IllegalArgumentException("无效的 Flink REST URL host");
+        }
+        if (baseUri.getRawFragment() != null) {
+            throw new IllegalArgumentException("无效的 Flink REST URL fragment");
+        }
+        String[] safeSegments = new String[pathSegments.length];
+        for (int i = 0; i < pathSegments.length; i++) {
+            safeSegments[i] = requireSafePathSegment(pathSegments[i], "pathSegment[" + i + "]");
+        }
+        return UriComponentsBuilder.fromUri(baseUri).pathSegment(safeSegments).build().toUri();
+    }
+
+    private String requireSafePathSegment(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("无效的路径参数: " + name);
+        }
+        if (!SAFE_PATH_SEGMENT.matcher(value).matches()) {
+            throw new IllegalArgumentException("不安全的路径参数: " + name);
+        }
+        return value;
+    }
 
     /**
      * 获取或上传 JAR：先查已上传的，没有则上传本地 JAR

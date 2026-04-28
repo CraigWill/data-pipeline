@@ -132,6 +132,23 @@ public class DataSourceService {
      */
     public void updateDataSource(String dsId, DataSourceConfig config) {
         config.setId(dsId);
-        saveDataSource(config);
+
+        // 处理密码：如果前端传来的密码已经是加密格式（用户没改密码），不要二次加密
+        if (config.getPassword() != null && !config.getPassword().isEmpty()) {
+            if (!isLikelyEncrypted(config.getPassword())) {
+                // 明文密码（用户修改了密码），需要加密
+                try {
+                    config.setPassword(PasswordEncryptionUtil.encryptAES(config.getPassword()));
+                    log.debug("数据源密码已加密（更新）: {}", dsId);
+                } catch (Exception e) {
+                    log.error("密码加密失败: {}", e.getMessage());
+                    throw new RuntimeException("密码加密失败", e);
+                }
+            }
+            // 已加密格式 → 直接保存，不二次加密
+        }
+
+        config.setStatus("UNTESTED");
+        dataSourceRepository.save(config);
     }
 }

@@ -18,6 +18,8 @@ import com.realtime.monitor.repository.RuntimeJobRepository;
 
 import lombok.extern.slf4j.Slf4j;
 
+import jakarta.annotation.PostConstruct;
+
 /**
  * 运行时作业管理服务
  */
@@ -40,6 +42,7 @@ public class RuntimeJobService {
         this.embeddedCdcService = embeddedCdcService;
     }
 
+    @PostConstruct
     public void loadRunningJobsOnStartup() {
         log.info("加载运行中的作业...");
         // 延迟执行，等待 Flink 集群就绪

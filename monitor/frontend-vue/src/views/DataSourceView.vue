@@ -75,7 +75,7 @@
 
     <!-- 创建/编辑对话框 -->
     <transition name="modal">
-      <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
+      <div v-if="showModal" class="modal-overlay">
         <div class="modal-dialog">
           <!-- 对话框头部 -->
           <div class="dialog-header">
@@ -292,7 +292,7 @@ function validate(requirePassword = true) {
   const e = {}
   if (!form.value.name?.trim()) e.name = '请输入数据源名称'
   if (!form.value.host?.trim()) e.host = '请输入主机地址'
-  if (!form.value.port?.trim()) e.port = '请输入端口'
+  if (!String(form.value.port || '').trim()) e.port = '请输入端口'
   if (!form.value.sid?.trim()) e.sid = '请输入 SID'
   if (!form.value.username?.trim()) e.username = '请输入用户名'
   if (requirePassword && !form.value.password?.trim()) e.password = '请输入密码'

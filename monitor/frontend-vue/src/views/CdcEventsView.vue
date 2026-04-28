@@ -161,7 +161,7 @@
     </div>
 
     <!-- 文件内容模态框 -->
-    <div v-if="showContentModal" class="modal-overlay" @click.self="closeModal">
+    <div v-if="showContentModal" class="modal-overlay">
       <div class="modal-content">
         <div class="modal-header">
           <h3><icon-file-text theme="outline" size="16" /> 文件内容</h3>

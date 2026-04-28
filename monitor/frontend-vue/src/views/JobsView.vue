@@ -71,7 +71,7 @@
     </div>
 
     <!-- 作业详情模态框 -->
-    <div v-if="showDetailModal" class="modal active" @click.self="closeDetailModal">
+    <div v-if="showDetailModal" class="modal active">
       <div class="modal-content modal-large">
         <div class="modal-header">
           <h2>作业详情</h2>

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -31,6 +32,57 @@ public class CdcEventsService {
     private String outputPath;
 
     private final com.realtime.monitor.repository.CdcFileRepository cdcFileRepository;
+
+    private Path outputBaseDir;
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        this.outputBaseDir = validateOutputBaseDir(outputPath);
+    }
+
+    private Path validateOutputBaseDir(String configured) {
+        Path base;
+        try {
+            base = Paths.get(configured).toAbsolutePath().normalize();
+        } catch (InvalidPathException e) {
+            throw new IllegalStateException("output.path 配置非法", e);
+        }
+
+        Path root1 = Paths.get("./output").toAbsolutePath().normalize();
+        Path root2 = Paths.get("/opt/flink/output").toAbsolutePath().normalize();
+
+        if (!base.startsWith(root1) && !base.startsWith(root2)) {
+            throw new IllegalStateException("output.path 不在允许目录内: " + base);
+        }
+        return base;
+    }
+
+    private Path getOutputDir() {
+        return outputBaseDir != null ? outputBaseDir : validateOutputBaseDir(outputPath);
+    }
+
+    private Path resolveUnderOutputDir(String relative) {
+        if (relative == null || relative.isBlank()) {
+            throw new SecurityException("非法的文件路径参数");
+        }
+        if (relative.contains("\u0000") || relative.contains("\\") || relative.contains("//")) {
+            throw new SecurityException("非法的文件路径参数");
+        }
+        Path rel;
+        try {
+            rel = Paths.get(relative);
+        } catch (InvalidPathException e) {
+            throw new SecurityException("非法的文件路径参数");
+        }
+        if (rel.isAbsolute()) {
+            throw new SecurityException("非法的文件路径参数");
+        }
+        Path resolved = getOutputDir().resolve(rel).normalize();
+        if (!resolved.startsWith(getOutputDir())) {
+            throw new SecurityException("路径遍历检测：文件不在预期目录内");
+        }
+        return resolved;
+    }
     
     /**
      * 获取 CDC 事件列表
@@ -40,8 +92,8 @@ public class CdcEventsService {
         
         try {
             // 扫描输出目录
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyResult();
             }
             
@@ -91,8 +143,8 @@ public class CdcEventsService {
         Set<String> tables = new HashSet<>();
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return new ArrayList<>();
             }
             
@@ -118,8 +170,8 @@ public class CdcEventsService {
         List<Map<String, Object>> allEvents = new ArrayList<>();
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyStats();
             }
             
@@ -148,8 +200,8 @@ public class CdcEventsService {
         long deleteEvents = 0;
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyStats();
             }
             
@@ -157,18 +209,16 @@ public class CdcEventsService {
             String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
             
             // 遍历日期目录，只统计今天的
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     // 目录名格式: 2026-03-09--10
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}") && dirName.startsWith(today)) {
                         // 统计该目录下的文件
-                        File[] csvFiles = dateDir.listFiles((d, name) -> name.endsWith(".csv"));
-                        if (csvFiles != null) {
-                            for (File csvFile : csvFiles) {
+                        try (Stream<Path> csvFiles = Files.list(dateDir)) {
+                            for (Path csvFile : csvFiles.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().endsWith(".csv")).toList()) {
                                 // 使用优化的行数统计方法
-                                long lineCount = countLinesOptimized(csvFile);
+                                long lineCount = countLinesOptimized(csvFile.toFile());
                                 totalEvents += lineCount;
                                 insertEvents += lineCount; // 默认为 INSERT
                             }
@@ -223,10 +273,10 @@ public class CdcEventsService {
     /**
      * 查找 CSV 文件
      */
-    private List<File> findCsvFiles(File dir, String table) {
+    private List<File> findCsvFiles(Path dir, String table) {
         List<File> csvFiles = new ArrayList<>();
         
-        try (Stream<Path> paths = Files.walk(Paths.get(dir.getPath()))) {
+        try (Stream<Path> paths = Files.walk(dir)) {
             csvFiles = paths
                 .filter(Files::isRegularFile)
                 .filter(p -> p.toString().endsWith(".csv"))
@@ -370,22 +420,21 @@ public class CdcEventsService {
         String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyDateStats();
             }
             
             // 遍历日期目录
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     // 目录名格式: 2026-03-09--10，只统计今天的
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}") && dirName.startsWith(today)) {
                         String hour = dirName.substring(12, 14) + ":00"; // 提取小时部分
                         
                         // 统计该目录下的事件数量（按表筛选）
-                        Map<String, long[]> dirTableStats = countEventsByTableInDir(dateDir);
+                        Map<String, long[]> dirTableStats = countEventsByTableInDir(dateDir.toFile());
                         
                         // 累加每个表的统计
                         for (Map.Entry<String, long[]> entry : dirTableStats.entrySet()) {
@@ -506,38 +555,36 @@ public class CdcEventsService {
         List<Map<String, Object>> files = new ArrayList<>();
 
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyFileResult();
             }
 
             // 遍历日期目录
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     // 目录名格式: 2026-03-09--10
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}") && dirName.startsWith(date)) {
                         String hour = dirName.substring(12, 14) + ":00"; // 提取小时部分，格式化为 10:00
 
                         // 获取该目录下的 CSV 文件
-                        File[] csvFiles = dateDir.listFiles((d, name) -> name.endsWith(".csv"));
-                        if (csvFiles != null) {
-                            for (File csvFile : csvFiles) {
-                                String relativePath = dateDir.getName() + "/" + csvFile.getName();
-                                String tableName = extractTableName(csvFile.getName());
-                                long fileSize = csvFile.length();
-                                long lineCount = countLinesOptimized(csvFile);
-                                long timestamp = csvFile.lastModified();
+                        try (Stream<Path> csvFiles = Files.list(dateDir)) {
+                            for (Path csvFile : csvFiles.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().endsWith(".csv")).toList()) {
+                                String relativePath = dateDir.getFileName().toString() + "/" + csvFile.getFileName().toString();
+                                String tableName = extractTableName(csvFile.getFileName().toString());
+                                long fileSize = Files.size(csvFile);
+                                long lineCount = countLinesOptimized(csvFile.toFile());
+                                long timestamp = Files.getLastModifiedTime(csvFile).toMillis();
 
                                 // 注册文件到数据库，获取 ID（前端只看到 ID，不看到路径）
                                 String fileId = cdcFileRepository.registerFile(
-                                    relativePath, csvFile.getName(), tableName,
+                                    relativePath, csvFile.getFileName().toString(), tableName,
                                     fileSize, lineCount, timestamp);
 
                                 Map<String, Object> fileInfo = new HashMap<>();
                                 fileInfo.put("id", fileId);
-                                fileInfo.put("name", csvFile.getName());
+                                fileInfo.put("name", csvFile.getFileName().toString());
                                 // 不再暴露 path 给前端
                                 fileInfo.put("table", tableName);
                                 fileInfo.put("size", fileSize);
@@ -600,46 +647,25 @@ public class CdcEventsService {
      * 获取文件内容（分页）— 内部方法，接受真实路径。
      * 所有从文件读取的字符串字段均经过 HTML 实体编码，防止 XSS。
      */
-    private String normalizePath(String base, String relative) {
-        if (relative == null) {
-            throw new SecurityException("非法的文件路径参数");
-        }
-        if (relative.contains("..") || relative.contains("//") || relative.contains("\\") || relative.startsWith("/")) {
-            throw new SecurityException("非法的文件路径参数");
-        }
-        try {
-            File file = new File(base, relative);
-            String canonicalPath = file.getCanonicalPath();
-            String baseCanonical = new File(base).getCanonicalPath();
-            if (!canonicalPath.startsWith(baseCanonical)) {
-                throw new SecurityException("路径遍历检测：文件不在预期目录内");
-            }
-        } catch (Exception e) {
-            throw new SecurityException("解析文件路径失败");
-        }
-        return relative;
-    }
-
     public Map<String, Object> getFileContent(String filePath, int page, int size) {
         List<Map<String, Object>> rows = new ArrayList<>();
         long totalLines = 0;
 
         try {
-            String normalizedPath = normalizePath(outputPath, filePath);
-            File file = new File(outputPath, normalizedPath);
-            if (!file.exists() || !file.isFile()) {
+            Path file = resolveUnderOutputDir(filePath);
+            if (!Files.exists(file) || !Files.isRegularFile(file)) {
                 return createEmptyContentResult(filePath);
             }
 
             // 先统计总行数
-            totalLines = countLinesOptimized(file);
+            totalLines = countLinesOptimized(file.toFile());
 
             // 读取指定页的数据
             int startLine = (page - 1) * size;
             int endLine = startLine + size;
             int currentLine = 0;
 
-            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (currentLine >= startLine && currentLine < endLine) {
@@ -686,15 +712,14 @@ public class CdcEventsService {
         Set<String> dates = new TreeSet<>(Collections.reverseOrder());
 
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return new ArrayList<>();
             }
 
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}")) {
                         dates.add(dirName.substring(0, 10)); // 提取日期部分
                     }

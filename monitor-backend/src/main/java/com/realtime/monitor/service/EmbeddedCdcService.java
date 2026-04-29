@@ -23,6 +23,7 @@ import com.realtime.monitor.config.AppConfig;
 import com.realtime.monitor.dto.CdcSubmitRequest;
 import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
+import com.realtime.monitor.util.XssSanitizer;
 
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -148,8 +149,11 @@ public class EmbeddedCdcService {
                         "tables", request.getTables()));
                 return resultMap;
             } else {
-                throw new RuntimeException("Flink REST API 返回错误: " + response.getStatusCode()
-                        + " " + response.getBody());
+                String body = response.getBody();
+                if (body != null && !body.isBlank()) {
+                    log.debug("Flink REST API 提交返回: {}", XssSanitizer.sanitizeString(limitForLog(body)));
+                }
+                throw new RuntimeException("Flink REST API 返回错误: HTTP " + response.getStatusCode());
             }
         } catch (Exception e) {
             log.error("提交 CDC 作业失败", e);
@@ -322,8 +326,17 @@ public class EmbeddedCdcService {
             log.info("JAR 上传成功: {}", jarId);
             return jarId;
         } else {
-            throw new RuntimeException("JAR 上传失败: " + responseCode + " " + responseBody);
+            if (responseBody != null && !responseBody.isBlank()) {
+                log.debug("JAR 上传返回: {}", XssSanitizer.sanitizeString(limitForLog(responseBody)));
+            }
+            throw new RuntimeException("JAR 上传失败: HTTP " + responseCode);
         }
+    }
+
+    private String limitForLog(String value) {
+        if (value == null) return null;
+        String v = value.trim();
+        return v.length() > 1000 ? v.substring(0, 1000) : v;
     }
 
     /**

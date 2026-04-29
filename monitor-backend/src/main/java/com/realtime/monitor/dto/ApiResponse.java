@@ -1,6 +1,7 @@
 package com.realtime.monitor.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.realtime.monitor.util.XssSanitizer;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -31,14 +32,14 @@ public class ApiResponse<T> {
         return ApiResponse.<T>builder()
                 .success(true)
                 .data(data)
-                .message(message)
+                .message(XssSanitizer.sanitizeString(message))
                 .build();
     }
     
     public static <T> ApiResponse<T> error(String error) {
         return ApiResponse.<T>builder()
                 .success(false)
-                .error(error)
+                .error(XssSanitizer.sanitizeString(error))
                 .build();
     }
 }

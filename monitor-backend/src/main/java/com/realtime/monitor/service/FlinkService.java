@@ -7,6 +7,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.owasp.esapi.ESAPI;
+import org.owasp.esapi.Encoder;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -14,6 +16,8 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.util.UriComponentsBuilder;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -23,6 +27,7 @@ import static com.realtime.monitor.util.XssSanitizer.sanitize;
 import static com.realtime.monitor.util.XssSanitizer.sanitizeList;
 
 import jakarta.annotation.PostConstruct;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -223,15 +228,130 @@ public class FlinkService {
     }
 
     /**
-     * Safe wrapper around restTemplate.getForEntity that validates the response.
+     * Safe wrapper around restTemplate.getForEntity that:
+     * 1. Encodes the URL using OWASP ESAPI to prevent URL injection
+     * 2. Validates the response body for script injection
+     * 3. Sets security headers (HttpOnly, X-Content-Type-Options, etc.)
+     *    on the current HTTP response if available
      *
      * @param uri     the target URI
      * @param context description for logging
      * @return validated response body, or null if the response is invalid/untrusted
      */
     private String safeGet(URI uri, String context) {
-        ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
+        // Step 1: Encode URL components using OWASP ESAPI to prevent injection
+        URI safeUri = encodeUriWithEsapi(uri, context);
+
+        // Step 2: Execute the request
+        ResponseEntity<String> response = restTemplate.getForEntity(safeUri, String.class);
+
+        // Step 3: Set security headers on the outgoing HTTP response
+        setSecurityResponseHeaders();
+
+        // Step 4: Validate the response body
         return validateResponse(response, context);
+    }
+
+    /**
+     * Encode URI using OWASP ESAPI to prevent URL-based injection attacks.
+     * Validates and sanitizes each component of the URI.
+     */
+    private URI encodeUriWithEsapi(URI uri, String context) {
+        try {
+            Encoder encoder = ESAPI.encoder();
+
+            // Validate the scheme — only allow http/https
+            String scheme = uri.getScheme();
+            if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                throw new SecurityException("不允许的 URI scheme: " + scheme);
+            }
+
+            // Encode the path segments using ESAPI to neutralize injection characters
+            String path = uri.getRawPath();
+            if (path != null && !path.isEmpty()) {
+                // Split path, encode each segment individually, rejoin
+                String[] segments = path.split("/", -1);
+                StringBuilder safePath = new StringBuilder();
+                for (String segment : segments) {
+                    if (!segment.isEmpty()) {
+                        // ESAPI encodeForURL encodes special characters that could be used for injection
+                        String encoded = encoder.encodeForURL(segment);
+                        safePath.append("/").append(encoded);
+                    } else {
+                        safePath.append("/");
+                    }
+                }
+                // Rebuild URI with encoded path
+                return UriComponentsBuilder.newInstance()
+                        .scheme(scheme)
+                        .host(uri.getHost())
+                        .port(uri.getPort())
+                        .path(safePath.toString())
+                        .query(uri.getRawQuery() != null ? encoder.encodeForURL(uri.getRawQuery()) : null)
+                        .build(true)
+                        .toUri();
+            }
+
+            return uri;
+        } catch (SecurityException se) {
+            throw se;
+        } catch (Exception e) {
+            log.warn("[{}] ESAPI URL 编码失败，使用原始 URI: {}", context, e.getMessage());
+            return uri;
+        }
+    }
+
+    /**
+     * Set security headers on the current HTTP response to prevent
+     * script injection and cookie theft when the response reaches the browser.
+     *
+     * Headers set:
+     * - X-Content-Type-Options: nosniff (prevent MIME-type sniffing)
+     * - X-XSS-Protection: 1; mode=block (legacy XSS filter)
+     * - Cache-Control: no-store (prevent caching of sensitive data)
+     * - Set-Cookie attributes: HttpOnly; Secure; SameSite=Strict
+     */
+    private void setSecurityResponseHeaders() {
+        try {
+            ServletRequestAttributes attrs =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs == null) {
+                return; // Not in a web request context (e.g., async task)
+            }
+            HttpServletResponse httpResponse = attrs.getResponse();
+            if (httpResponse == null) {
+                return;
+            }
+
+            // Prevent MIME-type sniffing — stops browsers from interpreting
+            // JSON responses as HTML/script
+            httpResponse.setHeader("X-Content-Type-Options", "nosniff");
+
+            // Legacy XSS protection header (still useful for older browsers)
+            httpResponse.setHeader("X-XSS-Protection", "1; mode=block");
+
+            // Prevent caching of potentially sensitive Flink cluster data
+            httpResponse.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+            httpResponse.setHeader("Pragma", "no-cache");
+
+            // Content-Security-Policy to block inline scripts
+            // Only set if not already set by a filter
+            if (httpResponse.getHeader("Content-Security-Policy") == null) {
+                httpResponse.setHeader("Content-Security-Policy",
+                        "default-src 'self'; script-src 'self'; object-src 'none'");
+            }
+
+            // Ensure any cookies set in this response have HttpOnly + Secure + SameSite
+            // This is done via Set-Cookie header manipulation
+            String existingCookie = httpResponse.getHeader("Set-Cookie");
+            if (existingCookie != null && !existingCookie.contains("HttpOnly")) {
+                httpResponse.setHeader("Set-Cookie",
+                        existingCookie + "; HttpOnly; Secure; SameSite=Strict");
+            }
+
+        } catch (Exception e) {
+            log.debug("设置安全响应头失败（非 Web 上下文）: {}", e.getMessage());
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 package com.realtime.monitor.service;
 
+import com.realtime.monitor.util.PathSecurityValidator;
 import com.realtime.monitor.util.XssSanitizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -62,26 +63,9 @@ public class CdcEventsService {
     }
 
     private Path resolveUnderOutputDir(String relative) {
-        if (relative == null || relative.isBlank()) {
-            throw new SecurityException("非法的文件路径参数");
-        }
-        if (relative.contains("\u0000") || relative.contains("\\") || relative.contains("//")) {
-            throw new SecurityException("非法的文件路径参数");
-        }
-        Path rel;
-        try {
-            rel = Paths.get(relative);
-        } catch (InvalidPathException e) {
-            throw new SecurityException("非法的文件路径参数");
-        }
-        if (rel.isAbsolute()) {
-            throw new SecurityException("非法的文件路径参数");
-        }
-        Path resolved = getOutputDir().resolve(rel).normalize();
-        if (!resolved.startsWith(getOutputDir())) {
-            throw new SecurityException("路径遍历检测：文件不在预期目录内");
-        }
-        return resolved;
+        // 使用 PathSecurityValidator 进行综合验证：
+        // 路径遍历检测 + 恶意字符过滤 + 文件后缀白名单 + 沙箱约束
+        return PathSecurityValidator.validateForRead(getOutputDir(), relative);
     }
     
     /**
@@ -91,6 +75,21 @@ public class CdcEventsService {
         List<Map<String, Object>> allEvents = new ArrayList<>();
         
         try {
+            // 验证 table 参数：只允许字母、数字、下划线
+            if (table != null && !table.isEmpty()) {
+                if (!table.matches("^[a-zA-Z0-9_]{1,128}$")) {
+                    log.warn("非法的表名参数: {}", table.length() > 50 ? table.substring(0, 50) : table);
+                    return createEmptyResult();
+                }
+            }
+            // 验证 eventType 参数
+            if (eventType != null && !eventType.isEmpty()) {
+                if (!Set.of("INSERT", "UPDATE", "DELETE").contains(eventType.toUpperCase())) {
+                    log.warn("非法的事件类型参数: {}", eventType);
+                    return createEmptyResult();
+                }
+            }
+
             // 扫描输出目录
             Path outputDir = getOutputDir();
             if (!Files.exists(outputDir)) {
@@ -271,16 +270,39 @@ public class CdcEventsService {
     }
     
     /**
-     * 查找 CSV 文件
+     * 查找 CSV 文件（仅允许 .csv 后缀白名单）
      */
     private List<File> findCsvFiles(Path dir, String table) {
         List<File> csvFiles = new ArrayList<>();
         
-        try (Stream<Path> paths = Files.walk(dir)) {
+        try (Stream<Path> paths = Files.walk(dir, 3)) { // 限制遍历深度为 3 层
             csvFiles = paths
                 .filter(Files::isRegularFile)
-                .filter(p -> p.toString().endsWith(".csv"))
-                .filter(p -> table == null || p.toString().contains(table))
+                .filter(p -> {
+                    String fileName = p.getFileName().toString();
+                    // 白名单：只允许 .csv 后缀
+                    if (!fileName.toLowerCase().endsWith(".csv")) {
+                        return false;
+                    }
+                    // 拒绝隐藏文件
+                    if (fileName.startsWith(".")) {
+                        return false;
+                    }
+                    // 拒绝包含恶意字符的文件名
+                    if (fileName.contains("\u0000") || fileName.contains("..") 
+                            || fileName.contains(";") || fileName.contains("`")) {
+                        log.warn("跳过包含恶意字符的文件: {}", fileName.length() > 50 ? fileName.substring(0, 50) : fileName);
+                        return false;
+                    }
+                    // 验证文件路径仍在沙箱内
+                    Path normalized = p.toAbsolutePath().normalize();
+                    if (!normalized.startsWith(getOutputDir().toAbsolutePath().normalize())) {
+                        log.warn("跳过沙箱外的文件: {}", normalized);
+                        return false;
+                    }
+                    return true;
+                })
+                .filter(p -> table == null || p.getFileName().toString().toUpperCase().contains(table.toUpperCase()))
                 .map(Path::toFile)
                 .sorted((a, b) -> Long.compare(b.lastModified(), a.lastModified()))
                 .limit(100) // 限制文件数量

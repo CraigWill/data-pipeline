@@ -23,6 +23,7 @@ import com.realtime.monitor.config.AppConfig;
 import com.realtime.monitor.dto.CdcSubmitRequest;
 import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
+import com.realtime.monitor.util.PathSecurityValidator;
 import com.realtime.monitor.util.XssSanitizer;
 
 import jakarta.annotation.PostConstruct;
@@ -43,6 +44,23 @@ public class EmbeddedCdcService {
 
     private static final String CDC_MAIN_CLASS = "com.realtime.pipeline.CdcJobMain";
     private static final Pattern SAFE_PATH_SEGMENT = Pattern.compile("^[a-zA-Z0-9._-]{1,200}$");
+
+    /** 允许的输出路径前缀白名单 */
+    private static final List<String> ALLOWED_OUTPUT_PREFIXES = List.of(
+            "./output/", "/opt/flink/output/", "output/"
+    );
+
+    /** 允许的 savepoint/checkpoint 路径前缀白名单 */
+    private static final List<String> ALLOWED_STATE_PREFIXES = List.of(
+            "file:///opt/flink/savepoints", "file:///opt/flink/checkpoints",
+            "/opt/flink/savepoints", "/opt/flink/checkpoints",
+            "hdfs://", "s3://"
+    );
+
+    /** 恶意路径字符模式 */
+    private static final Pattern MALICIOUS_PATH_CHARS = Pattern.compile(
+            "[\\x00-\\x1f`$|;&!><]|(\\.\\./)|(\\.\\.\\.)"
+    );
 
     /** flink-jobs JAR 路径，可通过配置覆盖（本地开发 vs 容器部署） */
     @org.springframework.beans.factory.annotation.Value("${flink.job.jar-path:/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar}")
@@ -88,7 +106,7 @@ public class EmbeddedCdcService {
             programArgs.add("--schema"); programArgs.add(request.getSchema());
             programArgs.add("--tables"); programArgs.add(String.join(",", request.getTables()));
             programArgs.add("--outputPath"); programArgs.add(
-                    request.getOutputPath() != null ? request.getOutputPath() : appConfig.getFlinkOutputPath());
+                    validateOutputPath(request.getOutputPath() != null ? request.getOutputPath() : appConfig.getFlinkOutputPath()));
             programArgs.add("--parallelism"); programArgs.add(String.valueOf(
                     request.getParallelism() > 0 ? request.getParallelism() : 2));
             programArgs.add("--splitSize"); programArgs.add(String.valueOf(
@@ -120,9 +138,10 @@ public class EmbeddedCdcService {
             }
             // 从 savepoint 恢复
             if (request.getSavepointPath() != null && !request.getSavepointPath().isEmpty()) {
-                body.put("savepointPath", request.getSavepointPath());
+                String safeSavepointPath = validateStatePath(request.getSavepointPath());
+                body.put("savepointPath", safeSavepointPath);
                 body.put("allowNonRestoredState", true);
-                log.info("  从 savepoint 恢复: {}", request.getSavepointPath());
+                log.info("  从 savepoint 恢复: {}", safeSavepointPath);
             }
 
             HttpHeaders headers = new HttpHeaders();
@@ -235,6 +254,73 @@ public class EmbeddedCdcService {
             throw new IllegalArgumentException("不安全的路径参数: " + name);
         }
         return value;
+    }
+
+    /**
+     * 验证输出路径安全性：
+     * - 必须在允许的前缀白名单内
+     * - 不能包含路径遍历字符（../ 等）
+     * - 不能包含恶意符号
+     */
+    private String validateOutputPath(String outputPath) {
+        if (outputPath == null || outputPath.isBlank()) {
+            return appConfig.getFlinkOutputPath(); // 使用默认安全路径
+        }
+
+        // 检测恶意字符
+        if (MALICIOUS_PATH_CHARS.matcher(outputPath).find()) {
+            log.warn("输出路径包含恶意字符，使用默认路径: {}", 
+                    outputPath.length() > 50 ? outputPath.substring(0, 50) + "..." : outputPath);
+            throw new SecurityException("输出路径包含非法字符");
+        }
+
+        // 检测路径遍历
+        if (outputPath.contains("..")) {
+            log.warn("输出路径包含路径遍历字符: {}", outputPath);
+            throw new SecurityException("输出路径不允许包含 '..'");
+        }
+
+        // 白名单前缀检查
+        String normalized = outputPath.replace("\\", "/");
+        boolean allowed = ALLOWED_OUTPUT_PREFIXES.stream()
+                .anyMatch(prefix -> normalized.startsWith(prefix));
+        if (!allowed) {
+            log.warn("输出路径不在白名单内: {}", outputPath);
+            throw new SecurityException("输出路径不在允许的目录范围内");
+        }
+
+        return outputPath;
+    }
+
+    /**
+     * 验证 savepoint/checkpoint 路径安全性
+     */
+    private String validateStatePath(String statePath) {
+        if (statePath == null || statePath.isBlank()) {
+            return null;
+        }
+
+        // 检测恶意字符
+        if (MALICIOUS_PATH_CHARS.matcher(statePath).find()) {
+            log.warn("状态路径包含恶意字符: {}", 
+                    statePath.length() > 50 ? statePath.substring(0, 50) + "..." : statePath);
+            throw new SecurityException("Savepoint 路径包含非法字符");
+        }
+
+        // 检测路径遍历
+        if (statePath.contains("..")) {
+            throw new SecurityException("Savepoint 路径不允许包含 '..'");
+        }
+
+        // 白名单前缀检查
+        boolean allowed = ALLOWED_STATE_PREFIXES.stream()
+                .anyMatch(prefix -> statePath.startsWith(prefix));
+        if (!allowed) {
+            log.warn("状态路径不在白名单内: {}", statePath);
+            throw new SecurityException("Savepoint 路径不在允许的目录范围内");
+        }
+
+        return statePath;
     }
 
     /**

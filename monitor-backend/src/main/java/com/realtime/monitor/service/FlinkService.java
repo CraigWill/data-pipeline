@@ -25,6 +25,7 @@ import static com.realtime.monitor.util.XssSanitizer.sanitizeList;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 
 /**
  * Flink REST API 服务
@@ -45,6 +46,8 @@ public class FlinkService {
     private volatile long lastLeaderCheckTime = 0;
     /** leader 缓存有效期（毫秒） */
     private static final long LEADER_CACHE_TTL = 30_000;
+    /** 允许的最大响应体大小 (10 MB) */
+    private static final int MAX_RESPONSE_BODY_SIZE = 10 * 1024 * 1024;
     
     @PostConstruct
     public void init() {
@@ -91,6 +94,147 @@ public class FlinkService {
     }
 
     // -------------------------------------------------------------------------
+    // Response validation — treat all external responses as untrusted
+    // -------------------------------------------------------------------------
+
+    /**
+     * Regex patterns for detecting script injection in response bodies.
+     * These catch common XSS/script injection vectors that could be embedded
+     * in JSON string values from a compromised upstream service.
+     */
+    private static final java.util.regex.Pattern[] SCRIPT_INJECTION_PATTERNS = {
+        // <script>...</script> tags (with optional attributes)
+        java.util.regex.Pattern.compile("<\\s*script[^>]*>", java.util.regex.Pattern.CASE_INSENSITIVE),
+        java.util.regex.Pattern.compile("</\\s*script\\s*>", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // javascript: protocol in any context
+        java.util.regex.Pattern.compile("javascript\\s*:", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // vbscript: protocol
+        java.util.regex.Pattern.compile("vbscript\\s*:", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // data: URI with script content types
+        java.util.regex.Pattern.compile("data\\s*:[^,]*text/html", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // Event handler attributes (onclick, onerror, onload, onmouseover, etc.)
+        java.util.regex.Pattern.compile("\\bon\\w+\\s*=", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // <iframe>, <object>, <embed>, <applet>, <form> tags
+        java.util.regex.Pattern.compile("<\\s*(iframe|object|embed|applet|form)[^>]*>", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // expression() CSS injection
+        java.util.regex.Pattern.compile("expression\\s*\\(", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // eval(), Function(), setTimeout/setInterval with string arg
+        java.util.regex.Pattern.compile("\\b(eval|Function)\\s*\\(", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // <img src=x onerror=...> pattern
+        java.util.regex.Pattern.compile("<\\s*img[^>]+onerror\\s*=", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // SVG onload
+        java.util.regex.Pattern.compile("<\\s*svg[^>]+onload\\s*=", java.util.regex.Pattern.CASE_INSENSITIVE),
+    };
+
+    /**
+     * Validate and extract the body from a RestTemplate response.
+     * Guards against:
+     * - Non-2xx status codes (treated as failures)
+     * - Null or empty bodies
+     * - Oversized response bodies (potential DoS / memory exhaustion)
+     * - Non-JSON content types when JSON is expected
+     * - Script injection / XSS payloads embedded in response content
+     *
+     * @param response the ResponseEntity from restTemplate
+     * @param context  description for logging (e.g. "getJobs")
+     * @return the validated and sanitized response body string, or null if invalid
+     */
+    private String validateResponse(ResponseEntity<String> response, String context) {
+        if (response == null) {
+            log.warn("[{}] 收到 null 响应", context);
+            return null;
+        }
+
+        HttpStatus status = (HttpStatus) response.getStatusCode();
+        if (!status.is2xxSuccessful()) {
+            log.warn("[{}] 非成功状态码: {}", context, status.value());
+            return null;
+        }
+
+        String body = response.getBody();
+        if (body == null || body.isBlank()) {
+            log.debug("[{}] 响应体为空", context);
+            return null;
+        }
+
+        // Guard against oversized responses that could exhaust memory
+        if (body.length() > MAX_RESPONSE_BODY_SIZE) {
+            log.error("[{}] 响应体过大 ({} bytes)，超过限制 ({} bytes)，丢弃",
+                    context, body.length(), MAX_RESPONSE_BODY_SIZE);
+            return null;
+        }
+
+        // Validate content-type header if present — expect JSON from Flink REST API
+        MediaType contentType = response.getHeaders().getContentType();
+        if (contentType != null
+                && !contentType.isCompatibleWith(MediaType.APPLICATION_JSON)
+                && !contentType.isCompatibleWith(MediaType.TEXT_PLAIN)) {
+            log.warn("[{}] 意外的 Content-Type: {}，期望 JSON", context, contentType);
+            return null;
+        }
+
+        // Basic structural check: Flink REST API always returns JSON objects or arrays
+        String trimmed = body.trim();
+        char firstChar = trimmed.charAt(0);
+        if (firstChar != '{' && firstChar != '[') {
+            log.warn("[{}] 响应体不是有效的 JSON 结构 (首字符: '{}')", context, firstChar);
+            return null;
+        }
+
+        // Script injection detection and neutralization
+        body = neutralizeScriptInjection(body, context);
+
+        return body;
+    }
+
+    /**
+     * Detect and neutralize script injection patterns in the response body.
+     * If dangerous patterns are found, they are stripped/escaped to prevent
+     * XSS when the data is eventually rendered in a browser context.
+     *
+     * This is a defense-in-depth measure — the primary defense is the OWASP
+     * HTML encoding in XssSanitizer, but stripping at the source prevents
+     * payloads from ever reaching downstream processing.
+     */
+    private String neutralizeScriptInjection(String body, String context) {
+        boolean injectionDetected = false;
+
+        for (java.util.regex.Pattern pattern : SCRIPT_INJECTION_PATTERNS) {
+            if (pattern.matcher(body).find()) {
+                if (!injectionDetected) {
+                    log.warn("[{}] 检测到潜在脚本注入内容，执行净化处理", context);
+                    injectionDetected = true;
+                }
+                // Replace the dangerous pattern with a safe placeholder
+                body = pattern.matcher(body).replaceAll("[SANITIZED]");
+            }
+        }
+
+        // Additional: strip null bytes which can be used to bypass filters
+        if (body.indexOf('\u0000') >= 0) {
+            log.warn("[{}] 检测到 null 字节，已移除", context);
+            body = body.replace("\u0000", "");
+        }
+
+        // Strip Unicode direction override characters (used in bidi attacks)
+        body = body.replaceAll("[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]", "");
+
+        return body;
+    }
+
+    /**
+     * Safe wrapper around restTemplate.getForEntity that validates the response.
+     *
+     * @param uri     the target URI
+     * @param context description for logging
+     * @return validated response body, or null if the response is invalid/untrusted
+     */
+    private String safeGet(URI uri, String context) {
+        ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
+        return validateResponse(response, context);
+    }
+
+    // -------------------------------------------------------------------------
     // Leader discovery
     // -------------------------------------------------------------------------
 
@@ -120,8 +264,8 @@ public class FlinkService {
         for (String base : getCandidateUrls()) {
             try {
                 URI testUri = buildUri(base, "jobs", "overview");
-                ResponseEntity<String> resp = restTemplate.getForEntity(testUri, String.class);
-                if (resp.getStatusCode().is2xxSuccessful()) {
+                String body = safeGet(testUri, "leaderDiscovery");
+                if (body != null) {
                     if (!base.equals(activeLeaderUrl)) {
                         log.info("Flink leader: {}", base);
                     }
@@ -153,9 +297,9 @@ public class FlinkService {
     public List<Map<String, Object>> getJobs() {
         try {
             URI uri = buildUri(getLeaderUrl(), "jobs", "overview");
-            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                JsonNode root = objectMapper.readTree(response.getBody());
+            String body = safeGet(uri, "getJobs");
+            if (body != null) {
+                JsonNode root = objectMapper.readTree(body);
                 JsonNode jobs = root.get("jobs");
                 if (jobs != null && jobs.isArray()) {
                     List<Map<String, Object>> result = new ArrayList<>();
@@ -177,9 +321,9 @@ public class FlinkService {
     public Map<String, Object> getJobDetail(String jobId) {
         try {
             URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
-            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return sanitize(objectMapper.readValue(response.getBody(), Map.class));
+            String body = safeGet(uri, "getJobDetail");
+            if (body != null) {
+                return sanitize(objectMapper.readValue(body, Map.class));
             }
         } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
             // 404 — job no longer exists on Flink, confirmed not found
@@ -252,9 +396,9 @@ public class FlinkService {
     public Map<String, Object> getClusterOverview() {
         try {
             URI uri = buildUri(getLeaderUrl(), "overview");
-            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return sanitize(objectMapper.readValue(response.getBody(), Map.class));
+            String body = safeGet(uri, "getClusterOverview");
+            if (body != null) {
+                return sanitize(objectMapper.readValue(body, Map.class));
             }
         } catch (org.springframework.web.client.ResourceAccessException e) {
             log.debug("Flink 不可用，获取集群概览跳过: {}", e.getMessage());
@@ -268,9 +412,9 @@ public class FlinkService {
     public List<Map<String, Object>> getTaskManagers() {
         try {
             URI uri = buildUri(getLeaderUrl(), "taskmanagers");
-            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                JsonNode root = objectMapper.readTree(response.getBody());
+            String body = safeGet(uri, "getTaskManagers");
+            if (body != null) {
+                JsonNode root = objectMapper.readTree(body);
                 JsonNode taskmanagers = root.get("taskmanagers");
                 if (taskmanagers != null && taskmanagers.isArray()) {
                     List<Map<String, Object>> result = new ArrayList<>();
@@ -292,9 +436,9 @@ public class FlinkService {
     public List<Map<String, Object>> getJobManagerConfig() {
         try {
             URI uri = buildUri(getLeaderUrl(), "jobmanager", "config");
-            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                List<Map<String, Object>> raw = objectMapper.readValue(response.getBody(), List.class);
+            String body = safeGet(uri, "getJobManagerConfig");
+            if (body != null) {
+                List<Map<String, Object>> raw = objectMapper.readValue(body, List.class);
                 return sanitizeList(raw);
             }
         } catch (org.springframework.web.client.ResourceAccessException e) {
@@ -318,8 +462,8 @@ public class FlinkService {
     public boolean isFlinkHealthy() {
         try {
             URI uri = buildUri(getLeaderUrl(), "overview");
-            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-            return response.getStatusCode().is2xxSuccessful();
+            String body = safeGet(uri, "isFlinkHealthy");
+            return body != null;
         } catch (Exception e) {
             log.warn("Flink 连接检查失败: {}", e.getMessage());
             return false;
@@ -386,9 +530,9 @@ public class FlinkService {
         for (int i = 0; i < maxRetries; i++) {
             try {
                 Thread.sleep(1000);
-                ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
+                String body = safeGet(uri, "waitForSavepoint");
+                if (body != null) {
+                    Map<String, Object> result = objectMapper.readValue(body, Map.class);
                     Map<String, Object> status = (Map<String, Object>) result.get("status");
                     if (status != null) {
                         String statusId = (String) status.get("id");
@@ -418,9 +562,9 @@ public class FlinkService {
     public Map<String, Object> getCheckpoints(String jobId) {
         try {
             URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "checkpoints");
-            ResponseEntity<String> response = restTemplate.getForEntity(uri, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return sanitize(objectMapper.readValue(response.getBody(), Map.class));
+            String body = safeGet(uri, "getCheckpoints");
+            if (body != null) {
+                return sanitize(objectMapper.readValue(body, Map.class));
             }
         } catch (org.springframework.web.client.ResourceAccessException e) {
             log.debug("Flink 不可用，获取 Checkpoint 信息跳过: {}", e.getMessage());

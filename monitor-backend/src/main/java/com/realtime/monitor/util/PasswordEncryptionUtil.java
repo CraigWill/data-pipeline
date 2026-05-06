@@ -22,21 +22,32 @@ public class PasswordEncryptionUtil {
     private static final int GCM_IV_LENGTH = 12;   // 96-bit IV (NIST recommended)
     private static final int GCM_TAG_LENGTH = 128;  // 128-bit authentication tag
 
-    // 从环境变量读取 AES 密钥（必须设置，不提供默认值）
-    private static final String AES_KEY = getRequiredEnvVar("AES_ENCRYPTION_KEY");
+    // 从环境变量或系统属性读取 AES 密钥（测试环境使用系统属性）
+    private static final String AES_KEY = getAESKey();
 
     /**
-     * 获取必需的环境变量，如果未设置则抛出异常
+     * 获取 AES 密钥，优先从环境变量读取，测试环境可从系统属性读取
      */
-    private static String getRequiredEnvVar(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.isEmpty()) {
-            throw new IllegalStateException(
-                "环境变量 " + name + " 未设置！请在 .env 文件中设置此变量。\n" +
-                "生成密钥: openssl rand -base64 32"
-            );
+    private static String getAESKey() {
+        // 优先从环境变量读取（生产环境）
+        String envKey = System.getenv("AES_ENCRYPTION_KEY");
+        if (envKey != null && !envKey.isEmpty()) {
+            return envKey;
         }
-        return value;
+        
+        // 测试环境从系统属性读取（通过 -Daes.encryption.key=xxx 设置）
+        String propKey = System.getProperty("aes.encryption.key");
+        if (propKey != null && !propKey.isEmpty()) {
+            return propKey;
+        }
+        
+        // 如果都没有设置，抛出异常
+        throw new IllegalStateException(
+            "AES_ENCRYPTION_KEY 未设置！\n" +
+            "生产环境：请在 .env 文件中设置 AES_ENCRYPTION_KEY\n" +
+            "测试环境：添加 -Daes.encryption.key=xxx JVM 参数\n" +
+            "生成密钥：openssl rand -base64 32"
+        );
     }
 
     /**

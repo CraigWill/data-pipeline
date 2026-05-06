@@ -145,8 +145,11 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>-Dnet.bytebuddy.experimental=true</argLine>
-                    <!-- 安全修复：移除硬编码的 AES 密钥，测试环境应使用环境变量或测试专用密钥 -->
+                    <!-- 安全修复：测试环境使用系统属性设置 AES 密钥 -->
+                    <argLine>
+                        -Dnet.bytebuddy.experimental=true
+                        -Daes.encryption.key=YmFzZTY0ZW5jb2RlZDMyYnl0ZWtleWZvcnRlc3Rpbmc=
+                    </argLine>
                 </configuration>
             </plugin>
 

@@ -1,0 +1,99 @@
+# Kiro Data Pipeline - 安装指南
+
+> **版本**: 1.0.0  
+> **最后更新**: 2026-04-29
+
+---
+
+## 1. 系统要求
+
+### 1.1 硬件要求
+
+| 组件 | 最小配置 | 推荐配置 |
+|------|-----------|-----------|
+| **CPU** | 4核 (2.0GHz) | 8核 (3.5GHz+) |
+| **内存** | 16GB RAM | 32GB+ RAM |
+| **磁盘** | 100GB (SSD) | 500GB+ SSD |
+| **网络** | 1Gbps 以太网 | 10Gbps+ |
+
+### 1.2 软件要求
+
+| 类别 | 技术 | 版本 |
+|------|--------|-------|
+| **容器** | Docker | 20.10+ |
+| **编排** | Docker Compose | 2.0+ |
+| **Kubernetes** | k8s | 1.19+ (可选) |
+| **Oracle** | Oracle DB | 11g+ |
+| **JDK** | OpenJDK | 17+ |
+
+---
+
+## 2. 准备工作
+
+### 2.1 安装依赖
+
+```bash
+# 1. 安装 Docker
+curl -fsSL https://get.docker.com | sh
+
+# 2. 安装 Docker Compose
+curl -L https://github.com/docker/compose/releases/download/v2.0.1/docker-compose-`uname -s`-`uname -m` > /usr/local/bin/docker-compose
+chmod +x /usr/local/bin/docker-compose
+
+# 3. 安装其他工具
+sudo apt install -y jq make curl
+```
+
+### 2.2 配置环境变量
+
+```bash
+# 1. 创建配置目录
+mkdir -p ~/.kiro/config
+
+# 2. 复制示例文件
+cp data-pipeline/.env.example ~/.kiro/config/.env
+
+# 3. 编辑配置文件
+vim ~/.kiro/config/.env
+```
+
+**必要环境变量**:
+- `DATABASE_HOST` - Oracle 主机地址
+- `DATABASE_USERNAME` - 数据库用户名
+- `DATABASE_PASSWORD` - 数据库密码 (必需)
+- `JWT_SECRET` - JWT 密钥 (32+字符, 必需)
+- `AES_ENCRYPTION_KEY` - AES 加密密钥 (16字符, 必需)
+
+---
+
+## 3. 安装步骤
+
+### 3.1 下载安装包
+
+```bash
+# 1. 克隆项目仓库
+git clone https://github.com/CraigWill/data-pipeline.git /opt/kiro
+cd /opt/kiro
+
+# 2. 构建 Docker 镜像
+./build-flink-images.sh
+docker-compose build
+
+# 3. 初始化数据库
+sqlplus sys/<password>@<SID> as sysdba @sql/setup-flink-user-schema.sql
+sqlplus finance_user/<password>@<SID> @sql/setup-metadata-tables.sql
+```
+
+### 3.2 启动服务
+
+```bash
+# 1. 启动所有服务
+cd /opt/kiro
+docker-compose up -d
+
+# 2. 验证部署状态
+docker-compose ps
+```
+
+**预期输出**:
+- 所有容器状态显示 

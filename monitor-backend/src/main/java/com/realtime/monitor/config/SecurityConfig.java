@@ -21,9 +21,13 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.util.StringUtils;
+import org.springframework.web.cors.CorsConfiguration;
+import org.springframework.web.cors.CorsConfigurationSource;
+import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import jakarta.servlet.DispatcherType;
+import java.util.Arrays;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -46,10 +50,11 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http, 
                                           JwtTokenProvider tokenProvider,
-                                          UserDetailsService userDetailsService) throws Exception {
+                                          UserDetailsService userDetailsService,
+                                          CorsConfigurationSource corsConfigurationSource) throws Exception {
         http
             .csrf(csrf -> csrf.disable())
-            .cors(cors -> cors.disable())
+            .cors(cors -> cors.configurationSource(corsConfigurationSource))
             .exceptionHandling(ex -> ex.authenticationEntryPoint(jwtAuthenticationEntryPoint))
             .sessionManagement(sm -> sm.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .headers(headers -> headers
@@ -114,5 +119,55 @@ public class SecurityConfig {
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration config) throws Exception {
         return config.getAuthenticationManager();
+    }
+
+    /**
+     * 安全修复：配置正确的 CORS 策略
+     * - 限制允许的源（不允许通配符）
+     * - 仅允许必要的 HTTP 方法
+     * - 限制暴露的头部
+     * - 设置合理的预检请求缓存时间
+     */
+    @Bean
+    public CorsConfigurationSource corsConfigurationSource() {
+        CorsConfiguration configuration = new CorsConfiguration();
+        
+        // 安全修复：限制允许的源，生产环境应配置具体的前端域名
+        // 开发环境允许 localhost，生产环境需通过环境变量配置
+        String allowedOrigins = System.getenv("ALLOWED_ORIGINS");
+        if (allowedOrigins != null && !allowedOrigins.isEmpty()) {
+            configuration.setAllowedOriginPatterns(Arrays.asList(allowedOrigins.split(",")));
+        } else {
+            // 默认允许本地开发环境
+            configuration.setAllowedOriginPatterns(Arrays.asList(
+                "http://localhost:*", 
+                "http://127.0.0.1:*",
+                "http://flink-monitor-frontend:*"
+            ));
+        }
+        
+        // 仅允许必要的 HTTP 方法
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "DELETE", "OPTIONS"));
+        
+        // 允许必要的请求头，但不暴露敏感信息
+        configuration.setAllowedHeaders(Arrays.asList(
+            "Authorization", 
+            "Content-Type", 
+            "X-Requested-With"
+        ));
+        
+        // 不暴露敏感头部给客户端
+        configuration.setExposedHeaders(Arrays.asList("Authorization"));
+        
+        // 允许携带凭证（Cookie）
+        configuration.setAllowCredentials(true);
+        
+        // 预检请求缓存时间（24 小时）
+        configuration.setMaxAge(86400L);
+        
+        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
+        source.registerCorsConfiguration("/**", configuration);
+        
+        return source;
     }
 }

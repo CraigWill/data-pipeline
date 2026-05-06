@@ -1,33 +1,37 @@
 package com.realtime.pipeline;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.Set;
+
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
-import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.serialization.Encoder;
-import org.apache.flink.api.common.time.Time;
 import org.apache.flink.cdc.connectors.base.options.StartupOptions;
 import org.apache.flink.cdc.connectors.base.source.jdbc.JdbcIncrementalSource;
 import org.apache.flink.cdc.connectors.oracle.source.OracleSourceBuilder;
 import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
-import org.apache.flink.configuration.MemorySize;
+import org.apache.flink.configuration.CheckpointingOptions;
+import org.apache.flink.configuration.Configuration;
+import org.apache.flink.configuration.ExternalizedCheckpointRetention;
+import org.apache.flink.configuration.RestartStrategyOptions;
+import org.apache.flink.configuration.StateBackendOptions;
 import org.apache.flink.connector.file.sink.FileSink;
 import org.apache.flink.core.fs.Path;
-import org.apache.flink.runtime.state.hashmap.HashMapStateBackend;
 import org.apache.flink.streaming.api.datastream.DataStream;
-import org.apache.flink.streaming.api.environment.CheckpointConfig;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.filesystem.OutputFileConfig;
-import org.apache.flink.streaming.api.functions.sink.filesystem.bucketassigners.DateTimeBucketAssigner;
-import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.DefaultRollingPolicy;
 import org.apache.flink.streaming.api.functions.sink.filesystem.rollingpolicies.OnCheckpointRollingPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
-import java.util.*;
 
 /**
  * CDC 作业入口 - 在 Flink 集群内执行
@@ -94,7 +98,9 @@ public class CdcJobMain {
             java.sql.Driver driver = (java.sql.Driver) driverClass.getDeclaredConstructor().newInstance();
             java.sql.DriverManager.registerDriver(driver);
             LOG.info("Oracle JDBC Driver registered successfully");
-        } catch (Exception e) {
+        } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException
+                | IllegalAccessException | java.lang.reflect.InvocationTargetException
+                | java.sql.SQLException e) {
             LOG.warn("Oracle JDBC Driver 注册失败: {}", e.getMessage());
         }
 
@@ -104,10 +110,10 @@ public class CdcJobMain {
             Properties testProps = new Properties();
             testProps.setProperty("user", username);
             testProps.setProperty("password", password);
-            java.sql.Connection testConn = java.sql.DriverManager.getConnection(testUrl, testProps);
-            LOG.info("=== JDBC connection test PASSED ===");
-            testConn.close();
-        } catch (Exception e) {
+            try (java.sql.Connection testConn = java.sql.DriverManager.getConnection(testUrl, testProps)) {
+                LOG.info("=== JDBC connection test PASSED (valid={}) ===", testConn.isValid(5));
+            }
+        } catch (java.sql.SQLException e) {
             LOG.error("=== JDBC connection test FAILED: {} ===", e.getMessage());
         }
 
@@ -123,20 +129,21 @@ public class CdcJobMain {
         env.getCheckpointConfig().setTolerableCheckpointFailureNumber(10);
         
         // 2. 作业取消时保留 checkpoint，允许从 checkpoint 恢复
-        env.getCheckpointConfig().setExternalizedCheckpointCleanup(
-                CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);
+        env.getCheckpointConfig().setExternalizedCheckpointRetention(
+                ExternalizedCheckpointRetention.RETAIN_ON_CANCELLATION);
         
         // 3. 启用非对齐 checkpoint 以提高性能
         env.getCheckpointConfig().enableUnalignedCheckpoints();
         
-        // 4. 设置 checkpoint 和 savepoint 目录
-        env.getCheckpointConfig().setCheckpointStorage(checkpointDir);
-        
-        // 5. 使用 HashMapStateBackend 存储状态
-        env.setStateBackend(new HashMapStateBackend());
-        
-        // 6. 重启策略 - 无限重试
-        env.setRestartStrategy(RestartStrategies.fixedDelayRestart(Integer.MAX_VALUE, Time.seconds(30)));
+        // 4. 设置 checkpoint 存储、状态后端和重启策略（通过 Configuration API）
+        Configuration config = new Configuration();
+        config.set(CheckpointingOptions.CHECKPOINT_STORAGE, "filesystem");
+        config.set(CheckpointingOptions.CHECKPOINTS_DIRECTORY, checkpointDir);
+        config.set(StateBackendOptions.STATE_BACKEND, "hashmap");
+        config.set(RestartStrategyOptions.RESTART_STRATEGY, "fixed-delay");
+        config.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_ATTEMPTS, Integer.MAX_VALUE);
+        config.set(RestartStrategyOptions.RESTART_STRATEGY_FIXED_DELAY_DELAY, Duration.ofSeconds(30));
+        env.configure(config);
         
         LOG.info("=== Checkpoint 配置完成 ===");
         LOG.info("  Checkpoint 间隔: 10秒");
@@ -279,7 +286,7 @@ public class CdcJobMain {
                         catch (Exception e) { return false; }
                     })
                     .name("Filter " + tableName)
-                    .map(jsonStr -> convertToCSV(jsonStr, tableName))
+                    .map(jsonStr -> convertToCSV(jsonStr))
                     .filter(csv -> csv != null)
                     .setParallelism(1)  // 每个表的写入使用单并行度，避免重复
                     .name("CSV - " + tableName);
@@ -454,32 +461,36 @@ public class CdcJobMain {
             // 判断值的类型
             char firstChar = searchArea.charAt(valueStart);
             
-            if (firstChar == '"') {
-                // 字符串值
-                int valueEnd = valueStart + 1;
-                while (valueEnd < searchArea.length()) {
-                    if (searchArea.charAt(valueEnd) == '"' && searchArea.charAt(valueEnd - 1) != '\\') {
-                        return searchArea.substring(valueStart + 1, valueEnd);
+            switch (firstChar) {
+                case '"' -> {
+                    // 字符串值
+                    int valueEnd = valueStart + 1;
+                    while (valueEnd < searchArea.length()) {
+                        if (searchArea.charAt(valueEnd) == '"' && searchArea.charAt(valueEnd - 1) != '\\') {
+                            return searchArea.substring(valueStart + 1, valueEnd);
+                        }
+                        valueEnd++;
                     }
-                    valueEnd++;
                 }
-            } else if (firstChar == '{') {
-                // 对象值
-                int valueEnd = findMatchingBrace(searchArea, valueStart);
-                if (valueEnd > valueStart) {
-                    return searchArea.substring(valueStart, valueEnd + 1);
-                }
-            } else {
-                // 数字、布尔值或 null
-                int valueEnd = valueStart;
-                while (valueEnd < searchArea.length()) {
-                    char c = searchArea.charAt(valueEnd);
-                    if (c == ',' || c == '}' || c == ']' || Character.isWhitespace(c)) {
-                        break;
+                case '{' -> {
+                    // 对象值
+                    int valueEnd = findMatchingBrace(searchArea, valueStart);
+                    if (valueEnd > valueStart) {
+                        return searchArea.substring(valueStart, valueEnd + 1);
                     }
-                    valueEnd++;
                 }
-                return searchArea.substring(valueStart, valueEnd);
+                default -> {
+                    // 数字、布尔值或 null
+                    int valueEnd = valueStart;
+                    while (valueEnd < searchArea.length()) {
+                        char c = searchArea.charAt(valueEnd);
+                        if (c == ',' || c == '}' || c == ']' || Character.isWhitespace(c)) {
+                            break;
+                        }
+                        valueEnd++;
+                    }
+                    return searchArea.substring(valueStart, valueEnd);
+                }
             }
             
             return null;
@@ -501,7 +512,7 @@ public class CdcJobMain {
         return "UNKNOWN";
     }
 
-    private static String convertToCSV(String jsonStr, String tableName) {
+    private static String convertToCSV(String jsonStr) {
         try {
             String operation = "UNKNOWN";
             if (jsonStr.contains("\"op\":\"c\"")) operation = "INSERT";

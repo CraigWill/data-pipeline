@@ -1,15 +1,20 @@
 package com.realtime.monitor.security;
 
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.security.Keys;
-import lombok.extern.slf4j.Slf4j;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
+
+import javax.crypto.SecretKey;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
-import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
-import java.util.Date;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * JWT Token 提供者
@@ -26,6 +31,28 @@ public class JwtTokenProvider {
 
     @Value("${jwt.expiration:86400000}") // 24 小时
     private long jwtExpiration;
+
+    /**
+     * 安全修复：验证 JWT Secret 强度
+     * - 密钥长度至少 32 字符（256 位）
+     * - 防止使用弱密钥导致 token 被伪造
+     */
+    @PostConstruct
+    public void validateJwtSecret() {
+        if (jwtSecret == null) {
+            throw new IllegalStateException(
+                "JWT_SECRET 未设置！请在环境变量中配置 JWT_SECRET。\n" +
+                "生成密钥：openssl rand -base64 64"
+            );
+        }
+        if (jwtSecret.length() < 32) {
+            throw new IllegalStateException(
+                "JWT_SECRET 长度不足！必须至少 32 字符（当前：" + jwtSecret.length() + "）。\n" +
+                "生成密钥：openssl rand -base64 64"
+            );
+        }
+        log.info("JWT Secret 验证通过，长度：{} 字符", jwtSecret.length());
+    }
 
     private SecretKey getSigningKey() {
         byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);

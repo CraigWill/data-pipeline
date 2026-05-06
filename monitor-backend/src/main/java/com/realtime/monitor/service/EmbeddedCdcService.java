@@ -149,9 +149,9 @@ public class EmbeddedCdcService {
                         "tables", request.getTables()));
                 return resultMap;
             } else {
-                String body = response.getBody();
-                if (body != null && !body.isBlank()) {
-                    log.debug("Flink REST API 提交返回: {}", XssSanitizer.sanitizeString(limitForLog(body)));
+                String responseBody = response.getBody();
+                if (responseBody != null && !responseBody.isBlank()) {
+                    log.debug("Flink REST API 提交返回: {}", XssSanitizer.sanitizeString(limitForLog(responseBody)));
                 }
                 throw new RuntimeException("Flink REST API 返回错误: HTTP " + response.getStatusCode());
             }

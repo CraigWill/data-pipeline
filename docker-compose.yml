@@ -1,23 +1,23 @@
-# Docker Compose配置文件
-# 需求: 8.7 - 提供Docker Compose配置文件
-# 需求: 4.5 - 容器崩溃时2分钟内自动重启
-# 需求: 8.8 - 容器健康检查配置
+# Docker Compose 配置文件
+# 需求：8.7 - 提供 Docker Compose 配置文件
+# 需求：4.5 - 容器崩溃时 2 分钟内自动重启
+# 需求：8.8 - 容器健康检查配置
 #
 # 使用方法:
 #   1. 复制 .env.example 到 .env 并配置环境变量
-#   2. 启动所有服务: docker-compose up -d
-#   3. 查看服务状态: docker-compose ps
-#   4. 查看日志: docker-compose logs -f
-#   5. 停止服务: docker-compose down
+#   2. 启动所有服务：docker-compose up -d
+#   3. 查看服务状态：docker-compose ps
+#   4. 查看日志：docker-compose logs -f
+#   5. 停止服务：docker-compose down
 #
-# 扩展TaskManager:
+# 扩展 TaskManager:
 #   docker-compose up -d --scale taskmanager=3
 #
 # 启用高可用模式:
 #   docker-compose --profile ha up -d
 
 services:
-  # Zookeeper服务（Flink HA 依赖）
+  # Zookeeper 服务（Flink HA 依赖）
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
@@ -41,7 +41,7 @@ services:
       start_period: 30s
       retries: 3
 
-  # Flink JobManager服务（主节点）
+  # Flink JobManager 服务（主节点）
   jobmanager:
     image: flink-jobmanager:latest
     container_name: flink-jobmanager
@@ -55,14 +55,14 @@ services:
       - "6124:6124"  # Blob Server
       - "9249:9249"  # Prometheus Metrics
     environment:
-      # JobManager配置
+      # JobManager 配置
       - JOB_MANAGER_RPC_ADDRESS=jobmanager
       - JOB_MANAGER_RPC_PORT=6123
       - JOB_MANAGER_HEAP_SIZE=1024m
       - REST_PORT=8081
       - PARALLELISM_DEFAULT=4
       
-      # Checkpoint配置
+      # Checkpoint 配置
       - CHECKPOINT_INTERVAL=300000
       - CHECKPOINT_DIR=file:///opt/flink/checkpoints
       - SAVEPOINT_DIR=file:///opt/flink/savepoints
@@ -75,14 +75,15 @@ services:
       - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
       - HA_STORAGE_DIR=${HA_STORAGE_DIR:-file:///opt/flink/ha}
       
-      # 数据库配置（JdbcCDCApp需要）
-      - DATABASE_HOST=${DATABASE_HOST:-localhost}
+      # 数据库配置（JdbcCDCApp 需要）
+      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
+      - DATABASE_HOST=${DATABASE_HOST}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME:-system}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-      - DATABASE_SID=${DATABASE_SID:-helowin}
-      - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
-      - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
+      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 system 用户
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
+      - DATABASE_SID=${DATABASE_SID}
+      - DATABASE_SCHEMA=${DATABASE_SCHEMA}
+      - DATABASE_TABLES=${DATABASE_TABLES}
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-10}
       - TZ=Asia/Shanghai
@@ -107,7 +108,7 @@ services:
       - flink-network
     # 需求 4.5: 容器自动重启策略
     # unless-stopped: 除非手动停止，否则总是重启
-    # 容器崩溃后会立即重启，满足2分钟内重启的要求
+    # 容器崩溃后会立即重启，满足 2 分钟内重启的要求
     restart: unless-stopped
     # 健康检查配置（需求 8.8）
     healthcheck:
@@ -140,14 +141,14 @@ services:
       - "6126:6124"  # Blob Server
       - "9250:9249"  # Prometheus Metrics
     environment:
-      # JobManager配置
+      # JobManager 配置
       - JOB_MANAGER_RPC_ADDRESS=jobmanager-standby
       - JOB_MANAGER_RPC_PORT=6123
       - JOB_MANAGER_HEAP_SIZE=1024m
       - REST_PORT=8081
       - PARALLELISM_DEFAULT=4
       
-      # Checkpoint配置
+      # Checkpoint 配置
       - CHECKPOINT_INTERVAL=300000
       - CHECKPOINT_DIR=file:///opt/flink/checkpoints
       - SAVEPOINT_DIR=file:///opt/flink/savepoints
@@ -161,13 +162,14 @@ services:
       - HA_STORAGE_DIR=${HA_STORAGE_DIR:-file:///opt/flink/ha}
       
       # 数据库配置
-      - DATABASE_HOST=${DATABASE_HOST:-localhost}
+      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
+      - DATABASE_HOST=${DATABASE_HOST}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME:-system}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-      - DATABASE_SID=${DATABASE_SID:-helowin}
-      - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
-      - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
+      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 system 用户
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
+      - DATABASE_SID=${DATABASE_SID}
+      - DATABASE_SCHEMA=${DATABASE_SCHEMA}
+      - DATABASE_TABLES=${DATABASE_TABLES}
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
       - TZ=Asia/Shanghai
       # 心跳超时配置
@@ -202,25 +204,25 @@ services:
           cpus: '1.0'
           memory: 1G
 
-  # Flink TaskManager服务
-  # 默认启动3个节点，支持动态扩展: docker-compose up -d --scale taskmanager=N
+  # Flink TaskManager 服务
+  # 默认启动 3 个节点，支持动态扩展：docker-compose up -d --scale taskmanager=N
   taskmanager:
     image: flink-taskmanager:latest
-    # 注意: 使用scale时不要设置container_name
+    # 注意：使用 scale 时不要设置 container_name
     # container_name: flink-taskmanager-1
     depends_on:
       jobmanager:
         condition: service_healthy
     ports:
-      - "6121-6130:6121"  # Data Port (支持多个TaskManager)
+      - "6121-6130:6121"  # Data Port (支持多个 TaskManager)
       - "6122"            # RPC Port (动态分配)
       - "9249"            # Prometheus Metrics (动态分配)
     environment:
-      # JobManager连接配置
+      # JobManager 连接配置
       - JOB_MANAGER_RPC_ADDRESS=jobmanager
       - JOB_MANAGER_RPC_PORT=6123
       
-      # TaskManager配置
+      # TaskManager 配置
       - TASK_MANAGER_HEAP_SIZE=1024m
       - TASK_MANAGER_MEMORY_PROCESS_SIZE=1728m
       - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=2
@@ -235,14 +237,15 @@ services:
       - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
       - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
       
-      # 数据库配置（JdbcCDCApp需要）
-      - DATABASE_HOST=${DATABASE_HOST:-localhost}
+      # 数据库配置（JdbcCDCApp 需要）
+      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
+      - DATABASE_HOST=${DATABASE_HOST}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME:-finance_user}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-      - DATABASE_SID=${DATABASE_SID:-helowin}
-      - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
-      - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
+      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 finance_user
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
+      - DATABASE_SID=${DATABASE_SID}
+      - DATABASE_SCHEMA=${DATABASE_SCHEMA}
+      - DATABASE_TABLES=${DATABASE_TABLES}
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-10}
       - TZ=Asia/Shanghai
@@ -300,11 +303,12 @@ services:
       - OUTPUT_PATH=/app/output/cdc
       - CONFIG_DIR=/app/config
       - ORACLE_CONTAINER=oracle11g
-      - DATABASE_HOST=${DATABASE_HOST:-host.docker.internal}
+      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
+      - DATABASE_HOST=${DATABASE_HOST}
       - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME:-finance_user}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-      - DATABASE_SID=${DATABASE_SID:-helowin}
+      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 finance_user
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
+      - DATABASE_SID=${DATABASE_SID}
       - TZ=Asia/Shanghai
       # JWT 安全配置（必须通过环境变量设置）
       - JWT_SECRET=${JWT_SECRET}

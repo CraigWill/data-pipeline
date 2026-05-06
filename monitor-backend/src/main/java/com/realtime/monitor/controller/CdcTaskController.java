@@ -34,7 +34,8 @@ public class CdcTaskController {
             return ApiResponse.success(cdcTaskService.listTasks());
         } catch (Exception e) {
             log.error("获取任务列表失败", e);
-            return ApiResponse.error(e.getMessage());
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("获取任务列表失败，请稍后重试");
         }
     }
     
@@ -45,7 +46,8 @@ public class CdcTaskController {
             return ApiResponse.success(Map.of("id", taskId), "任务创建成功");
         } catch (Exception e) {
             log.error("创建任务失败", e);
-            return ApiResponse.error(e.getMessage());
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("创建任务失败，请稍后重试");
         }
     }
     
@@ -54,8 +56,9 @@ public class CdcTaskController {
         try {
             return ApiResponse.success(cdcTaskService.loadTaskConfig(taskId));
         } catch (Exception e) {
-            log.error("获取任务配置失败: {}", taskId, e);
-            return ApiResponse.error(e.getMessage());
+            log.error("获取任务配置失败：{}", taskId, e);
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("获取任务配置失败，请稍后重试");
         }
     }
     
@@ -64,8 +67,9 @@ public class CdcTaskController {
         try {
             return ApiResponse.success(cdcTaskService.getTaskDetail(taskId));
         } catch (Exception e) {
-            log.error("获取任务详情失败: {}", taskId, e);
-            return ApiResponse.error(e.getMessage());
+            log.error("获取任务详情失败：{}", taskId, e);
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("获取任务详情失败，请稍后重试");
         }
     }
     
@@ -75,8 +79,9 @@ public class CdcTaskController {
             cdcTaskService.deleteTask(taskId);
             return ApiResponse.success(null, "任务删除成功");
         } catch (Exception e) {
-            log.error("删除任务失败: {}", taskId, e);
-            return ApiResponse.error(e.getMessage());
+            log.error("删除任务失败：{}", taskId, e);
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("删除任务失败，请稍后重试");
         }
     }
     
@@ -84,7 +89,7 @@ public class CdcTaskController {
     public ApiResponse<Map<String, Object>> submitTask(@PathVariable String taskId) {
         try {
             if (taskId == null || taskId.trim().isEmpty() || "undefined".equalsIgnoreCase(taskId)) {
-                return ApiResponse.error("无效的任务ID: " + taskId);
+                return ApiResponse.error("无效的任务 ID");
             }
             Map<String, Object> result = cdcTaskService.submitTask(taskId);
             if (result.containsKey("success") && Boolean.TRUE.equals(result.get("success"))) {
@@ -94,8 +99,9 @@ public class CdcTaskController {
                 return ApiResponse.error(error);
             }
         } catch (Exception e) {
-            log.error("提交任务失败: {}", taskId, e);
-            return ApiResponse.error(e.getMessage());
+            log.error("提交任务失败：{}", taskId, e);
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("提交任务失败，请稍后重试");
         }
     }
     
@@ -109,7 +115,8 @@ public class CdcTaskController {
             return ApiResponse.success(embeddedCdcService.listJobs());
         } catch (Exception e) {
             log.error("获取运行中作业失败", e);
-            return ApiResponse.error(e.getMessage());
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("获取运行中作业失败，请稍后重试");
         }
     }
     
@@ -118,8 +125,9 @@ public class CdcTaskController {
         try {
             return ApiResponse.success(embeddedCdcService.getJobDetail(jobId));
         } catch (Exception e) {
-            log.error("获取作业状态失败: {}", jobId, e);
-            return ApiResponse.error(e.getMessage());
+            log.error("获取作业状态失败：{}", jobId, e);
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("获取作业状态失败，请稍后重试");
         }
     }
     
@@ -131,8 +139,9 @@ public class CdcTaskController {
                     ? ApiResponse.success(result) 
                     : ApiResponse.error((String) result.get("error"));
         } catch (Exception e) {
-            log.error("取消作业失败: {}", jobId, e);
-            return ApiResponse.error(e.getMessage());
+            log.error("取消作业失败：{}", jobId, e);
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("取消作业失败，请稍后重试");
         }
     }
     
@@ -145,22 +154,22 @@ public class CdcTaskController {
         try {
             // 验证必需参数
             if (request.getHostname() == null || request.getHostname().isEmpty()) {
-                return ApiResponse.error("缺少必需参数: hostname");
+                return ApiResponse.error("缺少必需参数");
             }
             if (request.getUsername() == null || request.getUsername().isEmpty()) {
-                return ApiResponse.error("缺少必需参数: username");
+                return ApiResponse.error("缺少必需参数");
             }
             if (request.getPassword() == null || request.getPassword().isEmpty()) {
-                return ApiResponse.error("缺少必需参数: password");
+                return ApiResponse.error("缺少必需参数");
             }
             if (request.getDatabase() == null || request.getDatabase().isEmpty()) {
-                return ApiResponse.error("缺少必需参数: database");
+                return ApiResponse.error("缺少必需参数");
             }
             if (request.getSchema() == null || request.getSchema().isEmpty()) {
-                return ApiResponse.error("缺少必需参数: schema");
+                return ApiResponse.error("缺少必需参数");
             }
             if (request.getTables() == null || request.getTables().isEmpty()) {
-                return ApiResponse.error("缺少必需参数: tables");
+                return ApiResponse.error("缺少必需参数");
             }
             
             // 设置默认值
@@ -186,7 +195,8 @@ public class CdcTaskController {
             }
         } catch (Exception e) {
             log.error("直接提交任务失败", e);
-            return ApiResponse.error(e.getMessage());
+            // 安全修复：不泄露详细错误信息给客户端
+            return ApiResponse.error("提交任务失败，请稍后重试");
         }
     }
 }

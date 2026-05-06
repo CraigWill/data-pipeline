@@ -47,15 +47,18 @@ public class CdcTaskService {
         // config 来自 DataSourceService.loadDataSource 时密码已解密，直接使用
         String password = config.getPassword();
 
+        // 安全修复：使用 PreparedStatement 替代 Statement，防止 SQL 注入
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery("SELECT 1 FROM DUAL")) {
+             PreparedStatement stmt = conn.prepareStatement("SELECT 1 FROM DUAL");
+             ResultSet rs = stmt.executeQuery()) {
             if (rs.next()) {
                 return Map.of("success", true, "message", "连接成功");
             }
-            return Map.of("success", false, "error", "连接失败: 无返回结果");
+            return Map.of("success", false, "error", "连接失败：无返回结果");
         } catch (SQLException e) {
-            return Map.of("success", false, "error", e.getMessage());
+            // 安全修复：不泄露详细错误信息给客户端
+            log.error("数据库连接测试失败", e);
+            return Map.of("success", false, "error", "数据库连接测试失败，请检查配置");
         }
     }
 
@@ -66,19 +69,31 @@ public class CdcTaskService {
         String jdbcUrl = buildJdbcUrl(config);
         // config 来自 DataSourceService.loadDataSource 时密码已解密，直接使用
         String password = config.getPassword();
+        
+        // 安全修复：使用 PreparedStatement 替代 Statement，防止 SQL 注入
         String sql = "SELECT DISTINCT owner FROM all_tables " +
-                "WHERE owner NOT IN ('SYS','SYSTEM','OUTLN','DBSNMP','APPQOSSYS'," +
-                "'WMSYS','EXFSYS','CTXSYS','XDB','ANONYMOUS'," +
-                "'ORDSYS','ORDDATA','MDSYS','OLAPSYS') " +
+                "WHERE owner NOT IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
                 "ORDER BY owner";
 
         List<String> schemas = new ArrayList<>();
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            while (rs.next()) {
-                schemas.add(rs.getString(1));
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
+            // 设置排除的系统 schema
+            String[] systemSchemas = {"SYS", "SYSTEM", "OUTLN", "DBSNMP", "APPQOSSYS",
+                                      "WMSYS", "EXFSYS", "CTXSYS", "XDB", "ANONYMOUS",
+                                      "ORDSYS", "ORDDATA", "MDSYS"};
+            for (int i = 0; i < systemSchemas.length; i++) {
+                stmt.setString(i + 1, systemSchemas[i]);
             }
+            
+            try (ResultSet rs = stmt.executeQuery()) {
+                while (rs.next()) {
+                    schemas.add(rs.getString(1));
+                }
+            }
+        } catch (SQLException e) {
+            log.error("发现 Schema 列表失败", e);
+            throw new Exception("获取 Schema 列表失败，请检查数据库连接");
         }
         return schemas;
     }

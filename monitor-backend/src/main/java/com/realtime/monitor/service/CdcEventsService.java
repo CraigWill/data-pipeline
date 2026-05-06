@@ -42,11 +42,33 @@ public class CdcEventsService {
     }
 
     private Path validateOutputBaseDir(String configured) {
+        // 环境变量/配置值视为不可信数据，先过滤再使用
+        if (configured == null || configured.isBlank()) {
+            configured = "./output/cdc";
+        }
+
+        // 过滤恶意字符：null 字节、路径遍历、Shell 注入字符
+        if (configured.indexOf('\u0000') >= 0) {
+            throw new IllegalStateException("output.path 配置包含 null 字节");
+        }
+        if (configured.contains("..")) {
+            throw new IllegalStateException("output.path 不允许包含 '..' 路径遍历");
+        }
+        if (configured.matches(".*[`$|;&!><].*")) {
+            throw new IllegalStateException("output.path 包含非法字符");
+        }
+        for (char c : configured.toCharArray()) {
+            if (c < 0x20 && c != '\t') {
+                throw new IllegalStateException("output.path 包含控制字符");
+            }
+        }
+        configured = configured.trim();
+
         Path base;
         try {
             base = Paths.get(configured).toAbsolutePath().normalize();
         } catch (InvalidPathException e) {
-            throw new IllegalStateException("output.path 配置非法", e);
+            throw new IllegalStateException("output.path 配置非法: " + e.getMessage(), e);
         }
 
         Path root1 = Paths.get("./output").toAbsolutePath().normalize();

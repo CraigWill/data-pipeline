@@ -1,7 +1,6 @@
 package com.realtime.monitor.service;
 
 import com.realtime.monitor.config.AppConfig;
-import com.realtime.monitor.util.PathSecurityValidator;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -51,14 +50,29 @@ public class OutputFileService {
     }
 
     /**
-     * 验证并解析输出目录，确保在允许的范围内
+     * 验证并解析输出目录，确保在允许的范围内。
+     * 
+     * 安全措施：
+     * - getOutputPath() 返回的环境变量值视为不可信数据
+     * - 先过滤恶意字符，再传入 Paths.get()
+     * - 规范化后验证在白名单目录内
      */
     private Path resolveAndValidateOutputDir() {
         String configuredPath = appConfig.getOutputPath();
         if (configuredPath == null || configuredPath.isBlank()) {
             configuredPath = "./output/cdc";
         }
-        Path base = Paths.get(configuredPath).toAbsolutePath().normalize();
+
+        // 过滤不可信的环境变量值：拒绝恶意字符
+        configuredPath = sanitizeConfiguredPath(configuredPath);
+
+        Path base;
+        try {
+            base = Paths.get(configuredPath).toAbsolutePath().normalize();
+        } catch (InvalidPathException e) {
+            log.error("output.path 配置包含非法路径字符: {}", configuredPath);
+            throw new IllegalStateException("output.path 配置非法: " + e.getMessage(), e);
+        }
 
         // 验证输出目录在允许的根目录内
         Path allowedRoot1 = Paths.get("./output").toAbsolutePath().normalize();
@@ -68,6 +82,34 @@ public class OutputFileService {
             throw new IllegalStateException("output.path 配置不安全: " + base);
         }
         return base;
+    }
+
+    /**
+     * 对从环境变量/配置文件读取的路径值进行安全过滤。
+     * 拒绝包含路径遍历、null 字节、命令注入字符的值。
+     */
+    private String sanitizeConfiguredPath(String path) {
+        if (path == null) return null;
+
+        // 拒绝 null 字节
+        if (path.indexOf('\u0000') >= 0) {
+            throw new IllegalStateException("配置路径包含 null 字节");
+        }
+        // 拒绝路径遍历
+        if (path.contains("..")) {
+            throw new IllegalStateException("配置路径不允许包含 '..'");
+        }
+        // 拒绝 Shell 注入字符
+        if (path.matches(".*[`$|;&!><].*")) {
+            throw new IllegalStateException("配置路径包含非法字符");
+        }
+        // 拒绝控制字符
+        for (char c : path.toCharArray()) {
+            if (c < 0x20 && c != '\t') {
+                throw new IllegalStateException("配置路径包含控制字符");
+            }
+        }
+        return path.trim();
     }
 
     private Path getOutputDir() {

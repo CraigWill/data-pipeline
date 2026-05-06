@@ -23,7 +23,6 @@ import com.realtime.monitor.config.AppConfig;
 import com.realtime.monitor.dto.CdcSubmitRequest;
 import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
-import com.realtime.monitor.util.PathSecurityValidator;
 import com.realtime.monitor.util.XssSanitizer;
 
 import jakarta.annotation.PostConstruct;
@@ -75,6 +74,20 @@ public class EmbeddedCdcService {
     /** 缓存已上传的 JAR ID，避免重复上传 */
     private volatile String cachedJarId;
 
+    /** 已验证的 JAR 路径 */
+    private String validatedJarPath;
+
+    /** JAR 文件允许的路径前缀白名单 */
+    private static final List<String> ALLOWED_JAR_PREFIXES = List.of(
+            "/opt/flink/usrlib/",
+            "/opt/flink/lib/",
+            "./flink-jobs/target/",
+            "flink-jobs/target/"
+    );
+
+    /** JAR 文件允许的后缀 */
+    private static final String ALLOWED_JAR_EXTENSION = ".jar";
+
     @PostConstruct
     public void init() {
         org.springframework.http.client.SimpleClientHttpRequestFactory factory =
@@ -82,6 +95,70 @@ public class EmbeddedCdcService {
         factory.setConnectTimeout(5000);
         factory.setReadTimeout(30000);
         restTemplate = new RestTemplate(factory);
+
+        // 验证从环境变量读取的 localJarPath
+        this.validatedJarPath = validateLocalJarPath(localJarPath);
+    }
+
+    /**
+     * 验证从环境变量读取的 JAR 路径。
+     * 
+     * localJarPath 来自 @Value 注入（环境变量/配置文件），视为不可信数据。
+     * 必须满足：
+     * - 无 null 字节、控制字符
+     * - 无路径遍历（..）
+     * - 无 Shell 注入字符
+     * - 在允许的路径前缀白名单内
+     * - 以 .jar 后缀结尾
+     */
+    private String validateLocalJarPath(String jarPath) {
+        if (jarPath == null || jarPath.isBlank()) {
+            throw new IllegalStateException("flink.job.jar-path 配置不能为空");
+        }
+
+        // 过滤 null 字节
+        if (jarPath.indexOf('\u0000') >= 0) {
+            throw new IllegalStateException("JAR 路径包含 null 字节");
+        }
+        // 过滤控制字符
+        for (char c : jarPath.toCharArray()) {
+            if (c < 0x20 && c != '\t') {
+                throw new IllegalStateException("JAR 路径包含控制字符");
+            }
+        }
+        // 过滤路径遍历
+        if (jarPath.contains("..")) {
+            throw new IllegalStateException("JAR 路径不允许包含 '..'");
+        }
+        // 过滤 Shell 注入字符
+        if (jarPath.matches(".*[`$|;&!><\\s].*")) {
+            throw new IllegalStateException("JAR 路径包含非法字符");
+        }
+
+        jarPath = jarPath.trim();
+
+        // 后缀白名单：只允许 .jar 文件
+        if (!jarPath.toLowerCase().endsWith(ALLOWED_JAR_EXTENSION)) {
+            throw new IllegalStateException("JAR 路径必须以 .jar 结尾: " + jarPath);
+        }
+
+        // 路径前缀白名单
+        String normalizedPath = jarPath.replace("\\", "/");
+        boolean allowed = ALLOWED_JAR_PREFIXES.stream()
+                .anyMatch(prefix -> normalizedPath.startsWith(prefix));
+        if (!allowed) {
+            throw new IllegalStateException("JAR 路径不在允许的目录内: " + jarPath);
+        }
+
+        // 验证 Paths.get() 不会抛异常
+        try {
+            java.nio.file.Paths.get(jarPath);
+        } catch (java.nio.file.InvalidPathException e) {
+            throw new IllegalStateException("JAR 路径格式非法: " + e.getMessage(), e);
+        }
+
+        log.info("JAR 路径验证通过: {}", jarPath);
+        return jarPath;
     }
 
     /**
@@ -356,9 +433,10 @@ public class EmbeddedCdcService {
      * 上传本地 JAR 到 Flink 集群（流式上传，避免 OOM）
      */
     private String uploadJar() throws Exception {
-        File jarFile = new File(localJarPath);
+        // 使用已验证的路径，而非原始环境变量值
+        File jarFile = new File(validatedJarPath);
         if (!jarFile.exists()) {
-            throw new RuntimeException("本地 JAR 文件不存在: " + localJarPath);
+            throw new RuntimeException("本地 JAR 文件不存在: " + validatedJarPath);
         }
 
         String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())

@@ -1,21 +1,32 @@
 package com.realtime.monitor.service;
 
-import com.realtime.monitor.config.AppConfig;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
-import jakarta.annotation.PostConstruct;
 import java.io.IOException;
-import java.nio.file.*;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.PathMatcher;
+import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import org.springframework.stereotype.Service;
+
+import com.realtime.monitor.config.AppConfig;
+
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 输出文件监控服务
@@ -58,13 +69,10 @@ public class OutputFileService {
      * - 规范化后验证在白名单目录内
      */
     private Path resolveAndValidateOutputDir() {
-        String configuredPath = appConfig.getOutputPath();
+        String configuredPath = sanitizeConfiguredPath(appConfig.getOutputPath());
         if (configuredPath == null || configuredPath.isBlank()) {
             configuredPath = "./output/cdc";
         }
-
-        // 过滤不可信的环境变量值：拒绝恶意字符
-        configuredPath = sanitizeConfiguredPath(configuredPath);
 
         Path base;
         try {

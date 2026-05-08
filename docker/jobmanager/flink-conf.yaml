@@ -73,4 +73,6 @@ jobmanager.execution.failover-strategy: region
 env.log.dir: /opt/flink/logs
 
 # 类加载器配置
-classloader.resolve-order: parent-first
+classloader.resolve-order: child-first
+# 将 Kafka 相关包设为 child-first 加载，确保用户 JAR 中的 3.8.1 优先于集群自带的 3.1.2
+classloader.parent-first-patterns.additional: org.apache.flink

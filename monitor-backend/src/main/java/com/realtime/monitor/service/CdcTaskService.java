@@ -7,7 +7,6 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -159,20 +158,47 @@ public class CdcTaskService {
     }
 
     /**
-     * 将 Docker 内部主机名转换为本地可访问地址。
+     * 解析数据库主机地址，根据运行环境自动转换。
      *
-     * 数据源配置可能在 Docker 环境中保存，使用 host.docker.internal 作为主机名。
-     * 在本地（非 Docker）环境中，该主机名无法解析，需替换为 localhost。
+     * 转换规则：
+     * - Docker 容器内：localhost/127.0.0.1 → oracle11g（Oracle 容器名）
+     * - 本地开发环境：host.docker.internal → localhost
+     * - 其他情况：保持原值
      */
     private String resolveHost(String host) {
-        if ("host.docker.internal".equalsIgnoreCase(host)) {
-            // 在 Docker 容器内，host.docker.internal 是有效的，不需要替换
-            // 只有在本地（非 Docker）环境中才替换为 localhost
-            if (!isRunningInsideDocker()) {
-                log.debug("Replacing host.docker.internal with localhost for local execution");
-                return "localhost";
-            }
+        if (host == null || host.isBlank()) {
+            return host;
         }
+
+        boolean insideDocker = isRunningInsideDocker();
+
+        // 在 Docker 容器内，localhost/127.0.0.1 无法访问其他容器的服务
+        // 需要替换为 Oracle 容器名
+        if (insideDocker) {
+            if ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host)) {
+                String oracleContainer = System.getenv("ORACLE_CONTAINER");
+                String resolved = (oracleContainer != null && !oracleContainer.isBlank()) 
+                        ? oracleContainer : "oracle11g";
+                log.debug("Docker 环境: 将 {} 替换为容器名 {}", host, resolved);
+                return resolved;
+            }
+            // host.docker.internal 在 Docker 内是有效的，保持不变
+            return host;
+        }
+
+        // 在本地（非 Docker）环境中，host.docker.internal 无法解析
+        if ("host.docker.internal".equalsIgnoreCase(host)) {
+            log.debug("本地环境: 将 host.docker.internal 替换为 localhost");
+            return "localhost";
+        }
+
+        // Oracle 容器名在本地环境中无法解析，替换为 localhost
+        String oracleContainer = System.getenv("ORACLE_CONTAINER");
+        if (oracleContainer != null && oracleContainer.equalsIgnoreCase(host)) {
+            log.debug("本地环境: 将容器名 {} 替换为 localhost", host);
+            return "localhost";
+        }
+
         return host;
     }
 

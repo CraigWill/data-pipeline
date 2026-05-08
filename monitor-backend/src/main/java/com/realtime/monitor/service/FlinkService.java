@@ -7,8 +7,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.owasp.esapi.ESAPI;
-import org.owasp.esapi.Encoder;
+import org.owasp.encoder.Encode;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -253,20 +252,19 @@ public class FlinkService {
     }
 
     /**
-     * Encode URI using OWASP ESAPI to prevent URL-based injection attacks.
-     * Validates and sanitizes each component of the URI.
+     * Encode URI using OWASP Java Encoder to prevent URL-based injection attacks.
+     * Uses Encode.forUriComponent() which is equivalent to ESAPI's encodeForURL
+     * but requires no configuration files.
      */
     private URI encodeUriWithEsapi(URI uri, String context) {
         try {
-            Encoder encoder = ESAPI.encoder();
-
             // Validate the scheme — only allow http/https
             String scheme = uri.getScheme();
             if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
                 throw new SecurityException("不允许的 URI scheme: " + scheme);
             }
 
-            // Encode the path segments using ESAPI to neutralize injection characters
+            // Encode the path segments to neutralize injection characters
             String path = uri.getRawPath();
             if (path != null && !path.isEmpty()) {
                 // Split path, encode each segment individually, rejoin
@@ -274,8 +272,9 @@ public class FlinkService {
                 StringBuilder safePath = new StringBuilder();
                 for (String segment : segments) {
                     if (!segment.isEmpty()) {
-                        // ESAPI encodeForURL encodes special characters that could be used for injection
-                        String encoded = encoder.encodeForURL(segment);
+                        // OWASP Encode.forUriComponent() encodes all special characters
+                        // that could be used for path traversal or injection
+                        String encoded = Encode.forUriComponent(segment);
                         safePath.append("/").append(encoded);
                     } else {
                         safePath.append("/");
@@ -287,7 +286,7 @@ public class FlinkService {
                         .host(uri.getHost())
                         .port(uri.getPort())
                         .path(safePath.toString())
-                        .query(uri.getRawQuery() != null ? encoder.encodeForURL(uri.getRawQuery()) : null)
+                        .query(uri.getRawQuery() != null ? Encode.forUriComponent(uri.getRawQuery()) : null)
                         .build(true)
                         .toUri();
             }
@@ -296,7 +295,7 @@ public class FlinkService {
         } catch (SecurityException se) {
             throw se;
         } catch (Exception e) {
-            log.warn("[{}] ESAPI URL 编码失败，使用原始 URI: {}", context, e.getMessage());
+            log.warn("[{}] URL 编码失败，使用原始 URI: {}", context, e.getMessage());
             return uri;
         }
     }

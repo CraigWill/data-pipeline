@@ -317,6 +317,8 @@ services:
       - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
       # 管理员初始密码
       - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
+      # 生产环境 CORS 配置（允许的前端域名）
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080,http://localhost:8888}
     volumes:
       - ./output:/app/output
       - ./monitor/config:/app/config

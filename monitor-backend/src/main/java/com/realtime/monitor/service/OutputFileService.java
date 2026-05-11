@@ -294,7 +294,8 @@ public class OutputFileService {
                         try {
                             BasicFileAttributes attrs = Files.readAttributes(csvFile, BasicFileAttributes.class);
                             fileInfo.put("name", csvFile.getFileName().toString());
-                            fileInfo.put("path", outputDir.relativize(csvFile).toString());
+                            // 只暴露文件名，不暴露完整相对路径（防止目录结构泄露）
+                            fileInfo.put("path", csvFile.getFileName().toString());
                             fileInfo.put("size", attrs.size());
                             fileInfo.put("size_mb", Math.round(attrs.size() / (1024.0 * 1024.0) * 100.0) / 100.0);
                             

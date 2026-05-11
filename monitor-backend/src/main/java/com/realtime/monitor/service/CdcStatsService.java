@@ -1,22 +1,25 @@
 package com.realtime.monitor.service;
 
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.stereotype.Service;
-
-import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * CDC 实时统计服务
@@ -29,6 +32,9 @@ public class CdcStatsService {
     
     @Value("${output.path:./output/cdc}")
     private String outputPath;
+
+    /** 已验证的输出目录 */
+    private File validatedOutputDir;
     
     // 当前日期
     private volatile LocalDate currentDate = LocalDate.now();
@@ -76,11 +82,52 @@ public class CdcStatsService {
         CompletableFuture.runAsync(() -> {
             try {
                 Thread.sleep(5000); // 等待5秒让系统完全启动
+                validateAndInitOutputDir();
                 fullRecalculate();
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
             }
         });
+    }
+
+    /**
+     * 验证 outputPath 配置安全性，防止路径遍历。
+     * outputPath 来自环境变量/配置文件，视为不可信数据。
+     */
+    private void validateAndInitOutputDir() {
+        String path = outputPath;
+        if (path == null || path.isBlank()) {
+            path = "./output/cdc";
+        }
+        // 拒绝恶意字符
+        if (path.indexOf('\u0000') >= 0 || path.contains("..") || path.matches(".*[`$|;&!><].*")) {
+            throw new IllegalStateException("output.path 配置包含非法字符");
+        }
+        for (char c : path.toCharArray()) {
+            if (c < 0x20 && c != '\t') {
+                throw new IllegalStateException("output.path 包含控制字符");
+            }
+        }
+        // 白名单目录验证
+        java.nio.file.Path normalized = java.nio.file.Paths.get(path).toAbsolutePath().normalize();
+        java.nio.file.Path allowed1 = java.nio.file.Paths.get("./output").toAbsolutePath().normalize();
+        java.nio.file.Path allowed2 = java.nio.file.Paths.get("/opt/flink/output").toAbsolutePath().normalize();
+        java.nio.file.Path allowed3 = java.nio.file.Paths.get("/app/output").toAbsolutePath().normalize();
+        if (!normalized.startsWith(allowed1) && !normalized.startsWith(allowed2) && !normalized.startsWith(allowed3)) {
+            throw new IllegalStateException("output.path 不在允许目录内: " + normalized);
+        }
+        this.validatedOutputDir = normalized.toFile();
+        log.info("CdcStatsService 输出目录验证通过: {}", validatedOutputDir);
+    }
+
+    /**
+     * 获取已验证的输出目录
+     */
+    private File getOutputDir() {
+        if (validatedOutputDir == null) {
+            validateAndInitOutputDir();
+        }
+        return validatedOutputDir;
     }
     
     /**
@@ -94,7 +141,7 @@ public class CdcStatsService {
         LocalDate today = LocalDate.now();
         String todayStr = today.toString();
 
-        File outputDir = new File(outputPath);
+        File outputDir = getOutputDir();
         if (!outputDir.exists()) {
             return;
         }
@@ -156,7 +203,7 @@ public class CdcStatsService {
 
         String todayStr = today.toString();
 
-        File outputDir = new File(outputPath);
+        File outputDir = getOutputDir();
         if (!outputDir.exists()) {
             return;
         }

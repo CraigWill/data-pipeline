@@ -100,7 +100,9 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- OWASP Java Encoder for URL/HTML encoding -->
+        <!-- OWASP Java Encoder — ESAPI Encoder 的官方推荐替代品 -->
+        <!-- 提供等价的 encodeForHTML/encodeForURL/encodeForJavaScript/encodeForCSS -->
+        <!-- 零配置、高性能、无外部依赖 -->
         <dependency>
             <groupId>org.owasp.encoder</groupId>
             <artifactId>encoder</artifactId>

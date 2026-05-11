@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import com.realtime.monitor.dto.ApiResponse;
 import com.realtime.monitor.service.FlinkService;
+import static com.realtime.monitor.util.XssSanitizer.sanitize;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -93,7 +94,7 @@ public class JobController {
         try {
             validateSavepointDirectory(targetDirectory);
             Map<String, Object> result = flinkService.stopJobWithSavepoint(jobId, targetDirectory);
-            return ResponseEntity.ok(ApiResponse.success(result, "作业已停止，Savepoint 已创建"));
+            return ResponseEntity.ok(ApiResponse.success(sanitize(result), "作业已停止，Savepoint 已创建"));
         } catch (IllegalArgumentException e) {
             // Warning already logged inside validateSavepointDirectory — do not reflect user input
             return ResponseEntity.badRequest().body(ApiResponse.error("Invalid savepoint directory"));

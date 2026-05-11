@@ -29,7 +29,10 @@ import jakarta.annotation.PostConstruct;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.http.HttpStatus;
+
+import com.realtime.monitor.util.XssSanitizer;
 
 /**
  * Flink REST API 服务
@@ -616,7 +619,7 @@ public class FlinkService {
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> stopJobWithSavepoint(String jobId, String targetDirectory) {
-        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "stop");
+        URI uri = buildUri(XssSanitizer.encodeForURL(getLeaderUrl()), "jobs", jobId, "stop");
         try {
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("targetDirectory", targetDirectory);

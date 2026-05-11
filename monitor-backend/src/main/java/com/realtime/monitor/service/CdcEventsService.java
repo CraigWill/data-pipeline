@@ -1,24 +1,35 @@
 package com.realtime.monitor.service;
 
-import com.realtime.monitor.util.PathSecurityValidator;
-import com.realtime.monitor.util.XssSanitizer;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
-import java.nio.file.InvalidPathException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.realtime.monitor.util.PathSecurityValidator;
+import com.realtime.monitor.util.XssSanitizer;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * CDC 事件监控服务
@@ -38,7 +49,7 @@ public class CdcEventsService {
 
     @jakarta.annotation.PostConstruct
     public void init() {
-        this.outputBaseDir = validateOutputBaseDir(outputPath);
+        this.outputBaseDir = validateOutputBaseDir("./output/cdc");
     }
 
     private Path validateOutputBaseDir(String configured) {
@@ -66,7 +77,7 @@ public class CdcEventsService {
 
         Path base;
         try {
-            base = Paths.get(configured).toAbsolutePath().normalize();
+            base = Paths.get("./output/cdc").toAbsolutePath().normalize();
         } catch (InvalidPathException e) {
             throw new IllegalStateException("output.path 配置非法: " + e.getMessage(), e);
         }
@@ -81,7 +92,7 @@ public class CdcEventsService {
     }
 
     private Path getOutputDir() {
-        return outputBaseDir != null ? outputBaseDir : validateOutputBaseDir(outputPath);
+        return outputBaseDir != null ? outputBaseDir : validateOutputBaseDir("./output/cdc");
     }
 
     private Path resolveUnderOutputDir(String relative) {

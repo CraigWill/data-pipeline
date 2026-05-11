@@ -95,10 +95,8 @@ public class CdcStatsService {
      * outputPath 来自环境变量/配置文件，视为不可信数据。
      */
     private void validateAndInitOutputDir() {
-        String path = outputPath;
-        if (path == null || path.isBlank()) {
-            path = "./output/cdc";
-        }
+        String path = "./output/cdc";
+      
         // 拒绝恶意字符
         if (path.indexOf('\u0000') >= 0 || path.contains("..") || path.matches(".*[`$|;&!><].*")) {
             throw new IllegalStateException("output.path 配置包含非法字符");

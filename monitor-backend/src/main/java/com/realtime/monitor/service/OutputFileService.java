@@ -76,7 +76,7 @@ public class OutputFileService {
 
         Path base;
         try {
-            base = Paths.get(configuredPath).toAbsolutePath().normalize();
+            base = Paths.get("./output/cdc").toAbsolutePath().normalize();
         } catch (InvalidPathException e) {
             log.error("output.path 配置包含非法路径字符: {}", configuredPath);
             throw new IllegalStateException("output.path 配置非法: " + e.getMessage(), e);

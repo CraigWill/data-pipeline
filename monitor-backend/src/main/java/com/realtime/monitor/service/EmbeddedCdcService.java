@@ -97,7 +97,7 @@ public class EmbeddedCdcService {
         restTemplate = new RestTemplate(factory);
 
         // 验证从环境变量读取的 localJarPath
-        this.validatedJarPath = validateLocalJarPath(localJarPath);
+        this.validatedJarPath = validateLocalJarPath("/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar");
     }
 
     /**

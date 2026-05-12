@@ -165,11 +165,10 @@ class AccessControlPreservationTest {
     void authenticated_stopJob_validSavepointDir_shouldReturn200() throws Exception {
         Map<String, Object> mockResult = new HashMap<>();
         mockResult.put("savepoint-path", "file:///opt/flink/savepoints/sp1");
-        when(flinkService.stopJobWithSavepoint(anyString(), anyString()))
+        when(flinkService.stopJobWithSavepoint(anyString()))
                 .thenReturn(mockResult);
 
-        mockMvc.perform(post("/api/jobs/test-job-id/stop")
-                        .param("targetDirectory", "file:///opt/flink/savepoints/sp1"))
+        mockMvc.perform(post("/api/jobs/test-job-id/stop"))
                 .andExpect(status().isOk()); // 200
     }
 

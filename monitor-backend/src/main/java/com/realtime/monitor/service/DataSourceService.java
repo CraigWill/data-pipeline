@@ -151,4 +151,59 @@ public class DataSourceService {
         config.setStatus("UNTESTED");
         dataSourceRepository.save(config);
     }
+
+    /**
+     * 重新加密所有数据源密码（管理员操作）
+     * 用于修复密码格式问题或密钥轮换后重新加密
+     *
+     * @return 操作结果统计 {total, updated, skipped, failed}
+     */
+    public Map<String, Object> reencryptAllPasswords() {
+        List<DataSourceConfig> dataSources = dataSourceRepository.findAll();
+        int total = dataSources.size();
+        int updated = 0;
+        int skipped = 0;
+        int failed = 0;
+
+        for (DataSourceConfig config : dataSources) {
+            String password = config.getPassword();
+            if (password == null || password.isEmpty()) {
+                skipped++;
+                continue;
+            }
+
+            try {
+                // 检查密码是否已经加密
+                if (isLikelyEncrypted(password)) {
+                    try {
+                        PasswordEncryptionUtil.decryptAES(password);
+                        log.info("数据源 {} 密码已正确加密，跳过", config.getId());
+                        skipped++;
+                        continue;
+                    } catch (Exception e) {
+                        log.warn("数据源 {} 密码解密失败，将作为明文重新加密", config.getId());
+                    }
+                }
+
+                // 将密码作为明文重新加密
+                String encryptedPassword = PasswordEncryptionUtil.encryptAES(password);
+                config.setPassword(encryptedPassword);
+                dataSourceRepository.save(config);
+
+                log.info("数据源 {} 密码已重新加密", config.getId());
+                updated++;
+
+            } catch (Exception e) {
+                log.error("重新加密数据源 {} 密码失败: {}", config.getId(), e.getMessage());
+                failed++;
+            }
+        }
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("total", total);
+        result.put("updated", updated);
+        result.put("skipped", skipped);
+        result.put("failed", failed);
+        return result;
+    }
 }

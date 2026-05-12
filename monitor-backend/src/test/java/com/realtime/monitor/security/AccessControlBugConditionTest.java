@@ -147,10 +147,12 @@ class AccessControlBugConditionTest {
      */
     @Test
     @WithMockUser
-    @DisplayName("Authenticated POST /api/jobs/{jobId}/stop?targetDirectory=/tmp/evil should return 400 (currently passes through — bug)")
-    void authenticated_stopJob_unsafeTargetDirectory_shouldReturn400() throws Exception {
+    @DisplayName("POST /api/jobs/{jobId}/stop ignores targetDirectory param — reads from database config")
+    void authenticated_stopJob_ignoresTargetDirectoryParam() throws Exception {
+        // targetDirectory 不再作为入参，即使传了也会被忽略
+        // 端点从 app_config 表读取 savepoint 目录，不再有 400 Bad Request 的情况
         mockMvc.perform(post("/api/jobs/test-job-id/stop")
                         .param("targetDirectory", "/tmp/evil"))
-                .andExpect(status().isBadRequest()); // 400
+                .andExpect(status().isOk()); // 200 — 参数被忽略，正常执行
     }
 }

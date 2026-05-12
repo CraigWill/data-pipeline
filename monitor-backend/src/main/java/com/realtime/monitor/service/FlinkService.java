@@ -22,6 +22,7 @@ import org.springframework.web.util.UriComponentsBuilder;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.realtime.monitor.config.AppConfig;
+import com.realtime.monitor.repository.AppConfigRepository;
 import static com.realtime.monitor.util.XssSanitizer.sanitize;
 import static com.realtime.monitor.util.XssSanitizer.sanitizeList;
 
@@ -44,8 +45,14 @@ import com.realtime.monitor.util.XssSanitizer;
 public class FlinkService {
     
     private final AppConfig appConfig;
+    private final AppConfigRepository appConfigRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private RestTemplate restTemplate;
+
+    /** 配置键：savepoint 目标目录 */
+    private static final String CONFIG_KEY_SAVEPOINT_DIR = "savepoint.target.directory";
+    /** 默认 savepoint 目录 */
+    private static final String DEFAULT_SAVEPOINT_DIR = "file:///opt/flink/savepoints";
 
     /** 当前已知的活跃 leader URL */
     private volatile String activeLeaderUrl;
@@ -593,7 +600,10 @@ public class FlinkService {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> triggerSavepoint(String jobId, String targetDirectory) {
+    public Map<String, Object> triggerSavepoint(String jobId) {
+        // 从数据库 app_config 表读取 savepoint 目录
+        String targetDirectory = appConfigRepository.getValue(CONFIG_KEY_SAVEPOINT_DIR, DEFAULT_SAVEPOINT_DIR);
+
         URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "savepoints");
         try {
             Map<String, Object> requestBody = new HashMap<>();
@@ -618,8 +628,11 @@ public class FlinkService {
     }
 
     @SuppressWarnings("unchecked")
-    public Map<String, Object> stopJobWithSavepoint(String jobId, String targetDirectory) {
-        URI uri = buildUri(XssSanitizer.encodeForURL(getLeaderUrl()), "jobs", jobId, "stop");
+    public Map<String, Object> stopJobWithSavepoint(String jobId) {
+        // 从数据库 app_config 表读取 savepoint 目录
+        String targetDirectory = appConfigRepository.getValue(CONFIG_KEY_SAVEPOINT_DIR, DEFAULT_SAVEPOINT_DIR);
+
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "stop");
         try {
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("targetDirectory", targetDirectory);

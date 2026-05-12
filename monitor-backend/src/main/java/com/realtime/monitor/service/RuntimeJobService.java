@@ -16,9 +16,8 @@ import com.realtime.monitor.dto.RuntimeJob;
 import com.realtime.monitor.dto.TaskConfig;
 import com.realtime.monitor.repository.RuntimeJobRepository;
 
-import lombok.extern.slf4j.Slf4j;
-
 import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 运行时作业管理服务
@@ -255,8 +254,7 @@ public class RuntimeJobService {
         for (RuntimeJob job : runningJobs) {
             if (job.getFlinkJobId() == null) continue;
             try {
-                String savepointDir = "file:///opt/flink/savepoints";
-                Map<String, Object> result = flinkService.triggerSavepoint(job.getFlinkJobId(), savepointDir);
+                Map<String, Object> result = flinkService.triggerSavepoint(job.getFlinkJobId());
                 String location = (String) result.get("location");
                 if (location != null) {
                     runtimeJobRepository.updateSavepoint(job.getId(), location);

@@ -262,6 +262,31 @@ public class FlinkService {
     }
 
     /**
+     * Safe wrapper around restTemplate.postForEntity that:
+     * 1. Encodes the URL using OWASP Java Encoder to prevent URL injection
+     * 2. Validates the response body for script injection
+     * 3. Sets security headers on the current HTTP response
+     *
+     * @param uri     the target URI
+     * @param entity  the request entity (headers + body)
+     * @param context description for logging
+     * @return validated response body, or null if the response is invalid/untrusted
+     */
+    private String safePost(URI uri, HttpEntity<?> entity, String context) {
+        // Step 1: Encode URL components
+        URI safeUri = encodeUriWithEsapi(uri, context);
+
+        // Step 2: Execute the POST request
+        ResponseEntity<String> response = restTemplate.postForEntity(safeUri, entity, String.class);
+
+        // Step 3: Set security headers
+        setSecurityResponseHeaders();
+
+        // Step 4: Validate the response body
+        return validateResponse(response, context);
+    }
+
+    /**
      * Encode URI using OWASP Java Encoder to prevent URL-based injection attacks.
      * Uses Encode.forUriComponent() which is equivalent to ESAPI's encodeForURL
      * but requires no configuration files.
@@ -612,15 +637,18 @@ public class FlinkService {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(uri, entity, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
+
+            String body = safePost(uri, entity, "triggerSavepoint");
+            if (body != null) {
+                Map<String, Object> result = objectMapper.readValue(body, Map.class);
                 String requestId = (String) result.get("request-id");
                 if (requestId != null) {
                     return sanitize(waitForSavepoint(jobId, requestId));
                 }
             }
-            throw new RuntimeException("触发 savepoint 失败: HTTP " + response.getStatusCode());
+            throw new RuntimeException("触发 savepoint 失败: 响应验证未通过");
+        } catch (RuntimeException re) {
+            throw re;
         } catch (Exception e) {
             log.error("触发 savepoint 失败: jobId={}", jobId, e);
             throw new RuntimeException("触发 savepoint 失败: " + e.getMessage(), e);
@@ -640,9 +668,10 @@ public class FlinkService {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-            ResponseEntity<String> response = restTemplate.postForEntity(uri, entity, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
+
+            String body = safePost(uri, entity, "stopJobWithSavepoint");
+            if (body != null) {
+                Map<String, Object> result = objectMapper.readValue(body, Map.class);
                 String requestId = (String) result.get("request-id");
                 if (requestId != null) {
                     Map<String, Object> savepointResult = waitForSavepoint(jobId, requestId);
@@ -651,7 +680,9 @@ public class FlinkService {
                 log.info("作业 {} 已停止，Savepoint: {}", jobId, result.get("location"));
                 return sanitize(result);
             }
-            throw new RuntimeException("停止作业失败: HTTP " + response.getStatusCode());
+            throw new RuntimeException("停止作业失败: 响应验证未通过");
+        } catch (RuntimeException re) {
+            throw re;
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
             throw new RuntimeException("停止作业失败: " + e.getMessage(), e);

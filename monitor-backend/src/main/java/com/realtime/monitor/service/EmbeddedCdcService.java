@@ -268,13 +268,13 @@ public class EmbeddedCdcService {
 
         CdcSubmitRequest request = new CdcSubmitRequest();
         if (dsConfig != null) {
-            request.setHostname(dsConfig.getHost());
+            request.setHostname(resolveHostForFlink(dsConfig.getHost()));
             request.setPort(dsConfig.getPort());
             request.setUsername(dsConfig.getUsername());
             request.setPassword(dsConfig.getPassword());
             request.setDatabase(dsConfig.getSid());
         } else if (taskConfig.getDatabase() != null) {
-            request.setHostname(taskConfig.getDatabase().getHost());
+            request.setHostname(resolveHostForFlink(taskConfig.getDatabase().getHost()));
             request.setPort(taskConfig.getDatabase().getPort());
             request.setUsername(taskConfig.getDatabase().getUsername());
             request.setPassword(taskConfig.getDatabase().getPassword());
@@ -299,6 +299,31 @@ public class EmbeddedCdcService {
         }
 
         return submitTask(request);
+    }
+
+    // ============================================
+    // 主机名解析（Flink 作业运行在容器内，需要使用容器名）
+    // ============================================
+
+    /**
+     * 解析数据库主机名，确保 Flink 作业能正确连接。
+     * Flink 作业运行在 Docker 容器内，localhost/127.0.0.1 无法访问其他容器。
+     * 必须使用 Oracle 容器名（如 oracle11g）。
+     */
+    private String resolveHostForFlink(String host) {
+        if (host == null || host.isBlank()) {
+            return host;
+        }
+        // localhost/127.0.0.1 在 Flink 容器内无法访问 Oracle，替换为容器名
+        if ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host)) {
+            String oracleContainer = System.getenv("ORACLE_CONTAINER");
+            String resolved = (oracleContainer != null && !oracleContainer.isBlank())
+                    ? oracleContainer : "oracle11g";
+            log.info("Flink 作业主机名解析: {} → {}", host, resolved);
+            return resolved;
+        }
+        // host.docker.internal 在容器内有效，保持不变
+        return host;
     }
 
     // ============================================

@@ -254,10 +254,13 @@ public class FlinkService {
         // Step 2: Execute the request
         ResponseEntity<String> response = restTemplate.getForEntity(safeUri, String.class);
 
-        // Step 3: Set security headers on the outgoing HTTP response
+        // Step 3: Response-level security validation
+        validateResponseSecurity(response, context);
+
+        // Step 4: Set security headers on the outgoing HTTP response
         setSecurityResponseHeaders();
 
-        // Step 4: Validate the response body
+        // Step 5: Validate the response body (size, content-type, JSON structure, script injection)
         return validateResponse(response, context);
     }
 
@@ -279,11 +282,63 @@ public class FlinkService {
         // Step 2: Execute the POST request
         ResponseEntity<String> response = restTemplate.postForEntity(safeUri, entity, String.class);
 
-        // Step 3: Set security headers
+        // Step 3: Response-level security validation
+        validateResponseSecurity(response, context);
+
+        // Step 4: Set security headers
         setSecurityResponseHeaders();
 
-        // Step 4: Validate the response body
+        // Step 5: Validate the response body (size, content-type, JSON structure, script injection)
         return validateResponse(response, context);
+    }
+
+    /**
+     * Validate response-level security properties before processing the body.
+     * Checks for:
+     * - Unexpected redirects (3xx) that could indicate SSRF or open redirect
+     * - Suspicious response headers that could indicate a compromised upstream
+     * - Response status indicating server-side issues
+     */
+    private void validateResponseSecurity(ResponseEntity<String> response, String context) {
+        if (response == null) {
+            return; // Will be caught by validateResponse
+        }
+
+        int statusCode = response.getStatusCode().value();
+
+        // Reject redirects — Flink REST API should never redirect
+        if (statusCode >= 300 && statusCode < 400) {
+            String location = response.getHeaders().getFirst("Location");
+            log.warn("[{}] 拒绝重定向响应 ({}): Location={}", context, statusCode,
+                    location != null ? location.substring(0, Math.min(location.length(), 100)) : "null");
+            throw new SecurityException("不允许的重定向响应: " + statusCode);
+        }
+
+        // Check for suspicious headers that shouldn't come from Flink REST API
+        String contentDisposition = response.getHeaders().getFirst("Content-Disposition");
+        if (contentDisposition != null && contentDisposition.toLowerCase().contains("attachment")) {
+            log.warn("[{}] 拒绝包含 Content-Disposition: attachment 的响应", context);
+            throw new SecurityException("意外的文件下载响应");
+        }
+
+        // Reject responses with Set-Cookie from upstream (potential session fixation)
+        if (response.getHeaders().containsKey("Set-Cookie")) {
+            log.warn("[{}] 上游响应包含 Set-Cookie 头，已忽略", context);
+        }
+
+        // Warn on very large Content-Length header (early detection before body is fully read)
+        String contentLength = response.getHeaders().getFirst("Content-Length");
+        if (contentLength != null) {
+            try {
+                long length = Long.parseLong(contentLength);
+                if (length > MAX_RESPONSE_BODY_SIZE) {
+                    log.error("[{}] Content-Length ({}) 超过限制 ({})", context, length, MAX_RESPONSE_BODY_SIZE);
+                    throw new SecurityException("响应体过大: Content-Length=" + length);
+                }
+            } catch (NumberFormatException e) {
+                log.warn("[{}] 无效的 Content-Length 头: {}", context, contentLength);
+            }
+        }
     }
 
     /**

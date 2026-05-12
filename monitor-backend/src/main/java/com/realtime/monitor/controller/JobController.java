@@ -80,8 +80,8 @@ public class JobController {
     public ResponseEntity<ApiResponse<Map<String, Object>>> stopJobWithSavepoint(
             @PathVariable String jobId) {
         try {
-            Map<String, Object> result = flinkService.stopJobWithSavepoint(jobId);
-            return ResponseEntity.ok(ApiResponse.success(result, "作业已停止，Savepoint 已创建"));
+            flinkService.stopJobWithSavepoint(jobId);
+            return ResponseEntity.ok(ApiResponse.success(null, "作业已停止，Savepoint 已创建"));
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
             return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));

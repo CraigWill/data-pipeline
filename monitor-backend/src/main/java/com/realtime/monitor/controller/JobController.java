@@ -8,10 +8,10 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import com.realtime.monitor.dto.ApiResponse;
+import com.realtime.monitor.repository.AppConfigRepository;
 import com.realtime.monitor.service.FlinkService;
 import static com.realtime.monitor.util.XssSanitizer.sanitize;
 
@@ -27,15 +27,37 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class JobController {
 
-    private static final String SAVEPOINT_BASE = System.getProperty("flink.savepoint.base-dir", "file:///opt/flink/savepoints");
+    /** 配置键：savepoint 目标目录 */
+    private static final String CONFIG_KEY_SAVEPOINT_DIR = "savepoint.target.directory";
+
+    /** 默认 savepoint 目录（数据库配置不可用时的兜底值） */
+    private static final String DEFAULT_SAVEPOINT_DIR = "file:///opt/flink/savepoints";
 
     private final FlinkService flinkService;
+    private final AppConfigRepository appConfigRepository;
 
+    /**
+     * 从数据库 app_config 表获取允许的 savepoint 目录。
+     * 如果数据库不可用，使用默认值。
+     */
+    private String getSavepointBaseDir() {
+        return appConfigRepository.getValue(CONFIG_KEY_SAVEPOINT_DIR, DEFAULT_SAVEPOINT_DIR);
+    }
+
+    /**
+     * 验证 savepoint 目录是否在允许范围内。
+     * 允许的基础目录从 app_config 表动态读取。
+     */
     private void validateSavepointDirectory(String dir) {
-        if (dir == null || !dir.startsWith(SAVEPOINT_BASE)) {
-            // Log the actual value server-side only — never reflect it in the response
+        String allowedBase = getSavepointBaseDir();
+        if (dir == null || !dir.startsWith(allowedBase)) {
             log.warn("Invalid savepoint directory rejected: {}", dir);
             throw new IllegalArgumentException("Invalid targetDirectory: must be under the permitted savepoint base");
+        }
+        // 额外安全检查：防止路径遍历
+        if (dir.contains("..")) {
+            log.warn("Path traversal attempt in savepoint directory: {}", dir);
+            throw new IllegalArgumentException("Invalid targetDirectory: path traversal not allowed");
         }
     }
     
@@ -86,18 +108,15 @@ public class JobController {
     
     /**
      * 带 Savepoint 停止作业（推荐方式，不丢失数据）
+     * savepoint 目录从 app_config 表读取，不接受外部输入
      */
     @PostMapping("/{jobId}/stop")
     public ResponseEntity<ApiResponse<Map<String, Object>>> stopJobWithSavepoint(
-            @PathVariable String jobId,
-            @RequestParam(defaultValue = "file:///opt/flink/savepoints") String targetDirectory) {
+            @PathVariable String jobId) {
         try {
-            validateSavepointDirectory(targetDirectory);
+            String targetDirectory = getSavepointBaseDir();
             Map<String, Object> result = flinkService.stopJobWithSavepoint(jobId, targetDirectory);
             return ResponseEntity.ok(ApiResponse.success(sanitize(result), "作业已停止，Savepoint 已创建"));
-        } catch (IllegalArgumentException e) {
-            // Warning already logged inside validateSavepointDirectory — do not reflect user input
-            return ResponseEntity.badRequest().body(ApiResponse.error("Invalid savepoint directory"));
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
             return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));

@@ -360,6 +360,7 @@ main() {
     case $action in
         start)
             if [ "$skip_build" = false ]; then
+                echo -e "${GREEN}=== 未跳过构建，building ===${NC}"
                 build_backend
                 build_images "$target_services" "$rebuild_flink"
             fi

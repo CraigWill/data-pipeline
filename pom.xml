@@ -26,6 +26,7 @@
         <flink.cdc.version>3.4.0</flink.cdc.version>
         <scala.binary.version>2.12</scala.binary.version>
         <spring.boot.version>3.4.13</spring.boot.version>
+        <tomcat.version>11.0.22</tomcat.version>
         <log4j.version>2.23.1</log4j.version>
         <jackson.version>2.17.3</jackson.version>
         <junit.version>5.10.0</junit.version>
@@ -54,6 +55,23 @@
                 <version>${spring.boot.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- 安全修复：锁定 Tomcat Embed 版本为 11.0.22 -->
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-core</artifactId>
+                <version>${tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-el</artifactId>
+                <version>${tomcat.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.tomcat.embed</groupId>
+                <artifactId>tomcat-embed-websocket</artifactId>
+                <version>${tomcat.version}</version>
             </dependency>
 
             <!-- Flink Dependencies -->
@@ -127,32 +145,32 @@
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>kafka-clients</artifactId>
-                <version>3.8.1</version>
+                <version>3.9.1</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>connect-api</artifactId>
-                <version>3.8.1</version>
+                <version>3.9.1</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>connect-runtime</artifactId>
-                <version>3.8.1</version>
+                <version>3.9.1</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>connect-json</artifactId>
-                <version>3.8.1</version>
+                <version>3.9.1</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>connect-transforms</artifactId>
-                <version>3.8.1</version>
+                <version>3.9.1</version>
             </dependency>
             <dependency>
                 <groupId>org.apache.kafka</groupId>
                 <artifactId>connect-file</artifactId>
-                <version>3.8.1</version>
+                <version>3.9.1</version>
             </dependency>
 
             <!-- Jackson -->

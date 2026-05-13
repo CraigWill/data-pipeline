@@ -4,6 +4,9 @@
 jobmanager.rpc.address: jobmanager
 jobmanager.rpc.port: 6123
 
+# ZooKeeper SASL 禁用（开发/内网环境无需 SASL 认证）
+zookeeper.sasl.disable: true
+
 # TaskManager配置
 taskmanager.bind-host: 0.0.0.0
 taskmanager.host: taskmanager

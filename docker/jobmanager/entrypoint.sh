@@ -23,6 +23,26 @@ SAVEPOINT_DIR=${SAVEPOINT_DIR:-file:///opt/flink/savepoints}
 STATE_BACKEND=${STATE_BACKEND:-hashmap}
 HA_MODE=${HA_MODE:-NONE}
 
+# HA 模式下：清理 ZooKeeper 中的旧 leader 数据，防止端口变更后选举卡死
+if [ "$HA_MODE" = "zookeeper" ] || [ "$HA_MODE" = "ZOOKEEPER" ]; then
+    HA_ZK_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
+    HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+    ZK_PATH="/flink${HA_CLUSTER_ID}/leader"
+    echo "HA Mode: Cleaning stale leader data from ZooKeeper ($HA_ZK_QUORUM)..."
+    # Wait for ZooKeeper to be available
+    for i in $(seq 1 30); do
+        if echo "ruok" | nc -w 2 $(echo $HA_ZK_QUORUM | cut -d: -f1) $(echo $HA_ZK_QUORUM | cut -d: -f2) 2>/dev/null | grep -q "imok"; then
+            echo "  ZooKeeper is ready"
+            # Delete stale leader latch to allow fresh election
+            echo "deleteall $ZK_PATH" | nc -w 2 $(echo $HA_ZK_QUORUM | cut -d: -f1) $(echo $HA_ZK_QUORUM | cut -d: -f2) 2>/dev/null || true
+            echo "  Stale leader data cleaned (path: $ZK_PATH)"
+            break
+        fi
+        echo "  Waiting for ZooKeeper... ($i/30)"
+        sleep 2
+    done
+fi
+
 # 打印配置信息
 echo "Configuration:"
 echo "  RPC Address: $JOB_MANAGER_RPC_ADDRESS"

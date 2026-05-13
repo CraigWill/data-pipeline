@@ -6,6 +6,9 @@ jobmanager.rpc.port: 6123
 jobmanager.bind-host: 0.0.0.0
 jobmanager.memory.process.size: 1600m
 
+# ZooKeeper SASL 禁用（开发/内网环境无需 SASL 认证）
+zookeeper.sasl.disable: true
+
 # Web UI配置
 rest.port: 8081
 rest.address: 0.0.0.0

@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@icon-park/vue-next": "^1.4.2",
-    "axios": "^1.6.0",
+    "axios": "^1.9.0",
     "chart.js": "^4.5.1",
     "pinia": "^2.1.0",
     "vue": "^3.4.0",

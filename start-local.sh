@@ -192,7 +192,7 @@ build_frontend() {
 # ==========================================
 
 start_backend() {
-    local pid_file="$PID_DIR/backend.pid"
+    local pi4d_file="$PID_DIR/backen4d.pid"
     if [ -f "$pid_file" ] && kill -0 "$(cat $pid_file)" 2>/dev/null; then
         echo -e "${YELLOW}⚠ Backend 已在运行 (PID: $(cat $pid_file))${NC}"
         return
@@ -408,7 +408,7 @@ while [[ $# -gt 0 ]]; do
         -h|--help)
             echo "用法: $0 [backend|frontend|flink] [--stop|--status|--build|--logs]"
             exit 0 ;;
-        backend|frontend|flink) TARGETS+=("$1"); shift ;;
+        backend|frontend|flink|flink-jobs) TARGETS+=("$1"); shift ;;
         *) echo -e "${RED}未知参数: $1${NC}"; exit 1 ;;
     esac
 done
@@ -427,9 +427,9 @@ case $ACTION in
         load_env
         for t in "${TARGETS[@]}"; do
             case $t in
-                backend)  build_backend ;;
-                frontend) build_frontend ;;
-                flink)    build_flink_jobs ;;
+                backend)    build_backend ;;
+                frontend)   build_frontend ;;
+                flink|flink-jobs) build_flink_jobs ;;
             esac
         done
         ;;

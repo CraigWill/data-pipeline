@@ -23,6 +23,7 @@ show_help() {
     echo "选项:"
     echo "  --skip-build       跳过构建步骤"
     echo "  --build-only       只构建不启动"
+    echo "  --build            构建指定应用（不启动，不构建镜像）"
     echo "  --rebuild-flink    强制重新构建 Flink 镜像（无缓存）"
     echo "  --stop             停止服务"
     echo "  --restart          重启服务"
@@ -36,12 +37,17 @@ show_help() {
     echo "  backend            后端服务 (monitor-backend)"
     echo "  frontend           前端服务 (monitor-frontend)"
     echo "  flink              Flink 集群 (jobmanager + taskmanager)"
+    echo "  flink-jobs         Flink CDC 作业 JAR"
     echo "  jobmanager         JobManager (主节点)"
     echo "  taskmanager        TaskManager (工作节点)"
     echo "  zookeeper          ZooKeeper"
     echo ""
     echo "示例:"
     echo "  ./start.sh                       # 启动所有服务"
+    echo "  ./start.sh --build backend       # 只构建后端 JAR"
+    echo "  ./start.sh --build frontend      # 只构建前端 dist"
+    echo "  ./start.sh --build flink-jobs    # 只构建 Flink 作业 JAR"
+    echo "  ./start.sh --build all           # 构建所有应用"
     echo "  ./start.sh backend               # 只启动后端"
     echo "  ./start.sh frontend backend      # 启动前端和后端"
     echo "  ./start.sh --restart backend     # 重启后端"
@@ -123,7 +129,7 @@ build_backend() {
         exit 1
     fi
     
-    mvn clean package -DskipTests
+    mvn clean package -pl monitor-backend -am -DskipTests
     
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✓ 后端 JAR 构建完成${NC}"
@@ -132,6 +138,81 @@ build_backend() {
         echo -e "${RED}✗ 后端 JAR 构建失败${NC}"
         exit 1
     fi
+}
+
+# 构建 Flink Jobs JAR
+build_flink_jobs() {
+    echo -e "${BLUE}>>> 构建 Flink Jobs JAR 包...${NC}"
+    
+    mvn clean package -pl flink-jobs -am -DskipTests
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ Flink Jobs JAR 构建完成${NC}"
+        ls -lh flink-jobs/target/flink-jobs-*.jar
+    else
+        echo -e "${RED}✗ Flink Jobs JAR 构建失败${NC}"
+        exit 1
+    fi
+}
+
+# 构建前端
+build_frontend() {
+    echo -e "${BLUE}>>> 构建前端...${NC}"
+    
+    if [ ! -d "monitor/frontend-vue" ]; then
+        echo -e "${RED}错误: 未找到前端目录 monitor/frontend-vue${NC}"
+        exit 1
+    fi
+    
+    cd monitor/frontend-vue
+    if [ ! -d node_modules ]; then
+        echo "  安装依赖..."
+        npm install
+    fi
+    npm run build
+    cd ../..
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ 前端构建完成${NC}"
+        ls -lh monitor/frontend-vue/dist/
+    else
+        echo -e "${RED}✗ 前端构建失败${NC}"
+        exit 1
+    fi
+}
+
+# 构建所有应用
+build_all() {
+    build_backend
+    build_flink_jobs
+    build_frontend
+}
+
+# 按目标构建
+build_target() {
+    local target="$1"
+    case $target in
+        backend|monitor-backend)
+            build_backend
+            ;;
+        frontend|monitor-frontend)
+            build_frontend
+            ;;
+        flink-jobs|flink_jobs)
+            build_flink_jobs
+            ;;
+        flink)
+            build_flink_jobs
+            ;;
+        all|"")
+            build_all
+            ;;
+        *)
+            echo -e "${RED}未知的构建目标: $target${NC}"
+            echo "可用目标: backend, frontend, flink-jobs, all"
+            exit 1
+            ;;
+    esac
 }
 
 # 构建 Flink 私有镜像
@@ -314,6 +395,10 @@ main() {
                 build_only=true
                 shift
                 ;;
+            --build)
+                action="build"
+                shift
+                ;;
             --rebuild-flink)
                 rebuild_flink=true
                 shift
@@ -358,10 +443,21 @@ main() {
     echo ""
     
     case $action in
+        build)
+            # 单独构建指定应用（不构建 Docker 镜像，不启动）
+            if [ -n "$target_services" ]; then
+                for svc in $target_services; do
+                    build_target "$svc"
+                done
+            else
+                build_all
+            fi
+            ;;
         start)
             if [ "$skip_build" = false ]; then
                 echo -e "${GREEN}=== 未跳过构建，building ===${NC}"
                 build_backend
+                build_flink_jobs
                 build_images "$target_services" "$rebuild_flink"
             fi
             if [ "$build_only" = false ]; then

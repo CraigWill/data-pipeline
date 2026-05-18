@@ -67,3 +67,4 @@ monitor/config/datasources/*.json
 .env
 .env.local
 !.env.example
+aliyunk8s

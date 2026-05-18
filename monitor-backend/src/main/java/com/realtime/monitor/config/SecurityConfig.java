@@ -1,8 +1,8 @@
 package com.realtime.monitor.config;
 
-import com.realtime.monitor.security.JwtAuthenticationEntryPoint;
-import com.realtime.monitor.security.JwtTokenProvider;
-import lombok.extern.slf4j.Slf4j;
+import java.io.IOException;
+import java.util.Arrays;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,13 +26,15 @@ import org.springframework.web.cors.CorsConfigurationSource;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 import org.springframework.web.filter.OncePerRequestFilter;
 
+import com.realtime.monitor.security.JwtAuthenticationEntryPoint;
+import com.realtime.monitor.security.JwtTokenProvider;
+
 import jakarta.servlet.DispatcherType;
-import java.util.Arrays;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
-import java.io.IOException;
+import lombok.extern.slf4j.Slf4j;
 
 @Slf4j
 @Configuration
@@ -70,7 +72,7 @@ public class SecurityConfig {
                 // Allow async re-dispatches (SSE) without re-authentication
                 .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 // 公开端点
-                .requestMatchers("/api/auth/login", "/api/auth/logout").permitAll()
+                .requestMatchers("/api/auth/login", "/api/auth/logout", "/api/auth/captcha").permitAll()
                 .requestMatchers("/actuator/health").permitAll()
                 .requestMatchers("/error").permitAll()
                 // 所有其他 API 需要认证（包括 SSE 流端点）

@@ -21,20 +21,37 @@
             required
           />
         </div>
+        <div class="form-group captcha-group">
+          <label>验证码</label>
+          <div class="captcha-row">
+            <input 
+              v-model="captchaCode" 
+              type="text" 
+              placeholder="请输入计算结果"
+              required
+              class="captcha-input"
+            />
+            <img 
+              :src="captchaImage" 
+              @click="refreshCaptcha" 
+              class="captcha-image"
+              title="点击刷新验证码"
+              alt="验证码"
+            />
+          </div>
+        </div>
         <div v-if="error" class="error-message">{{ error }}</div>
         <button type="submit" :disabled="loading">
           {{ loading ? '登录中...' : '登录' }}
         </button>
       </form>
-      <div class="default-account">
-        <p>默认账户: admin / admin123</p>
-      </div>
     </div>
   </div>
 </template>
 
 <script>
 import { authAPI } from '@/api'
+import axios from 'axios'
 
 export default {
   name: 'LoginView',
@@ -42,11 +59,28 @@ export default {
     return {
       username: '',
       password: '',
+      captchaCode: '',
+      captchaId: '',
+      captchaImage: '',
       error: '',
       loading: false
     }
   },
+  mounted() {
+    this.refreshCaptcha()
+  },
   methods: {
+    async refreshCaptcha() {
+      try {
+        const res = await axios.get('/api/auth/captcha')
+        if (res.data && res.data.success) {
+          this.captchaId = res.data.data.captchaId
+          this.captchaImage = res.data.data.image
+        }
+      } catch (err) {
+        console.error('获取验证码失败:', err)
+      }
+    },
     async handleLogin() {
       this.error = ''
       this.loading = true
@@ -54,22 +88,25 @@ export default {
       try {
         const response = await authAPI.login({
           username: this.username,
-          password: this.password
+          password: this.password,
+          captchaId: this.captchaId,
+          captchaCode: this.captchaCode
         })
 
         if (response.success) {
-          // 保存 token
           localStorage.setItem('token', response.data.token)
           localStorage.setItem('username', response.data.username)
-          
-          // 跳转到首页
           this.$router.push('/')
         } else {
-          this.error = response.message || '登录失败'
+          this.error = response.message || response.error || '登录失败'
+          this.refreshCaptcha()
+          this.captchaCode = ''
         }
       } catch (err) {
         console.error('登录错误:', err)
         this.error = '用户名或密码错误'
+        this.refreshCaptcha()
+        this.captchaCode = ''
       } finally {
         this.loading = false
       }
@@ -127,6 +164,28 @@ input:focus {
   border-color: #667eea;
 }
 
+.captcha-group .captcha-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.captcha-input {
+  flex: 1;
+}
+
+.captcha-image {
+  height: 40px;
+  border-radius: 5px;
+  border: 1px solid #ddd;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.captcha-image:hover {
+  opacity: 0.7;
+}
+
 button {
   width: 100%;
   padding: 12px;
@@ -153,18 +212,5 @@ button:disabled {
   margin-bottom: 15px;
   text-align: center;
   font-size: 14px;
-}
-
-.default-account {
-  margin-top: 20px;
-  padding-top: 20px;
-  border-top: 1px solid #eee;
-  text-align: center;
-}
-
-.default-account p {
-  color: #999;
-  font-size: 12px;
-  margin: 0;
 }
 </style>

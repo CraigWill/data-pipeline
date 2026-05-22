@@ -37,7 +37,7 @@ public class CdcFileRepository {
             // 更新统计信息（文件可能增长）
             jdbcTemplate.update(
                 "UPDATE " + TABLE + " SET file_size=?, line_count=?, last_modified=? WHERE id=?",
-                fileSize, lineCount, new Timestamp(lastModified), existingId);
+                fileSize, lineCount, new java.sql.Date(lastModified), existingId);
             return existingId;
         }
 
@@ -46,7 +46,7 @@ public class CdcFileRepository {
             "INSERT INTO " + TABLE + " (id, file_path, file_name, table_name, file_size, line_count, last_modified, created_at) " +
             "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             id, filePath, fileName, tableName, fileSize, lineCount,
-            new Timestamp(lastModified), Timestamp.from(Instant.now()));
+            new java.sql.Date(lastModified), new java.sql.Date(System.currentTimeMillis()));
         return id;
     }
 

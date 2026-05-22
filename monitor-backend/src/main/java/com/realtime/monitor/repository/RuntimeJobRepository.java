@@ -96,12 +96,12 @@ public class RuntimeJobRepository {
                     job.getSchemaName(),
                     tablesJson,
                     job.getParallelism(),
-                    job.getSubmitTime() != null ? Timestamp.from(Instant.parse(job.getSubmitTime())) : Timestamp.from(Instant.now()),
-                    job.getStartTime() != null ? Timestamp.from(Instant.parse(job.getStartTime())) : null,
-                    job.getEndTime() != null ? Timestamp.from(Instant.parse(job.getEndTime())) : null,
+                    job.getSubmitTime() != null ? new java.sql.Date(java.time.Instant.parse(job.getSubmitTime()).toEpochMilli()) : new java.sql.Date(System.currentTimeMillis()),
+                    job.getStartTime() != null ? new java.sql.Date(java.time.Instant.parse(job.getStartTime()).toEpochMilli()) : null,
+                    job.getEndTime() != null ? new java.sql.Date(java.time.Instant.parse(job.getEndTime()).toEpochMilli()) : null,
                     job.getErrorMessage(),
                     job.getLastSavepointPath(),
-                    job.getLastSavepointTime() != null ? Timestamp.from(Instant.parse(job.getLastSavepointTime())) : null);
+                    job.getLastSavepointTime() != null ? new java.sql.Date(java.time.Instant.parse(job.getLastSavepointTime()).toEpochMilli()) : null);
             
             log.info("保存运行时作业: {}", job.getId());
         } catch (JsonProcessingException e) {
@@ -112,20 +112,20 @@ public class RuntimeJobRepository {
 
     public void updateSavepoint(String id, String savepointPath) {
         String sql = "UPDATE " + TABLE + " SET last_savepoint_path = ?, last_savepoint_time = ? WHERE id = ?";
-        jdbcTemplate.update(sql, savepointPath, Timestamp.from(Instant.now()), id);
+        jdbcTemplate.update(sql, savepointPath, new java.sql.Date(System.currentTimeMillis()), id);
         log.info("更新作业 savepoint: {} -> {}", id, savepointPath);
     }
 
     public void updateFlinkJobId(String id, String flinkJobId) {
         String sql = "UPDATE " + TABLE + " SET flink_job_id = ?, status = 'RUNNING', start_time = ? WHERE id = ?";
-        Timestamp now = Timestamp.from(Instant.now());
+        java.sql.Date now = new java.sql.Date(System.currentTimeMillis());
         jdbcTemplate.update(sql, flinkJobId, now, id);
         log.info("更新作业 Flink Job ID: {} -> {}", id, flinkJobId);
     }
 
     public void updateStatus(String id, String status, String errorMessage) {
         String sql = "UPDATE " + TABLE + " SET status = ?, error_message = ?, end_time = ? WHERE id = ?";
-        Timestamp now = status.equals("RUNNING") ? null : Timestamp.from(Instant.now());
+        java.sql.Date now = status.equals("RUNNING") ? null : new java.sql.Date(System.currentTimeMillis());
         // Oracle VARCHAR2 最大 2000 字节，截断过长的错误信息
         String truncatedError = errorMessage;
         if (truncatedError != null && truncatedError.length() > 1900) {

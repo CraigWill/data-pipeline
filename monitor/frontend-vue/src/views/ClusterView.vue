@@ -255,7 +255,7 @@ let refreshInterval = null
 onMounted(() => {
   loadClusterInfo()
   // 每 10 秒自动刷新
-  refreshInterval = setInterval(loadClusterInfo, 10000)
+  // refreshInterval = setInterval(loadClusterInfo, 10000) // 已禁用自动刷新
 })
 
 onUnmounted(() => {

@@ -98,7 +98,7 @@ GRANT CREATE SESSION TO finance_user;
 
 -- LogMiner 核心权限
 GRANT SELECT ANY TRANSACTION TO finance_user;
-GRANT FLASHBACK ANY TABLE TO finance_user;
+-- GRANT FLASHBACK ANY TABLE TO finance_user;  -- 已移除：不开放 flashback 权限，CDC 使用 scan.startup.mode=latest-offset 跳过快照
 GRANT SELECT ANY TABLE TO finance_user;
 GRANT LOCK ANY TABLE TO finance_user;
 

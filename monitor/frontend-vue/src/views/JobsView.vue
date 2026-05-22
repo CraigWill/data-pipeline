@@ -143,7 +143,7 @@ let refreshInterval = null
 onMounted(() => {
   loadJobs()
   // 每 5 秒自动刷新
-  refreshInterval = setInterval(loadJobs, 5000)
+  // refreshInterval = setInterval(loadJobs, 5000) // 已禁用自动刷新
 })
 
 onUnmounted(() => {

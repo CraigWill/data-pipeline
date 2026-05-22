@@ -95,7 +95,10 @@ public class CdcStatsService {
      * outputPath 来自环境变量/配置文件，视为不可信数据。
      */
     private void validateAndInitOutputDir() {
-        String path = "./output/cdc";
+        String path = this.outputPath;
+        if (path == null || path.isBlank()) {
+            path = "./output/cdc";
+        }
       
         // 拒绝恶意字符
         if (path.indexOf('\u0000') >= 0 || path.contains("..") || path.matches(".*[`$|;&!><].*")) {

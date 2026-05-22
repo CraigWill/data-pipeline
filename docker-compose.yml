@@ -44,6 +44,9 @@ services:
   # Flink JobManager 服务（主节点）
   jobmanager:
     image: flink-jobmanager:latest
+    build:
+      context: .
+      dockerfile: docker/jobmanager/Dockerfile.cn
     container_name: flink-jobmanager
     hostname: jobmanager
     depends_on:
@@ -277,7 +280,7 @@ services:
       retries: 3
     # 资源限制
     deploy:
-      replicas: 2
+      replicas: 1
       resources:
         limits:
           cpus: '2.0'
@@ -302,13 +305,20 @@ services:
       - FLINK_REST_URLS=http://jobmanager:8081,http://jobmanager-standby:8081
       - OUTPUT_PATH=/app/output/cdc
       - CONFIG_DIR=/app/config
-      - ORACLE_CONTAINER=oracle11g
+      - ORACLE_CONTAINER=${CDC_ADMIN_HOST:-oracle11g}
       # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
-      - DATABASE_HOST=${DATABASE_HOST}
-      - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 finance_user
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
-      - DATABASE_SID=${DATABASE_SID}
+      - DATABASE_HOST=${CDC_ADMIN_HOST:-oracle11g}
+      - DATABASE_PORT=${CDC_ADMIN_PORT:-1521}
+      - DATABASE_USERNAME=${CDC_ADMIN_USERNAME}
+      - DATABASE_PASSWORD=${CDC_ADMIN_PASSWORD}
+      - DATABASE_SID=${CDC_ADMIN_SID:-helowin}
+      # CDC 管理库连接（CDC_ADMIN schema）
+      - CDC_ADMIN_HOST=${CDC_ADMIN_HOST:-oracle11g}
+      - CDC_ADMIN_PORT=${CDC_ADMIN_PORT:-1521}
+      - CDC_ADMIN_SID=${CDC_ADMIN_SID:-helowin}
+      - CDC_ADMIN_USERNAME=${CDC_ADMIN_USERNAME}
+      - CDC_ADMIN_PASSWORD=${CDC_ADMIN_PASSWORD}
+      # Spring 数据源直接覆盖（确保连接 CDC_ADMIN schema）
       - TZ=Asia/Shanghai
       # JWT 安全配置（必须通过环境变量设置）
       - JWT_SECRET=${JWT_SECRET}
@@ -318,7 +328,7 @@ services:
       # 管理员初始密码
       - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
       # 生产环境 CORS 配置（允许的前端域名）
-      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:8080,http://localhost:8888}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8888,http://localhost:3000,https://datapipeline.aimachine-tech.cn,http://machine.s7.tunnelfrp.com,https://machine.s7.tunnelfrp.com}
     volumes:
       - ./output:/app/output
       - ./monitor/config:/app/config

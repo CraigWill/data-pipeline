@@ -22,7 +22,7 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <java.version>17</java.version>
-        <flink.version>1.20.0</flink.version>
+        <flink.version>1.20.4</flink.version>
         <flink.cdc.version>3.4.0</flink.cdc.version>
         <scala.binary.version>2.12</scala.binary.version>
         <spring.boot.version>3.4.13</spring.boot.version>
@@ -100,16 +100,16 @@
                 <version>${flink.cdc.version}</version>
             </dependency>
 
-            <!-- Oracle JDBC - 安全修复：升级到最新版本以修复 CVE-2023-21892, CVE-2024-21375 -->
+            <!-- Oracle JDBC - 使用 19.x 版本兼容 Oracle 11g -->
             <dependency>
                 <groupId>com.oracle.database.jdbc</groupId>
                 <artifactId>ojdbc8</artifactId>
-                <version>23.6.0.24.10</version>
+                <version>19.8.0.0</version>
             </dependency>
             <dependency>
                 <groupId>com.oracle.database.xml</groupId>
                 <artifactId>xdb</artifactId>
-                <version>23.6.0.24.10</version>
+                <version>19.8.0.0</version>
             </dependency>
 
             <!-- 安全修复：升级 commons-collections4 以覆盖旧版本 CVE-2015-6420 -->

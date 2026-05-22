@@ -204,7 +204,7 @@ const formatDuration = (ms) => {
 onMounted(() => {
   refreshAll()
   // 自动刷新 (每 30 秒)
-  refreshInterval = setInterval(refreshAll, 30000)
+  // refreshInterval = setInterval(refreshAll, 30000) // 已禁用自动刷新
 })
 
 onUnmounted(() => {

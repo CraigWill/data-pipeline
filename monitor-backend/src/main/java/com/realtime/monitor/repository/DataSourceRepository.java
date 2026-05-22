@@ -63,27 +63,26 @@ public class DataSourceRepository {
                 "USING (SELECT ? AS id FROM dual) s " +
                 "ON (t.id = s.id) " +
                 "WHEN MATCHED THEN " +
-                "  UPDATE SET name=?, host=?, port=?, username=?, password=?, sid=?, description=?, status=?, updated_at=? " +
+                "  UPDATE SET name=?, host=?, port=?, username=?, password=?, sid=?, description=?, status=?, updated_at=SYSDATE " +
                 "WHEN NOT MATCHED THEN " +
                 "  INSERT (id, name, host, port, username, password, sid, description, status, created_at, updated_at) " +
-                "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, SYSDATE, SYSDATE)";
         
-        Timestamp now = Timestamp.from(Instant.now());
         jdbcTemplate.update(sql,
                 config.getId(),
                 config.getName(), config.getHost(), config.getPort(),
                 config.getUsername(), config.getPassword(), config.getSid(),
-                config.getDescription(), config.getStatus(), now,
+                config.getDescription(), config.getStatus(),
                 config.getId(), config.getName(), config.getHost(), config.getPort(),
                 config.getUsername(), config.getPassword(), config.getSid(),
-                config.getDescription(), config.getStatus(), now, now);
+                config.getDescription(), config.getStatus());
         
         log.info("保存数据源配置: {}", config.getId());
     }
 
     public void updateStatus(String id, String status) {
-        String sql = "UPDATE " + TABLE + " SET status = ?, updated_at = ? WHERE id = ?";
-        jdbcTemplate.update(sql, status, Timestamp.from(Instant.now()), id);
+        String sql = "UPDATE " + TABLE + " SET status = ?, updated_at = SYSDATE WHERE id = ?";
+        jdbcTemplate.update(sql, status, id);
         log.info("更新数据源状态: {} -> {}", id, status);
     }
 

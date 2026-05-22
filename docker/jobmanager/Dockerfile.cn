@@ -5,7 +5,7 @@
 FROM eclipse-temurin:17-jre
 
 # Flink 版本
-ENV FLINK_VERSION=1.20.0 \
+ENV FLINK_VERSION=1.20.4 \
     SCALA_VERSION=2.12 \
     FLINK_HOME=/opt/flink \
     FLINK_USER=flink \

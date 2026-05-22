@@ -239,15 +239,15 @@ build_flink_images() {
     
     # 构建 JobManager
     echo -e "${BLUE}  - 构建 JobManager 镜像...${NC}"
-    docker build $build_args -f docker/jobmanager/Dockerfile -t flink-jobmanager:latest .
+    docker build $build_args -f docker/jobmanager/Dockerfile.cn -t flink-jobmanager:latest .
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ JobManager 镜像构建失败${NC}"
         exit 1
     fi
     
-    # 构建 TaskManager
+    # 构建 TaskManager该14710
     echo -e "${BLUE}  - 构建 TaskManager 镜像...${NC}"
-    docker build $build_args -f docker/taskmanager/Dockerfile -t flink-taskmanager:latest .
+    docker build $build_args -f docker/taskmanager/Dockerfile.cn -t flink-taskmanager:latest .
     if [ $? -ne 0 ]; then
         echo -e "${RED}✗ TaskManager 镜像构建失败${NC}"
         exit 1
@@ -283,13 +283,60 @@ build_images() {
     echo -e "${GREEN}✓ 镜像构建完成${NC}"
 }
 
-# 启动服务
+# 清理 ZooKeeper 中的旧 Flink leader 数据
+# 防止 JobManager 重启后因端口变更导致选举卡死
+clean_zk_stale_data() {
+    # 检查 ZooKeeper 容器是否运行
+    if ! docker ps --format '{{.Names}}' | grep -q "zookeeper"; then
+        return
+    fi
+    
+    echo -e "${BLUE}>>> 清理 ZooKeeper 旧 leader 数据...${NC}"
+    echo "deleteall /flink" | docker exec -i zookeeper /usr/bin/zookeeper-shell localhost:2181 2>/dev/null || true
+    echo -e "${GREEN}✓ ZooKeeper 旧数据已清理${NC}"
+}
+
+# 启动服务（按正确顺序，确保 Flink leader 选举成功）
 start_services() {
     local services="$1"
     echo -e "${BLUE}>>> 启动服务...${NC}"
-    if [ -z "$services" ]; then
+    
+    if [ -z "$services" ] || echo "$services" | grep -qE "jobmanager|taskmanager|flink"; then
+        # 包含 Flink 组件时，按顺序启动防止选举卡死
+        
+        # Step 1: 停止旧的 Flink 组件
+        echo -e "${YELLOW}  停止旧 Flink 组件...${NC}"
+        docker-compose stop jobmanager jobmanager-standby taskmanager 2>/dev/null || true
+        sleep 2
+        
+        # Step 2: 清理 ZooKeeper 旧 leader 数据
+        clean_zk_stale_data
+        
+        # Step 3: 启动 ZooKeeper（如果未运行）
+        echo -e "${BLUE}  启动 ZooKeeper...${NC}"
+        docker-compose up -d zookeeper
+        sleep 3
+        
+        # Step 4: 启动 JobManager（等待 leader 选举完成）
+        echo -e "${BLUE}  启动 JobManager...${NC}"
+        docker-compose up -d jobmanager
+        
+        echo -e "${YELLOW}  等待 Flink leader 选举...${NC}"
+        for i in $(seq 1 30); do
+            if curl -sf http://localhost:8081/overview >/dev/null 2>&1; then
+                echo -e "${GREEN}  ✓ Flink JobManager 就绪${NC}"
+                break
+            fi
+            sleep 2
+            echo -n "."
+        done
+        echo ""
+        
+        # Step 5: 启动其余服务（TaskManager、Standby、Backend、Frontend）
+        echo -e "${BLUE}  启动其余服务...${NC}"
         docker-compose up -d
     else
+        # 不包含 Flink 组件，直接启动
         docker-compose up -d $services
     fi
     

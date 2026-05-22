@@ -15,11 +15,12 @@ spring:
       secure: false        # 生产环境设为 true（HTTPS）
       same-site: lax
   
-  # 数据源配置（用于 RuntimeJob 持久化）
+  # 数据源配置 — CDC 管理库（CDC_ADMIN schema）
+  # 存储: CDC_DATASOURCES, CDC_TASKS, RUNTIME_JOBS, CDC_FILES, APP_CONFIG
   datasource:
-    url: jdbc:oracle:thin:@${DATABASE_HOST:localhost}:${DATABASE_PORT:1521}:${DATABASE_SID:helowin}
-    username: ${DATABASE_USERNAME:finance_user}
-    password: ${DATABASE_PASSWORD}
+    url: jdbc:oracle:thin:@${CDC_ADMIN_HOST:${DATABASE_HOST:localhost}}:${CDC_ADMIN_PORT:${DATABASE_PORT:1521}}:${CDC_ADMIN_SID:${DATABASE_SID:helowin}}
+    username: ${CDC_ADMIN_USERNAME:cdc_admin}
+    password: ${CDC_ADMIN_PASSWORD:${DATABASE_PASSWORD}}
     driver-class-name: oracle.jdbc.OracleDriver
     # 连接池配置
     hikari:

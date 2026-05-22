@@ -1,0 +1,47 @@
+# Flink 单点配置（无 HA、无 ZooKeeper）
+# 将此文件复制到 $FLINK_HOME/conf/flink-conf.yaml
+
+# JobManager
+jobmanager.rpc.address: localhost
+jobmanager.rpc.port: 6123
+jobmanager.bind-host: 0.0.0.0
+jobmanager.memory.process.size: 1024m
+
+# TaskManager
+taskmanager.bind-host: 0.0.0.0
+taskmanager.host: localhost
+taskmanager.memory.process.size: 2048m
+taskmanager.numberOfTaskSlots: 12
+
+# 并行度
+parallelism.default: 2
+
+# 无 HA（单点模式）
+# high-availability.type: NONE（默认值，无需显式设置）
+
+# Checkpoint
+execution.checkpointing.interval: 60000
+execution.checkpointing.mode: EXACTLY_ONCE
+execution.checkpointing.timeout: 300000
+state.checkpoints.dir: file:///opt/flink/checkpoints
+state.savepoints.dir: file:///opt/flink/savepoints
+state.backend: hashmap
+
+# 重启策略
+restart-strategy.type: fixed-delay
+restart-strategy.fixed-delay.attempts: 3
+restart-strategy.fixed-delay.delay: 10s
+
+# Web UI
+rest.port: 8081
+rest.bind-address: 0.0.0.0
+web.upload.dir: /tmp/flink-upload
+
+# 类加载器
+classloader.resolve-order: parent-first
+
+# 禁用 ZooKeeper SASL
+zookeeper.sasl.disable: true
+
+# JVM 参数（Java 17+ 模块系统兼容）
+env.java.opts: --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED

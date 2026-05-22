@@ -133,20 +133,24 @@ public class DataSourceService {
     public void updateDataSource(String dsId, DataSourceConfig config) {
         config.setId(dsId);
 
-        // 处理密码：如果前端传来的密码已经是加密格式（用户没改密码），不要二次加密
-        if (config.getPassword() != null && !config.getPassword().isEmpty()) {
-            if (!isLikelyEncrypted(config.getPassword())) {
-                // 明文密码（用户修改了密码），需要加密
-                try {
-                    config.setPassword(PasswordEncryptionUtil.encryptAES(config.getPassword()));
-                    log.debug("数据源密码已加密（更新）: {}", dsId);
-                } catch (Exception e) {
-                    log.error("密码加密失败: {}", e.getMessage());
-                    throw new RuntimeException("密码加密失败", e);
-                }
+        // 处理密码：如果前端没有传密码（编辑时密码字段为空），保留数据库中的原密码
+        if (config.getPassword() == null || config.getPassword().isEmpty()) {
+            DataSourceConfig existing = dataSourceRepository.findById(dsId);
+            if (existing != null && existing.getPassword() != null) {
+                config.setPassword(existing.getPassword()); // 保留原加密密码
+                log.debug("数据源密码未修改，保留原密码: {}", dsId);
             }
-            // 已加密格式 → 直接保存，不二次加密
+        } else if (!isLikelyEncrypted(config.getPassword())) {
+            // 明文密码（用户修改了密码），需要加密
+            try {
+                config.setPassword(PasswordEncryptionUtil.encryptAES(config.getPassword()));
+                log.debug("数据源密码已加密（更新）: {}", dsId);
+            } catch (Exception e) {
+                log.error("密码加密失败: {}", e.getMessage());
+                throw new RuntimeException("密码加密失败", e);
+            }
         }
+        // 已加密格式 → 直接保存，不二次加密
 
         config.setStatus("UNTESTED");
         dataSourceRepository.save(config);

@@ -176,6 +176,10 @@
                                 <excludes>
                                     <exclude>org.apache.flink:flink-shaded-force-shading</exclude>
                                     <exclude>com.google.code.findbugs:jsr305</exclude>
+                                    <exclude>org.slf4j:slf4j-log4j12</exclude>
+                                    <exclude>org.slf4j:slf4j-api</exclude>
+                                    <exclude>log4j:log4j</exclude>
+                                    <exclude>org.apache.logging.log4j:*</exclude>
                                 </excludes>
                             </artifactSet>
                             <filters>
@@ -185,6 +189,8 @@
                                         <exclude>META-INF/*.SF</exclude>
                                         <exclude>META-INF/*.DSA</exclude>
                                         <exclude>META-INF/*.RSA</exclude>
+                                        <!-- 排除 SLF4J，使用 Flink 自带的 -->
+                                        <exclude>org/slf4j/**</exclude>
                                     </excludes>
                                 </filter>
                             </filters>

@@ -28,14 +28,18 @@ if [ "$HA_MODE" = "zookeeper" ] || [ "$HA_MODE" = "ZOOKEEPER" ]; then
     HA_ZK_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
     HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
     ZK_PATH="/flink${HA_CLUSTER_ID}/leader"
+    ZK_HOST=$(echo $HA_ZK_QUORUM | cut -d: -f1)
+    ZK_PORT=$(echo $HA_ZK_QUORUM | cut -d: -f2)
     echo "HA Mode: Cleaning stale leader data from ZooKeeper ($HA_ZK_QUORUM)..."
-    # Wait for ZooKeeper to be available
+    # Wait for ZooKeeper TCP port to be available
     for i in $(seq 1 30); do
-        if echo "ruok" | nc -w 2 $(echo $HA_ZK_QUORUM | cut -d: -f1) $(echo $HA_ZK_QUORUM | cut -d: -f2) 2>/dev/null | grep -q "imok"; then
-            echo "  ZooKeeper is ready"
-            # Delete stale leader latch to allow fresh election
-            echo "deleteall $ZK_PATH" | nc -w 2 $(echo $HA_ZK_QUORUM | cut -d: -f1) $(echo $HA_ZK_QUORUM | cut -d: -f2) 2>/dev/null || true
-            echo "  Stale leader data cleaned (path: $ZK_PATH)"
+        if nc -z -w 2 $ZK_HOST $ZK_PORT 2>/dev/null; then
+            echo "  ZooKeeper is ready (TCP port $ZK_PORT reachable)"
+            # Delete stale leader latch using ZooKeeper CLI protocol
+            # Send deleteall command via the 4-letter word interface won't work,
+            # so we just skip cleanup here — the fresh election will work because
+            # we stopped all JMs before starting this one
+            echo "  ZooKeeper connected, proceeding with startup"
             break
         fi
         echo "  Waiting for ZooKeeper... ($i/30)"

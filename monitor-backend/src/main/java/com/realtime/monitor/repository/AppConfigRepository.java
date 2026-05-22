@@ -113,7 +113,7 @@ public class AppConfigRepository {
                     "  INSERT (config_key, config_value, description, created_at, updated_at) " +
                     "  VALUES (?, ?, ?, ?, ?)";
 
-            Timestamp now = Timestamp.from(Instant.now());
+            java.sql.Date now = new java.sql.Date(System.currentTimeMillis());
             jdbcTemplate.update(sql,
                     key,
                     value, description, now,
@@ -138,7 +138,7 @@ public class AppConfigRepository {
                     "  INSERT (config_key, config_value, created_at, updated_at) " +
                     "  VALUES (?, ?, ?, ?)";
 
-            Timestamp now = Timestamp.from(Instant.now());
+            java.sql.Date now = new java.sql.Date(System.currentTimeMillis());
             jdbcTemplate.update(sql, key, value, now, key, value, now, now);
         } catch (Exception e) {
             log.error("保存配置失败 [{}]: {}", key, e.getMessage());

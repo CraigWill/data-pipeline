@@ -80,7 +80,7 @@ public class TaskRepository {
                     "          split_size, created_at, updated_at) " +
                     "  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
             
-            Timestamp now = Timestamp.from(Instant.now());
+            java.sql.Date now = new java.sql.Date(System.currentTimeMillis());
             jdbcTemplate.update(sql,
                     config.getId(),
                     config.getName(), config.getDatasourceId(), config.getSchema(), tablesJson,

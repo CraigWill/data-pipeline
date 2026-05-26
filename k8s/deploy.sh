@@ -148,40 +148,39 @@ if [ "$REDEPLOY" = true ]; then
 fi
 
 # ==========================================
-# 本地模式：构建并加载镜像
+# 构建并加载镜像（本地 + prod 模式均执行）
 # ==========================================
-if [ "$MODE" = "local" ]; then
-    echo ""
-    echo -e "${BLUE}>>> 构建 Docker 镜像...${NC}"
+echo ""
+echo -e "${BLUE}>>> 构建 Docker 镜像...${NC}"
 
-    # 检查 JAR
-    if ! ls "$PROJECT_ROOT"/flink-jobs/target/flink-jobs-*-SNAPSHOT.jar &>/dev/null || \
-       ! ls "$PROJECT_ROOT"/monitor-backend/target/monitor-backend-*-SNAPSHOT.jar &>/dev/null; then
-        echo "  Maven 构建中..."
-        mvn -f "$PROJECT_ROOT/pom.xml" clean package -DskipTests -q 2>&1 | tail -1
-    fi
-
-    IMAGE_TAG="local-$(date +%s)"
-
-    echo "  flink-jobmanager:${IMAGE_TAG}"
-    docker build -f "$PROJECT_ROOT/docker/jobmanager/Dockerfile" -t "flink-jobmanager:${IMAGE_TAG}" "$PROJECT_ROOT" -q
-    echo "  flink-taskmanager:${IMAGE_TAG}"
-    docker build -f "$PROJECT_ROOT/docker/taskmanager/Dockerfile" -t "flink-taskmanager:${IMAGE_TAG}" "$PROJECT_ROOT" -q
-    echo "  monitor-backend:${IMAGE_TAG}"
-    docker build -f "$PROJECT_ROOT/monitor-backend/Dockerfile" -t "monitor-backend:${IMAGE_TAG}" "$PROJECT_ROOT" -q
-    echo "  monitor-frontend:${IMAGE_TAG}"
-    docker build -f "$PROJECT_ROOT/monitor/frontend-vue/Dockerfile" -t "monitor-frontend:${IMAGE_TAG}" "$PROJECT_ROOT/monitor/frontend-vue/" -q
-
-    echo -e "${GREEN}✓ 镜像构建完成${NC}"
-
-    echo ""
-    echo -e "${BLUE}>>> 加载镜像到集群...${NC}"
-    load_image "flink-jobmanager:${IMAGE_TAG}"
-    load_image "flink-taskmanager:${IMAGE_TAG}"
-    load_image "monitor-backend:${IMAGE_TAG}"
-    load_image "monitor-frontend:${IMAGE_TAG}"
-    echo -e "${GREEN}✓ 镜像加载完成${NC}"
+# 检查 JAR 是否存在，不存在则先 Maven 构建
+if ! ls "$PROJECT_ROOT"/flink-jobs/target/flink-jobs-*-SNAPSHOT.jar &>/dev/null || \
+   ! ls "$PROJECT_ROOT"/monitor-backend/target/monitor-backend-*-SNAPSHOT.jar &>/dev/null; then
+    echo "  Maven 构建中..."
+    mvn -f "$PROJECT_ROOT/pom.xml" clean package -DskipTests -q 2>&1 | tail -1
 fi
+
+# 用时间戳 tag 保证每次都是新镜像，避免 IfNotPresent 缓存问题
+IMAGE_TAG="$(date +%s)"
+
+echo "  flink-jobmanager:${IMAGE_TAG}"
+docker build -f "$PROJECT_ROOT/docker/jobmanager/Dockerfile"  -t "flink-jobmanager:${IMAGE_TAG}"  "$PROJECT_ROOT" -q
+echo "  flink-taskmanager:${IMAGE_TAG}"
+docker build -f "$PROJECT_ROOT/docker/taskmanager/Dockerfile" -t "flink-taskmanager:${IMAGE_TAG}" "$PROJECT_ROOT" -q
+echo "  monitor-backend:${IMAGE_TAG}"
+docker build -f "$PROJECT_ROOT/monitor-backend/Dockerfile"    -t "monitor-backend:${IMAGE_TAG}"   "$PROJECT_ROOT" -q
+echo "  monitor-frontend:${IMAGE_TAG}"
+docker build -f "$PROJECT_ROOT/monitor/frontend-vue/Dockerfile" -t "monitor-frontend:${IMAGE_TAG}" "$PROJECT_ROOT/monitor/frontend-vue/" -q
+
+echo -e "${GREEN}✓ 镜像构建完成${NC}"
+
+echo ""
+echo -e "${BLUE}>>> 加载镜像到集群...${NC}"
+load_image "flink-jobmanager:${IMAGE_TAG}"
+load_image "flink-taskmanager:${IMAGE_TAG}"
+load_image "monitor-backend:${IMAGE_TAG}"
+load_image "monitor-frontend:${IMAGE_TAG}"
+echo -e "${GREEN}✓ 镜像加载完成${NC}"
 
 # ==========================================
 # 部署 K8s 资源
@@ -200,11 +199,19 @@ if [ "$NEED_SECRET" = true ]; then
     echo -e "  ${BLUE}[2/7] Secret${NC}"
     if [ -f "flink-secrets.yaml" ]; then
         kubectl apply -f flink-secrets.yaml
-        echo -e "  ${GREEN}✓${NC}"
+        echo -e "  ${GREEN}✓ flink-secrets${NC}"
     else
         echo -e "  ${RED}✗ flink-secrets.yaml 不存在，请先创建:${NC}"
         echo "    cp flink-secrets.yaml.example flink-secrets.yaml"
         exit 1
+    fi
+    # OceanBase Secret（可选，不存在时跳过）
+    if [ -f "flink-secrets-ob.yaml" ]; then
+        kubectl apply -f flink-secrets-ob.yaml
+        echo -e "  ${GREEN}✓ flink-secrets-ob${NC}"
+    else
+        echo -e "  ${YELLOW}  flink-secrets-ob.yaml 不存在，跳过 OceanBase 配置${NC}"
+        echo -e "  ${YELLOW}  如需配置: cp flink-secrets-ob.yaml.example flink-secrets-ob.yaml${NC}"
     fi
 else
     echo -e "  ${BLUE}[2/7] Secret${NC} (本地模式跳过)"
@@ -224,15 +231,10 @@ echo -e "  ${BLUE}[4/7] ConfigMap${NC}"
 kubectl apply -f flink-configuration-configmap.yaml
 echo -e "  ${GREEN}✓${NC}"
 
-# 部署函数：本地模式替换镜像标签
+# 部署函数：替换镜像标签（两种模式都用时间戳 tag，避免 IfNotPresent 缓存）
 apply_deployment() {
     local file=$1
-    if [ "$MODE" = "local" ] && [ -n "$IMAGE_TAG" ]; then
-        # 替换所有 image: xxx:yyy 为带时间戳的标签
-        sed -E "s|image: (flink-jobmanager\|flink-taskmanager\|monitor-backend\|monitor-frontend):.*|image: \1:${IMAGE_TAG}|g" "$file" | kubectl apply -f -
-    else
-        kubectl apply -f "$file"
-    fi
+    sed -E "s|image: (flink-jobmanager\|flink-taskmanager\|monitor-backend\|monitor-frontend):.*|image: \1:${IMAGE_TAG}|g" "$file" | kubectl apply -f -
 }
 
 # 5. JobManager
@@ -275,12 +277,48 @@ echo ""
 kubectl get svc -n flink
 echo ""
 echo "访问:"
-echo "  Flink UI:  kubectl port-forward -n flink svc/flink-jobmanager-rest 8081:8081"
-echo "  Frontend:  kubectl port-forward -n flink svc/monitor-frontend 8888:80"
-echo "  Backend:   kubectl port-forward -n flink svc/monitor-backend 5001:5001"
-echo "  NodePort:  http://localhost:30888"
+echo "  Frontend:  http://localhost:30888"
+echo "  Backend:   http://localhost:30501"
+echo "  Flink UI:  http://localhost:30081"
 echo ""
 echo "常用命令:"
 echo "  重新部署: $0 --redeploy"
 echo "  卸载:     $SCRIPT_DIR/undeploy.sh"
+echo ""
+
+# ==========================================
+# 自动启动 port-forward（兜底，NodePort 在
+# Docker Desktop / Kind 下有时不通）
+# ==========================================
+echo -e "${BLUE}>>> 启动端口映射...${NC}"
+
+# 杀掉旧的 port-forward 进程
+pkill -f "kubectl port-forward.*flink" 2>/dev/null || true
+sleep 1
+
+# 后台启动三个 port-forward，日志写到 /tmp
+kubectl port-forward -n flink --address 0.0.0.0 svc/monitor-frontend    8888:80   > /tmp/pf-frontend.log 2>&1 &
+kubectl port-forward -n flink --address 0.0.0.0 svc/monitor-backend     5001:5001 > /tmp/pf-backend.log  2>&1 &
+kubectl port-forward -n flink --address 0.0.0.0 svc/flink-jobmanager-rest 8081:8081 > /tmp/pf-flink.log 2>&1 &
+
+sleep 2
+
+# 验证是否成功
+PF_OK=true
+for port in 8888 5001 8081; do
+    if ! lsof -iTCP:${port} -sTCP:LISTEN -t &>/dev/null; then
+        echo -e "  ${YELLOW}⚠ 端口 ${port} 未监听，请检查 /tmp/pf-*.log${NC}"
+        PF_OK=false
+    fi
+done
+
+if [ "$PF_OK" = true ]; then
+    echo -e "${GREEN}✓ 端口映射已就绪${NC}"
+    echo ""
+    echo "  前端:     http://localhost:8888"
+    echo "  后端 API: http://localhost:5001"
+    echo "  Flink UI: http://localhost:8081"
+else
+    echo -e "${YELLOW}  NodePort 直连: Frontend=30888  Backend=30501  Flink=30081${NC}"
+fi
 echo ""

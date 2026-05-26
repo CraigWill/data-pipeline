@@ -18,9 +18,9 @@ spring:
   # 数据源配置 — CDC 管理库（CDC_ADMIN schema）
   # 存储: CDC_DATASOURCES, CDC_TASKS, RUNTIME_JOBS, CDC_FILES, APP_CONFIG
   datasource:
-    url: jdbc:oracle:thin:@${CDC_ADMIN_HOST:${DATABASE_HOST:localhost}}:${CDC_ADMIN_PORT:${DATABASE_PORT:1521}}:${CDC_ADMIN_SID:${DATABASE_SID:helowin}}
+    url: jdbc:oracle:thin:@${CDC_ADMIN_HOST:localhost}:${CDC_ADMIN_PORT:1521}:${CDC_ADMIN_SID:helowin}
     username: ${CDC_ADMIN_USERNAME:cdc_admin}
-    password: ${CDC_ADMIN_PASSWORD:${DATABASE_PASSWORD}}
+    password: ${CDC_ADMIN_PASSWORD}
     driver-class-name: oracle.jdbc.OracleDriver
     # 连接池配置
     hikari:
@@ -29,28 +29,6 @@ spring:
       connection-timeout: 30000
       idle-timeout: 600000
       max-lifetime: 1800000
-
-# 数据库配置
-database:
-  # OceanBase数据库主机地址
-  host: localhost
-  # 数据库端口
-  port: 2881
-  # 数据库用户名
-  username: root
-  # 数据库密码（必须通过环境变量设置）
-  password: ${DATABASE_PASSWORD}
-  # 要监控的Schema
-  schema: test_schema
-  # 要监控的表列表
-  tables:
-    - users
-    - orders
-    - products
-  # 连接超时时间（秒）
-  connectionTimeout: 30
-  # 自动重连间隔（秒）
-  reconnectInterval: 30
 
 # Flink配置
 flink:

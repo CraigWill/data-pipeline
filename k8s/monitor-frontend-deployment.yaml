@@ -53,11 +53,11 @@ metadata:
   name: monitor-frontend
   namespace: flink
 spec:
-  type: LoadBalancer  # 或 NodePort，根据需要调整
+  type: NodePort
   ports:
   - port: 80
     targetPort: 80
+    nodePort: 30888   # 前端：http://localhost:30888
     name: http
-    # nodePort: 30888  # 如果使用 NodePort，取消注释
   selector:
     app: monitor-frontend

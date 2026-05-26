@@ -154,17 +154,19 @@ start_backend() {
 
     echo -e "${BLUE}>>> 启动 Monitor Backend (端口 $SERVER_PORT)${NC}"
 
+    # 复制 minimal 配置文件到 classpath
+    cp "$SCRIPT_DIR/application-minimal.yml" "$PROJECT_ROOT/monitor-backend/target/classes/application-minimal.yml" 2>/dev/null
+
     nohup java \
         -Xms256m -Xmx1024m \
-        -Dspring.profiles.active=local \
-        -Dserver.port=${SERVER_PORT:-5001} \
+        -Dspring.profiles.active=minimal \
+        -Dspring.config.additional-location="file:$SCRIPT_DIR/application-minimal.yml" \
         -DDATABASE_HOST="$DATABASE_HOST" \
         -DDATABASE_PORT="$DATABASE_PORT" \
         -DDATABASE_SID="$DATABASE_SID" \
         -DDATABASE_USERNAME="$DATABASE_USERNAME" \
         -DDATABASE_PASSWORD="$DATABASE_PASSWORD" \
         -DFLINK_REST_URL="$FLINK_REST_URL" \
-        -DFLINK_REST_URLS="$FLINK_REST_URL" \
         -DOUTPUT_PATH="$OUTPUT_PATH" \
         -DJWT_SECRET="$JWT_SECRET" \
         -DJWT_EXPIRATION="${JWT_EXPIRATION:-300000}" \
@@ -172,7 +174,10 @@ start_backend() {
         -DADMIN_INITIAL_PASSWORD="$ADMIN_INITIAL_PASSWORD" \
         -DALLOWED_ORIGINS="$ALLOWED_ORIGINS" \
         -DORACLE_CONTAINER="${ORACLE_CONTAINER:-localhost}" \
-        -Dflink.job.jar-path="$PROJECT_ROOT/flink-jobs/target/flink-jobs-1.0.0-SNAPSHOT.jar" \
+        -DFLINK_HOME="${FLINK_HOME}" \
+        -DFLINK_JOB_JAR_PATH="$PROJECT_ROOT/flink-jobs/target/flink-jobs-1.0.0-SNAPSHOT.jar" \
+        -DCHECKPOINT_DIR="file:///opt/flink/checkpoints" \
+        -DSAVEPOINT_DIR="file:///opt/flink/savepoints" \
         -DTZ=Asia/Shanghai \
         -jar "$jar" \
         > "$LOG_DIR/backend.log" 2>&1 &

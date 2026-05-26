@@ -56,6 +56,8 @@ spec:
           value: "CO9AKFeKC6vYyJ5yd6bXSQ=="
         - name: DATABASE_SID
           value: "helowin"
+        - name: DATABASE_SCHEMA
+          value: "finance_user"
         - name: TZ
           value: "Asia/Shanghai"
         # JWT 安全配置
@@ -66,6 +68,15 @@ spec:
         # AES 密码加密配置
         - name: AES_ENCRYPTION_KEY
           value: "E5TDKE7NvyphzdaW0SIUfAhZl2v9sRnjHl1Egqx9arM="
+        # 管理员初始密码
+        - name: ADMIN_INITIAL_PASSWORD
+          value: "Admin2026Secure"
+        # CORS 配置
+        - name: ALLOWED_ORIGINS
+          value: "http://monitor-frontend,http://localhost:3000,http://localhost:8888,https://datapipeline.aimachine-tech.cn"
+        # Oracle 容器配置（用于主机名解析）
+        - name: ORACLE_CONTAINER
+          value: ""
         resources:
           requests:
             memory: "512Mi"

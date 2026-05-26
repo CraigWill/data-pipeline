@@ -45,32 +45,69 @@ spec:
           value: "/app/output/cdc"
         - name: CONFIG_DIR
           value: "/app/config"
-        # 数据库配置（从 Secret 读取）
-        - name: DATABASE_HOST
+        # ── CDC 管理库配置（Oracle 1522 / cdc_admin，存储元数据表）──────
+        - name: CDC_ADMIN_HOST
           valueFrom:
             secretKeyRef:
               name: flink-secrets
-              key: database-host
-        - name: DATABASE_PORT
+              key: cdc-admin-host
+        - name: CDC_ADMIN_PORT
           valueFrom:
             secretKeyRef:
               name: flink-secrets
-              key: database-port
-        - name: DATABASE_USERNAME
+              key: cdc-admin-port
+        - name: CDC_ADMIN_USERNAME
           valueFrom:
             secretKeyRef:
               name: flink-secrets
-              key: database-username
-        - name: DATABASE_PASSWORD
+              key: cdc-admin-username
+        - name: CDC_ADMIN_PASSWORD
           valueFrom:
             secretKeyRef:
               name: flink-secrets
-              key: database-password
-        - name: DATABASE_SID
+              key: cdc-admin-password
+        - name: CDC_ADMIN_SID
           valueFrom:
             secretKeyRef:
               name: flink-secrets
-              key: database-sid
+              key: cdc-admin-sid
+        # ── OceanBase 数据库配置（供前端数据源管理页面预填默认值）────
+        - name: OB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets-ob
+              key: ob-host
+              optional: true        # Secret 不存在时不阻止启动
+        - name: OB_PORT
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets-ob
+              key: ob-port
+              optional: true
+        - name: OB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets-ob
+              key: ob-username
+              optional: true
+        - name: OB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets-ob
+              key: ob-password
+              optional: true
+        - name: OB_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets-ob
+              key: ob-database
+              optional: true
+        - name: OB_SCHEMA
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets-ob
+              key: ob-schema
+              optional: true
         - name: TZ
           value: "Asia/Shanghai"
         # JWT 安全配置
@@ -87,6 +124,15 @@ spec:
             secretKeyRef:
               name: flink-secrets
               key: aes-encryption-key
+        # 管理员初始密码
+        - name: ADMIN_INITIAL_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: admin-initial-password
+        # CORS 配置
+        - name: ALLOWED_ORIGINS
+          value: "http://monitor-frontend:80,http://localhost:3000,http://localhost:8888,https://datapipeline.aimachine-tech.cn"
         resources:
           requests:
             memory: "512Mi"
@@ -112,10 +158,11 @@ metadata:
   name: monitor-backend
   namespace: flink
 spec:
-  type: ClusterIP
+  type: NodePort
   ports:
   - port: 5001
     targetPort: 5001
+    nodePort: 30501   # Backend API：http://localhost:30501
     name: http
   selector:
     app: monitor-backend

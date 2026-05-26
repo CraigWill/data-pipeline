@@ -1,0 +1,58 @@
+# minimal 单点部署配置
+# 激活方式: -Dspring.profiles.active=minimal
+# 所有敏感值通过环境变量注入（见 env.sh）
+
+server:
+  port: ${SERVER_PORT:5001}
+
+spring:
+  datasource:
+    url: jdbc:oracle:thin:@${DATABASE_HOST:localhost}:${DATABASE_PORT:1522}:${DATABASE_SID:helowin}
+    username: ${DATABASE_USERNAME:cdc_admin}
+    password: ${DATABASE_PASSWORD}
+    driver-class-name: oracle.jdbc.OracleDriver
+    hikari:
+      maximum-pool-size: 5
+      minimum-idle: 2
+      connection-timeout: 30000
+
+# Flink 配置
+app:
+  flink:
+    rest-urls:
+      - ${FLINK_REST_URL:http://localhost:8081}
+
+flink:
+  job:
+    jar-path: ${FLINK_JOB_JAR_PATH:flink-jobs/target/flink-jobs-1.0.0-SNAPSHOT.jar}
+  checkpoint:
+    dir: ${CHECKPOINT_DIR:file:///opt/flink/checkpoints}
+  savepoint:
+    dir: ${SAVEPOINT_DIR:file:///opt/flink/savepoints}
+
+# 输出目录（必须与 Flink 任务的 --outputPath 一致）
+output:
+  path: ${OUTPUT_PATH:/opt/flink/output/cdc}
+
+# JWT 安全配置
+jwt:
+  secret: ${JWT_SECRET}
+  expiration: ${JWT_EXPIRATION:300000}
+
+# 管理员初始密码
+admin:
+  initial-password: ${ADMIN_INITIAL_PASSWORD}
+
+# 密码加密
+encryption:
+  aes-key: ${AES_ENCRYPTION_KEY}
+
+# CORS 配置
+cors:
+  allowed-origins: ${ALLOWED_ORIGINS:http://localhost:8888,http://localhost:3000}
+
+# 日志
+logging:
+  level:
+    root: INFO
+    com.realtime: DEBUG

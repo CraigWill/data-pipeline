@@ -1,7 +1,5 @@
 package com.realtime.monitor.service;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -150,84 +148,9 @@ public class CdcTaskService {
     }
 
     private String buildJdbcUrl(DataSourceConfig config) {
-        String host = resolveHost(config.getHost());
-        String safeHost = URLEncoder.encode(host, StandardCharsets.UTF_8);
-
+        String host = config.getHost();
         return String.format("jdbc:oracle:thin:@%s:%d:%s",
-                safeHost, config.getPort(), config.getSid());
-    }
-
-    /**
-     * 解析数据库主机地址，根据运行环境自动转换。
-     *
-     * 转换规则：
-     * - Docker 容器内：localhost/127.0.0.1 → oracle11g（Oracle 容器名）
-     * - 本地开发环境：host.docker.internal → localhost
-     * - 其他情况：保持原值
-     */
-    private String resolveHost(String host) {
-        if (host == null || host.isBlank()) {
-            return host;
-        }
-
-        boolean insideDocker = isRunningInsideDocker();
-
-        // 在 Docker 容器内，localhost/127.0.0.1 无法访问其他容器的服务
-        // 需要替换为 Oracle 容器名
-        if (insideDocker) {
-            if ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host)) {
-                String oracleContainer = System.getenv("ORACLE_CONTAINER");
-                String resolved = (oracleContainer != null && !oracleContainer.isBlank()) 
-                        ? oracleContainer : "oracle11g";
-                log.debug("Docker 环境: 将 {} 替换为容器名 {}", host, resolved);
-                return resolved;
-            }
-            // host.docker.internal 在 Docker 内是有效的，保持不变
-            return host;
-        }
-
-        // 在本地（非 Docker）环境中，host.docker.internal 无法解析
-        if ("host.docker.internal".equalsIgnoreCase(host)) {
-            log.debug("本地环境: 将 host.docker.internal 替换为 localhost");
-            return "localhost";
-        }
-
-        // Oracle 容器名在本地环境中无法解析，替换为 localhost
-        String oracleContainer = System.getenv("ORACLE_CONTAINER");
-        if (oracleContainer != null && oracleContainer.equalsIgnoreCase(host)) {
-            log.debug("本地环境: 将容器名 {} 替换为 localhost", host);
-            return "localhost";
-        }
-
-        return host;
-    }
-
-    /**
-     * 检测当前是否运行在 Docker 容器内。
-     * 兼容 cgroup v1 和 v2。
-     */
-    private boolean isRunningInsideDocker() {
-        // 方法1: 检查 /.dockerenv 文件（最可靠）
-        if (java.nio.file.Files.exists(java.nio.file.Paths.get("/.dockerenv"))) {
-            return true;
-        }
-        // 方法2: 检查 /proc/1/cgroup（cgroup v1 包含 "docker"）
-        try {
-            java.nio.file.Path cgroupPath = java.nio.file.Paths.get("/proc/1/cgroup");
-            if (java.nio.file.Files.exists(cgroupPath)) {
-                String content = java.nio.file.Files.readString(cgroupPath);
-                if (content.contains("docker") || content.contains("kubepods")) {
-                    return true;
-                }
-            }
-        } catch (Exception ignored) {
-        }
-        // 方法3: 检查容器特有的环境变量（如 HOSTNAME 格式为容器 ID）
-        String hostname = System.getenv("HOSTNAME");
-        if (hostname != null && hostname.matches("[a-f0-9]{12,}")) {
-            return true;
-        }
-        return false;
+                host, config.getPort(), config.getSid());
     }
 
     /**

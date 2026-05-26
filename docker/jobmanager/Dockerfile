@@ -45,7 +45,7 @@ RUN set -ex && \
 
 # 创建必要的目录
 RUN mkdir -p /opt/flink/checkpoints && \
-    mkdir -p /opt/flink/savepoints && \22
+    mkdir -p /opt/flink/savepoints && \
     mkdir -p /opt/flink/ha && \
     mkdir -p /opt/flink/logs && \
     mkdir -p /opt/flink/usrlib && \

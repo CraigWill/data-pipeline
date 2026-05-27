@@ -46,7 +46,7 @@ public class CdcTaskService {
 
         // 安全修复：使用 PreparedStatement 替代 Statement，防止 SQL 注入
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
-             PreparedStatement stmt = conn.prepareStatement("SELECT 1 FROM DUAL");
+             PreparedStatement stmt = conn.prepareStatement(pingQuery(config));
              ResultSet rs = stmt.executeQuery()) {
             if (rs.next()) {
                 return Map.of("success", true, "message", "连接成功");
@@ -60,87 +60,162 @@ public class CdcTaskService {
     }
 
     /**
-     * 发现数据库 Schema
+     * 发现数据库 Schema 列表（根据数据库类型使用不同查询）
      */
     public List<String> discoverSchemas(DataSourceConfig config) throws Exception {
         String jdbcUrl = buildJdbcUrl(config);
-        // config 来自 DataSourceService.loadDataSource 时密码已解密，直接使用
         String password = config.getPassword();
-        
-        // 安全修复：使用 PreparedStatement 替代 Statement，防止 SQL 注入
-        String sql = "SELECT DISTINCT owner FROM all_tables " +
-                "WHERE owner NOT IN (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
-                "ORDER BY owner";
+        String type = config.getType() != null ? config.getType().toUpperCase() : "ORACLE";
 
         List<String> schemas = new ArrayList<>();
-        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            // 设置排除的系统 schema
-            String[] systemSchemas = {"SYS", "SYSTEM", "OUTLN", "DBSNMP", "APPQOSSYS",
-                                      "WMSYS", "EXFSYS", "CTXSYS", "XDB", "ANONYMOUS",
-                                      "ORDSYS", "ORDDATA", "MDSYS"};
-            for (int i = 0; i < systemSchemas.length; i++) {
-                stmt.setString(i + 1, systemSchemas[i]);
-            }
-            
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    schemas.add(rs.getString(1));
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password)) {
+            switch (type) {
+                case "MYSQL":
+                case "OCEANBASE": {
+                    // MySQL/OceanBase: information_schema.schemata
+                    String sql = "SELECT schema_name FROM information_schema.schemata " +
+                            "WHERE schema_name NOT IN (?,?,?,?,?,?) ORDER BY schema_name";
+                    try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                        String[] sys = {"information_schema","mysql","performance_schema","sys","oceanbase","__oceanbase_inner_standby_replication__"};
+                        for (int i = 0; i < sys.length; i++) stmt.setString(i + 1, sys[i]);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) schemas.add(rs.getString(1));
+                        }
+                    }
+                    break;
+                }
+                case "POSTGRES": {
+                    // PostgreSQL: information_schema.schemata
+                    String sql = "SELECT schema_name FROM information_schema.schemata " +
+                            "WHERE schema_name NOT IN (?,?,?) ORDER BY schema_name";
+                    try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                        stmt.setString(1, "information_schema");
+                        stmt.setString(2, "pg_catalog");
+                        stmt.setString(3, "pg_toast");
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) schemas.add(rs.getString(1));
+                        }
+                    }
+                    break;
+                }
+                default: {
+                    // Oracle: all_tables
+                    String sql = "SELECT DISTINCT owner FROM all_tables " +
+                            "WHERE owner NOT IN (?,?,?,?,?,?,?,?,?,?,?,?,?) ORDER BY owner";
+                    try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                        String[] sys = {"SYS","SYSTEM","OUTLN","DBSNMP","APPQOSSYS","WMSYS","EXFSYS","CTXSYS","XDB","ANONYMOUS","ORDSYS","ORDDATA","MDSYS"};
+                        for (int i = 0; i < sys.length; i++) stmt.setString(i + 1, sys[i]);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) schemas.add(rs.getString(1));
+                        }
+                    }
+                    break;
                 }
             }
         } catch (SQLException e) {
-            log.error("发现 Schema 列表失败", e);
+            log.error("发现 Schema 列表失败 [{}]", type, e);
             throw new Exception("获取 Schema 列表失败，请检查数据库连接");
         }
         return schemas;
     }
 
     /**
-     * 发现 Schema 中的表
+     * 发现 Schema 中的表（根据数据库类型使用不同查询）
      */
     public List<Map<String, Object>> discoverTables(DataSourceConfig config, String schema) throws Exception {
         String jdbcUrl = buildJdbcUrl(config);
-        // config 来自 DataSourceService.loadDataSource 时密码已解密，直接使用
         String password = config.getPassword();
-        String sql = "SELECT t.table_name, " +
-                "CAST(NVL(t.num_rows, 0) AS NUMBER(10)) AS row_count, " +
-                "(SELECT COUNT(*) FROM all_tab_columns c WHERE c.owner = ? AND c.table_name = t.table_name) AS col_count " +
-                "FROM all_tables t " +
-                "WHERE t.owner = ? " +
-                "AND t.table_name NOT LIKE 'BIN$%' " +
-                "AND t.table_name NOT LIKE '%$%' " +
-                "AND t.temporary = 'N' " +
-                "ORDER BY t.table_name, t.num_rows DESC NULLS LAST";
+        String type = config.getType() != null ? config.getType().toUpperCase() : "ORACLE";
 
         Map<String, Map<String, Object>> uniqueTables = new LinkedHashMap<>();
+        log.info("查询 Schema {} 的表列表 [{}]", schema, type);
 
-        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password);
-             PreparedStatement stmt = conn.prepareStatement(sql)) {
-            stmt.setString(1, schema.toUpperCase());
-            stmt.setString(2, schema.toUpperCase());
-
-            log.info("查询 Schema {} 的表列表", schema);
-
-            try (ResultSet rs = stmt.executeQuery()) {
-                while (rs.next()) {
-                    String name = rs.getString("table_name");
-
-                    if (!uniqueTables.containsKey(name)) {
-                        long rowCount = rs.getLong("row_count");
-                        int colCount = rs.getInt("col_count");
-
-                        Map<String, Object> table = new HashMap<>();
-                        table.put("name", name);
-                        table.put("rows", rowCount);
-                        table.put("columns", colCount);
-
-                        uniqueTables.put(name, table);
-                        log.debug("添加表: {} (行数: {}, 列数: {})", name, rowCount, colCount);
-                    } else {
-                        log.warn("跳过重复表: {} (行数: {})", name, rs.getLong("row_count"));
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), password)) {
+            switch (type) {
+                case "MYSQL":
+                case "OCEANBASE": {
+                    // MySQL/OceanBase: information_schema.tables
+                    String sql = "SELECT table_name, table_rows, " +
+                            "(SELECT COUNT(*) FROM information_schema.columns c " +
+                            " WHERE c.table_schema=? AND c.table_name=t.table_name) AS col_count " +
+                            "FROM information_schema.tables t " +
+                            "WHERE table_schema=? AND table_type='BASE TABLE' " +
+                            "ORDER BY table_name";
+                    try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                        stmt.setString(1, schema);
+                        stmt.setString(2, schema);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) {
+                                String name = rs.getString("table_name");
+                                if (!uniqueTables.containsKey(name)) {
+                                    Map<String, Object> t = new HashMap<>();
+                                    t.put("name", name);
+                                    t.put("rows", rs.getLong("table_rows"));
+                                    t.put("columns", rs.getInt("col_count"));
+                                    uniqueTables.put(name, t);
+                                }
+                            }
+                        }
                     }
+                    break;
+                }
+                case "POSTGRES": {
+                    // PostgreSQL: information_schema.tables
+                    String sql = "SELECT table_name, " +
+                            "(SELECT COUNT(*) FROM information_schema.columns c " +
+                            " WHERE c.table_schema=? AND c.table_name=t.table_name) AS col_count " +
+                            "FROM information_schema.tables t " +
+                            "WHERE table_schema=? AND table_type='BASE TABLE' " +
+                            "ORDER BY table_name";
+                    try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                        stmt.setString(1, schema);
+                        stmt.setString(2, schema);
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) {
+                                String name = rs.getString("table_name");
+                                if (!uniqueTables.containsKey(name)) {
+                                    Map<String, Object> t = new HashMap<>();
+                                    t.put("name", name);
+                                    t.put("rows", 0L);
+                                    t.put("columns", rs.getInt("col_count"));
+                                    uniqueTables.put(name, t);
+                                }
+                            }
+                        }
+                    }
+                    break;
+                }
+                default: {
+                    // Oracle: all_tables
+                    String sql = "SELECT t.table_name, " +
+                            "CAST(NVL(t.num_rows, 0) AS NUMBER(10)) AS row_count, " +
+                            "(SELECT COUNT(*) FROM all_tab_columns c WHERE c.owner=? AND c.table_name=t.table_name) AS col_count " +
+                            "FROM all_tables t " +
+                            "WHERE t.owner=? AND t.table_name NOT LIKE 'BIN$%' " +
+                            "AND t.table_name NOT LIKE '%$%' AND t.temporary='N' " +
+                            "ORDER BY t.table_name, t.num_rows DESC NULLS LAST";
+                    try (PreparedStatement stmt = conn.prepareStatement(sql)) {
+                        stmt.setString(1, schema.toUpperCase());
+                        stmt.setString(2, schema.toUpperCase());
+                        try (ResultSet rs = stmt.executeQuery()) {
+                            while (rs.next()) {
+                                String name = rs.getString("table_name");
+                                if (!uniqueTables.containsKey(name)) {
+                                    Map<String, Object> t = new HashMap<>();
+                                    t.put("name", name);
+                                    t.put("rows", rs.getLong("row_count"));
+                                    t.put("columns", rs.getInt("col_count"));
+                                    uniqueTables.put(name, t);
+                                }
+                            }
+                        }
+                    }
+                    break;
                 }
             }
+        } catch (SQLException e) {
+            log.error("发现表列表失败 [{}]", type, e);
+            throw new Exception("获取表列表失败，请检查数据库连接");
         }
 
         log.info("Schema {} 共发现 {} 个唯一表", schema, uniqueTables.size());
@@ -149,8 +224,39 @@ public class CdcTaskService {
 
     private String buildJdbcUrl(DataSourceConfig config) {
         String host = config.getHost();
-        return String.format("jdbc:oracle:thin:@%s:%d:%s",
-                host, config.getPort(), config.getSid());
+        String type = config.getType() != null ? config.getType().toUpperCase() : "ORACLE";
+
+        switch (type) {
+            case "MYSQL":
+            case "OCEANBASE":
+                ensureDriver("com.mysql.cj.jdbc.Driver");
+                return String.format(
+                    "jdbc:mysql://%s:%d/%s?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true",
+                    host, config.getPort(), config.getSid());
+            case "POSTGRES":
+                ensureDriver("org.postgresql.Driver");
+                return String.format("jdbc:postgresql://%s:%d/%s", host, config.getPort(), config.getSid());
+            case "ORACLE":
+            default:
+                ensureDriver("oracle.jdbc.OracleDriver");
+                return String.format("jdbc:oracle:thin:@%s:%d:%s", host, config.getPort(), config.getSid());
+        }
+    }
+
+    private void ensureDriver(String className) {
+        try {
+            Class.forName(className);
+        } catch (ClassNotFoundException e) {
+            log.warn("JDBC 驱动未找到: {}，请确认 JAR 已加入 classpath", className);
+        }
+    }
+
+    private String pingQuery(DataSourceConfig config) {
+        String type = config.getType() != null ? config.getType().toUpperCase() : "ORACLE";
+        return switch (type) {
+            case "MYSQL", "OCEANBASE", "POSTGRES" -> "SELECT 1";
+            default -> "SELECT 1 FROM DUAL";
+        };
     }
 
     /**

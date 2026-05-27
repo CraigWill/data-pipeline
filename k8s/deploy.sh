@@ -205,14 +205,6 @@ if [ "$NEED_SECRET" = true ]; then
         echo "    cp flink-secrets.yaml.example flink-secrets.yaml"
         exit 1
     fi
-    # OceanBase Secret（可选，不存在时跳过）
-    if [ -f "flink-secrets-ob.yaml" ]; then
-        kubectl apply -f flink-secrets-ob.yaml
-        echo -e "  ${GREEN}✓ flink-secrets-ob${NC}"
-    else
-        echo -e "  ${YELLOW}  flink-secrets-ob.yaml 不存在，跳过 OceanBase 配置${NC}"
-        echo -e "  ${YELLOW}  如需配置: cp flink-secrets-ob.yaml.example flink-secrets-ob.yaml${NC}"
-    fi
 else
     echo -e "  ${BLUE}[2/7] Secret${NC} (本地模式跳过)"
 fi

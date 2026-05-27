@@ -1,19 +1,20 @@
 package com.realtime.monitor.repository;
 
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
-
 import java.sql.Timestamp;
-import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Repository;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
 /**
- * CDC 文件映射表 — 将文件 ID 映射到实际文件路径。
- * 前端只看到 fileId，永远不接触真实路径。
+ * CDC 文件映射表 Repository（数据库无关实现）。
+ *
+ * <p>将文件 ID 映射到实际文件路径，前端只看到 fileId，不接触真实路径。
  */
 @Slf4j
 @Repository
@@ -25,28 +26,33 @@ public class CdcFileRepository {
     private static final String TABLE = "cdc_files";
 
     /**
-     * 注册文件并返回 ID。如果路径已存在则返回已有 ID。
+     * 注册文件并返回 ID。
+     * 如果路径已存在则更新统计信息并返回已有 ID；否则插入新记录。
      */
     public String registerFile(String filePath, String fileName, String tableName,
                                long fileSize, long lineCount, long lastModified) {
-        // 先查是否已注册
+        // SELECT 检查是否已存在
         List<Map<String, Object>> existing = jdbcTemplate.queryForList(
             "SELECT id FROM " + TABLE + " WHERE file_path = ?", filePath);
+
         if (!existing.isEmpty()) {
             String existingId = (String) existing.get(0).get("id");
-            // 更新统计信息（文件可能增长）
             jdbcTemplate.update(
-                "UPDATE " + TABLE + " SET file_size=?, line_count=?, last_modified=? WHERE id=?",
-                fileSize, lineCount, new java.sql.Date(lastModified), existingId);
+                "UPDATE " + TABLE +
+                " SET file_size=?, line_count=?, last_modified=? WHERE id=?",
+                fileSize, lineCount, new Timestamp(lastModified), existingId);
             return existingId;
         }
 
         String id = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
         jdbcTemplate.update(
-            "INSERT INTO " + TABLE + " (id, file_path, file_name, table_name, file_size, line_count, last_modified, created_at) " +
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            id, filePath, fileName, tableName, fileSize, lineCount,
-            new java.sql.Date(lastModified), new java.sql.Date(System.currentTimeMillis()));
+            "INSERT INTO " + TABLE +
+            " (id, file_path, file_name, table_name, file_size, line_count, last_modified, created_at)" +
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            id, filePath, fileName, tableName,
+            fileSize, lineCount,
+            new Timestamp(lastModified),
+            new Timestamp(System.currentTimeMillis()));
         return id;
     }
 

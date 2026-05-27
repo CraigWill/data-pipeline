@@ -1,14 +1,15 @@
 package com.realtime.monitor.util;
 
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
-import org.springframework.security.crypto.password.PasswordEncoder;
+import java.nio.charset.StandardCharsets;
+import java.security.SecureRandom;
+import java.util.Base64;
 
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.security.SecureRandom;
-import java.util.Base64;
+
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
 
 /**
  * 密码加密工具类
@@ -66,10 +67,15 @@ public class PasswordEncryptionUtil {
 
     /**
      * AES/GCM 加密（用于数据源密码）
-     * 输出格式: Base64(IV || ciphertext+tag)
+     * 输出格式: {AES}:Base64(IV || ciphertext+tag)
+     * 前缀 {AES}: 用于明确标识密文，避免与明文混淆
      */
     public static String encryptAES(String plainText) {
         if (plainText == null || plainText.isEmpty()) {
+            return plainText;
+        }
+        // 已经是密文，不重复加密
+        if (plainText.startsWith("{AES}:")) {
             return plainText;
         }
         try {
@@ -83,12 +89,11 @@ public class PasswordEncryptionUtil {
             cipher.init(Cipher.ENCRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
             byte[] encrypted = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
 
-            // Prepend IV to ciphertext so we can recover it during decryption
             byte[] combined = new byte[iv.length + encrypted.length];
             System.arraycopy(iv, 0, combined, 0, iv.length);
             System.arraycopy(encrypted, 0, combined, iv.length, encrypted.length);
 
-            return Base64.getEncoder().encodeToString(combined);
+            return "{AES}:" + Base64.getEncoder().encodeToString(combined);
         } catch (Exception e) {
             throw new RuntimeException("AES/GCM 加密失败", e);
         }
@@ -96,35 +101,60 @@ public class PasswordEncryptionUtil {
 
     /**
      * AES/GCM 解密（用于数据源密码）
-     * 支持旧 ECB 格式的自动降级解密（迁移期间）
+     * 支持三种格式：
+     * 1. {AES}:Base64(...)  — 新格式（推荐）
+     * 2. Base64(IV+ciphertext) — 旧 GCM 格式（无前缀，迁移兼容）
+     * 3. Base64(ECB ciphertext) — 最旧 ECB 格式（迁移兼容）
      */
     public static String decryptAES(String encryptedText) {
         if (encryptedText == null || encryptedText.isEmpty()) {
             return encryptedText;
         }
+        // 新格式：{AES}: 前缀
+        if (encryptedText.startsWith("{AES}:")) {
+            String b64 = encryptedText.substring(6);
+            return decryptGCM(b64);
+        }
+        // 旧格式兼容（无前缀的 Base64）
         try {
             byte[] combined = Base64.getDecoder().decode(encryptedText);
-
-            // GCM 密文至少包含 12 字节 IV + 16 字节 tag = 28 字节
-            if (combined.length < GCM_IV_LENGTH + 16) {
-                // 旧 ECB 格式降级解密（迁移期间兼容）
-                return decryptAES_ECB_legacy(encryptedText);
+            if (combined.length >= GCM_IV_LENGTH + 16) {
+                return decryptGCM(encryptedText);
             }
+            return decryptAES_ECB_legacy(encryptedText);
+        } catch (Exception e) {
+            throw new RuntimeException("AES/GCM 解密失败", e);
+        }
+    }
 
+    /** 判断字符串是否为密文（以 {AES}: 开头，或旧格式 Base64 密文）。 */
+    public static boolean isEncrypted(String value) {
+        if (value == null || value.isEmpty()) return false;
+        if (value.startsWith("{AES}:")) return true;
+        // 旧格式：纯 Base64 且长度足够（IV 12 + tag 16 = 28 字节 → Base64 至少 40 字符）
+        if (value.length() >= 40 && value.matches("^[A-Za-z0-9+/]+=*$")) {
+            try {
+                byte[] decoded = Base64.getDecoder().decode(value);
+                return decoded.length >= GCM_IV_LENGTH + 16;
+            } catch (Exception ignored) {}
+        }
+        return false;
+    }
+
+    private static String decryptGCM(String b64) {
+        try {
+            byte[] combined = Base64.getDecoder().decode(b64);
             byte[] keyBytes = Base64.getDecoder().decode(AES_KEY);
             SecretKeySpec secretKey = new SecretKeySpec(keyBytes, "AES");
 
             byte[] iv = new byte[GCM_IV_LENGTH];
             System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH);
-
             byte[] ciphertext = new byte[combined.length - GCM_IV_LENGTH];
             System.arraycopy(combined, GCM_IV_LENGTH, ciphertext, 0, ciphertext.length);
 
             Cipher cipher = Cipher.getInstance(AES_ALGORITHM);
             cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH, iv));
-            byte[] decrypted = cipher.doFinal(ciphertext);
-
-            return new String(decrypted, StandardCharsets.UTF_8);
+            return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
         } catch (Exception e) {
             throw new RuntimeException("AES/GCM 解密失败", e);
         }

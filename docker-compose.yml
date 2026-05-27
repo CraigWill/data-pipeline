@@ -78,15 +78,8 @@ services:
       - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
       - HA_STORAGE_DIR=${HA_STORAGE_DIR:-file:///opt/flink/ha}
       
-      # 数据库配置（JdbcCDCApp 需要）
-      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
-      - DATABASE_HOST=${DATABASE_HOST}
-      - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 system 用户
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
-      - DATABASE_SID=${DATABASE_SID}
-      - DATABASE_SCHEMA=${DATABASE_SCHEMA}
-      - DATABASE_TABLES=${DATABASE_TABLES}
+      # 数据库配置由 monitor-backend 在提交 CDC Job 时通过 programArgs 动态传入
+      # 无需在此处静态配置 DATABASE_* 环境变量
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-10}
       - TZ=Asia/Shanghai
@@ -164,15 +157,7 @@ services:
       - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
       - HA_STORAGE_DIR=${HA_STORAGE_DIR:-file:///opt/flink/ha}
       
-      # 数据库配置
-      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
-      - DATABASE_HOST=${DATABASE_HOST}
-      - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 system 用户
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
-      - DATABASE_SID=${DATABASE_SID}
-      - DATABASE_SCHEMA=${DATABASE_SCHEMA}
-      - DATABASE_TABLES=${DATABASE_TABLES}
+      # 数据库配置由 monitor-backend 在提交 CDC Job 时通过 programArgs 动态传入
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
       - TZ=Asia/Shanghai
       # 心跳超时配置
@@ -240,15 +225,7 @@ services:
       - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
       - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
       
-      # 数据库配置（JdbcCDCApp 需要）
-      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
-      - DATABASE_HOST=${DATABASE_HOST}
-      - DATABASE_PORT=${DATABASE_PORT:-1521}
-      - DATABASE_USERNAME=${DATABASE_USERNAME}  # ⚠️ 必须设置，禁止使用默认 finance_user
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}   # ⚠️ 必须设置
-      - DATABASE_SID=${DATABASE_SID}
-      - DATABASE_SCHEMA=${DATABASE_SCHEMA}
-      - DATABASE_TABLES=${DATABASE_TABLES}
+      # 数据库配置由 monitor-backend 在提交 CDC Job 时通过 programArgs 动态传入
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
       - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-10}
       - TZ=Asia/Shanghai
@@ -305,20 +282,16 @@ services:
       - FLINK_REST_URLS=http://jobmanager:8081,http://jobmanager-standby:8081
       - OUTPUT_PATH=/app/output/cdc
       - CONFIG_DIR=/app/config
-      - ORACLE_CONTAINER=${CDC_ADMIN_HOST:-oracle11g}
-      # 安全修复：移除默认值，强制用户在 .env 中设置数据库凭据
-      - DATABASE_HOST=${CDC_ADMIN_HOST:-oracle11g}
-      - DATABASE_PORT=${CDC_ADMIN_PORT:-1521}
-      - DATABASE_USERNAME=${CDC_ADMIN_USERNAME}
-      - DATABASE_PASSWORD=${CDC_ADMIN_PASSWORD}
-      - DATABASE_SID=${CDC_ADMIN_SID:-helowin}
-      # CDC 管理库连接（CDC_ADMIN schema）
-      - CDC_ADMIN_HOST=${CDC_ADMIN_HOST:-oracle11g}
-      - CDC_ADMIN_PORT=${CDC_ADMIN_PORT:-1521}
-      - CDC_ADMIN_SID=${CDC_ADMIN_SID:-helowin}
-      - CDC_ADMIN_USERNAME=${CDC_ADMIN_USERNAME}
+      - ORACLE_CONTAINER=
+      # ── CDC 管理库（OceanBase，MySQL 兼容协议）──────────────────
+      - CDC_ADMIN_TYPE=${CDC_ADMIN_TYPE:-MYSQL}
+      - CDC_ADMIN_HOST=${CDC_ADMIN_HOST:-cdcdb}
+      - CDC_ADMIN_PORT=${CDC_ADMIN_PORT:-2881}
+      - CDC_ADMIN_DATABASE=${CDC_ADMIN_DATABASE:-cdcdb}
+      - CDC_ADMIN_USERNAME=${CDC_ADMIN_USERNAME:-root@test}
       - CDC_ADMIN_PASSWORD=${CDC_ADMIN_PASSWORD}
-      # Spring 数据源直接覆盖（确保连接 CDC_ADMIN schema）
+      # Oracle 模式时使用（MYSQL 模式忽略）
+      - CDC_ADMIN_SID=${CDC_ADMIN_SID:-helowin}
       - TZ=Asia/Shanghai
       # JWT 安全配置（必须通过环境变量设置）
       - JWT_SECRET=${JWT_SECRET}

@@ -3,7 +3,7 @@
     <div class="page-header">
       <div class="page-header-left">
         <h2><icon-data-base theme="outline" size="20" /> 数据源管理</h2>
-        <p class="subtitle">管理 Oracle 数据库连接配置</p>
+        <p class="subtitle">管理数据库连接配置（支持 Oracle / OceanBase / MySQL / PostgreSQL）</p>
       </div>
       <button class="btn btn-primary" @click="showCreateModal">
         <icon-add-one theme="outline" size="14" /> 新建数据源
@@ -44,6 +44,7 @@
         <div class="ds-info">
           <div class="ds-name">
             {{ ds.name }}
+            <span class="db-type-tag">{{ dbTypeLabel(ds.type) }}</span>
             <span :class="['status-badge', `status-${ds.status?.toLowerCase() || 'untested'}`]">
               {{ ds.status === 'SUCCESS' ? '已连接' : (ds.status === 'FAILED' ? '连接失败' : '未测试') }}
             </span>
@@ -122,6 +123,22 @@
               <!-- 连接配置 -->
               <div class="form-section">
                 <div class="form-section-title">连接配置</div>
+
+                <!-- 数据库类型 -->
+                <div class="form-field">
+                  <label class="field-label">数据库类型 <span class="required">*</span></label>
+                  <div class="db-type-group">
+                    <button
+                      v-for="t in dbTypes" :key="t.value" type="button"
+                      :class="['db-type-btn', { active: form.type === t.value }]"
+                      @click="selectDbType(t)"
+                    >
+                      <span class="db-type-icon">{{ t.icon }}</span>
+                      {{ t.label }}
+                    </button>
+                  </div>
+                </div>
+
                 <div class="form-row">
                   <div class="form-field flex-3">
                     <label class="field-label">
@@ -146,7 +163,7 @@
                       type="text"
                       class="field-input"
                       :class="{ 'field-error': errors.port }"
-                      placeholder="1521"
+                      :placeholder="currentDbType.defaultPort"
                       @input="errors.port = ''; testResult = null"
                     />
                     <span v-if="errors.port" class="error-msg">{{ errors.port }}</span>
@@ -154,14 +171,14 @@
                 </div>
                 <div class="form-field">
                   <label class="field-label">
-                    SID / 服务名 <span class="required">*</span>
+                    {{ currentDbType.sidLabel }} <span class="required">*</span>
                   </label>
                   <input
                     v-model="form.sid"
                     type="text"
                     class="field-input"
                     :class="{ 'field-error': errors.sid }"
-                    placeholder="helowin"
+                    :placeholder="currentDbType.sidPlaceholder"
                     @input="errors.sid = ''; testResult = null"
                   />
                   <span v-if="errors.sid" class="error-msg">{{ errors.sid }}</span>
@@ -233,7 +250,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import api from '@/api'
 
 const datasources = ref([])
@@ -247,8 +264,59 @@ const testResult = ref(null)
 const alert = ref({ show: false, type: '', message: '' })
 const errors = ref({})
 
+// ── 数据库类型定义 ──────────────────────────────────────────────
+const dbTypes = [
+  {
+    value: 'ORACLE',
+    label: 'Oracle',
+    icon: '🔶',
+    defaultPort: '1521',
+    sidLabel: 'SID',
+    sidPlaceholder: 'helowin',
+  },
+  {
+    value: 'OCEANBASE',
+    label: 'OceanBase',
+    icon: '🌊',
+    defaultPort: '2881',
+    sidLabel: '数据库名',
+    sidPlaceholder: 'test',
+  },
+  {
+    value: 'MYSQL',
+    label: 'MySQL',
+    icon: '🐬',
+    defaultPort: '3306',
+    sidLabel: '数据库名',
+    sidPlaceholder: 'mydb',
+  },
+  {
+    value: 'POSTGRES',
+    label: 'PostgreSQL',
+    icon: '🐘',
+    defaultPort: '5432',
+    sidLabel: '数据库名',
+    sidPlaceholder: 'postgres',
+  },
+]
+
+const currentDbType = computed(
+  () => dbTypes.find(t => t.value === form.value.type) || dbTypes[0]
+)
+
+function selectDbType(t) {
+  const oldType = dbTypes.find(d => d.value === form.value.type)
+  form.value.type = t.value
+  // 如果端口还是旧类型的默认端口，自动切换到新类型的默认端口
+  if (!form.value.port || form.value.port === oldType?.defaultPort) {
+    form.value.port = t.defaultPort
+  }
+  testResult.value = null
+}
+
 const form = ref({
-  id: '', name: '', host: '', port: '1521', username: '', password: '', sid: ''
+  id: '', name: '', type: 'ORACLE', host: '', port: '1521',
+  username: '', password: '', sid: ''
 })
 
 onMounted(() => loadDataSources())
@@ -267,7 +335,7 @@ async function loadDataSources() {
 
 function showCreateModal() {
   isEditing.value = false
-  form.value = { id: '', name: '', host: '', port: '1521', username: '', password: '', sid: '' }
+  form.value = { id: '', name: '', type: 'ORACLE', host: '', port: '1521', username: '', password: '', sid: '' }
   errors.value = {}
   testResult.value = null
   showPassword.value = false
@@ -276,7 +344,7 @@ function showCreateModal() {
 
 function editDataSource(ds) {
   isEditing.value = true
-  form.value = { ...ds }
+  form.value = { ...ds, type: ds.type || 'ORACLE' }
   errors.value = {}
   testResult.value = null
   showPassword.value = false
@@ -293,7 +361,7 @@ function validate(requirePassword = true) {
   if (!form.value.name?.trim()) e.name = '请输入数据源名称'
   if (!form.value.host?.trim()) e.host = '请输入主机地址'
   if (!String(form.value.port || '').trim()) e.port = '请输入端口'
-  if (!form.value.sid?.trim()) e.sid = '请输入 SID'
+  if (!form.value.sid?.trim()) e.sid = `请输入${currentDbType.value.sidLabel}`
   if (!form.value.username?.trim()) e.username = '请输入用户名'
   if (requirePassword && !form.value.password?.trim()) e.password = '请输入密码'
   errors.value = e
@@ -309,7 +377,8 @@ async function testConnection() {
   
   const config = {
     id: form.value.id || `ds-${Date.now()}`,
-    name: form.value.name, host: form.value.host, port: form.value.port,
+    name: form.value.name, type: form.value.type,
+    host: form.value.host, port: form.value.port,
     username: form.value.username, password: form.value.password, sid: form.value.sid
   }
   
@@ -346,7 +415,8 @@ async function saveDataSource() {
   saving.value = true
   const config = {
     id: form.value.id || `ds-${Date.now()}`,
-    name: form.value.name, host: form.value.host, port: form.value.port,
+    name: form.value.name, type: form.value.type,
+    host: form.value.host, port: form.value.port,
     username: form.value.username, password: form.value.password, sid: form.value.sid
   }
   try {
@@ -399,6 +469,10 @@ function showAlert(type, message) {
 function formatDate(dateStr) {
   if (!dateStr || dateStr === 'Unknown') return '未知'
   try { return new Date(dateStr).toLocaleString('zh-CN') } catch { return dateStr }
+}
+
+function dbTypeLabel(type) {
+  return dbTypes.find(t => t.value === type)?.label || type || 'Oracle'
 }
 </script>
 
@@ -651,6 +725,44 @@ function formatDate(dateStr) {
 .modal-leave-active .modal-dialog { animation: dialog-out 0.15s ease; }
 @keyframes dialog-in  { from { transform: translateY(-12px); opacity: 0; } to { transform: none; opacity: 1; } }
 @keyframes dialog-out { from { transform: none; opacity: 1; } to { transform: translateY(-8px); opacity: 0; } }
+
+/* ── 数据库类型选择 ── */
+.db-type-group {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.db-type-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border: 2px solid #DFE1E6;
+  border-radius: 4px;
+  background: #fff;
+  font-size: 13px;
+  color: #42526E;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.db-type-btn:hover { border-color: #4C9AFF; color: #0052CC; }
+.db-type-btn.active {
+  border-color: #0052CC;
+  background: #DEEBFF;
+  color: #0052CC;
+  font-weight: 600;
+}
+.db-type-icon { font-size: 14px; }
+
+/* ── 数据库类型标签（列表卡片） ── */
+.db-type-tag {
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #EAE6FF;
+  color: #403294;
+  font-weight: normal;
+}
 
 /* ── 加载 ── */
 .loading { display: flex; flex-direction: column; align-items: center; padding: 48px; color: #97A0AF; gap: 10px; }

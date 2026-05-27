@@ -45,7 +45,12 @@ spec:
           value: "/app/output/cdc"
         - name: CONFIG_DIR
           value: "/app/config"
-        # ── CDC 管理库配置（Oracle 1522 / cdc_admin，存储元数据表）──────
+        # ── CDC 管理库配置（OceanBase，MySQL 兼容协议，存储元数据表）──
+        - name: CDC_ADMIN_TYPE
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: cdc-admin-type
         - name: CDC_ADMIN_HOST
           valueFrom:
             secretKeyRef:
@@ -66,48 +71,11 @@ spec:
             secretKeyRef:
               name: flink-secrets
               key: cdc-admin-password
-        - name: CDC_ADMIN_SID
+        - name: CDC_ADMIN_DATABASE
           valueFrom:
             secretKeyRef:
               name: flink-secrets
-              key: cdc-admin-sid
-        # ── OceanBase 数据库配置（供前端数据源管理页面预填默认值）────
-        - name: OB_HOST
-          valueFrom:
-            secretKeyRef:
-              name: flink-secrets-ob
-              key: ob-host
-              optional: true        # Secret 不存在时不阻止启动
-        - name: OB_PORT
-          valueFrom:
-            secretKeyRef:
-              name: flink-secrets-ob
-              key: ob-port
-              optional: true
-        - name: OB_USERNAME
-          valueFrom:
-            secretKeyRef:
-              name: flink-secrets-ob
-              key: ob-username
-              optional: true
-        - name: OB_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: flink-secrets-ob
-              key: ob-password
-              optional: true
-        - name: OB_DATABASE
-          valueFrom:
-            secretKeyRef:
-              name: flink-secrets-ob
-              key: ob-database
-              optional: true
-        - name: OB_SCHEMA
-          valueFrom:
-            secretKeyRef:
-              name: flink-secrets-ob
-              key: ob-schema
-              optional: true
+              key: cdc-admin-database
         - name: TZ
           value: "Asia/Shanghai"
         # JWT 安全配置

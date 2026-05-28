@@ -1275,4 +1275,11 @@ onMounted(() => {
     min-width: 800px;
   }
 }
+
+@media (max-width: 767px) {
+  .page-header { flex-direction: column; gap: 10px; align-items: flex-start; }
+  .task-card { flex-wrap: wrap; }
+  .task-actions { width: 100%; justify-content: flex-end; margin-top: 8px; }
+  .task-meta { flex-wrap: wrap; gap: 6px; }
+}
 </style>

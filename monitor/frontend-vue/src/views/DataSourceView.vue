@@ -772,4 +772,15 @@ function dbTypeLabel(type) {
   border-radius: 50%; animation: spin 0.7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@media (max-width: 767px) {
+  .page-header { flex-direction: column; gap: 10px; align-items: flex-start; }
+  .datasource-card { flex-wrap: wrap; gap: 10px; }
+  .ds-actions { width: 100%; justify-content: flex-end; }
+  .form-row { flex-direction: column; }
+  .modal-dialog { margin: 0; border-radius: 12px 12px 0 0; position: fixed; bottom: 0; left: 0; right: 0; max-height: 92vh; }
+  .modal-overlay { align-items: flex-end; padding: 0; }
+  .db-type-group { gap: 6px; }
+  .db-type-btn { padding: 5px 10px; font-size: 12px; }
+}
 </style>

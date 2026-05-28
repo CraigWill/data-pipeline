@@ -35,6 +35,13 @@ const isLoginPage = computed(() => route.path === '/login')
   padding: 0;
 }
 
+/* 手机端减少内边距 */
+@media (max-width: 767px) {
+  .main-content {
+    padding: 16px 12px;
+  }
+}
+
 .app-footer {
   text-align: center;
   padding: 16px 0;

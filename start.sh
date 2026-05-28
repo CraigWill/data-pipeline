@@ -505,6 +505,7 @@ main() {
                 echo -e "${GREEN}=== 未跳过构建，building ===${NC}"
                 build_backend
                 build_flink_jobs
+                build_frontend
                 build_images "$target_services" "$rebuild_flink"
             fi
             if [ "$build_only" = false ]; then

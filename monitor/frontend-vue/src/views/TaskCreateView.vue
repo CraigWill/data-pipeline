@@ -492,4 +492,10 @@ function showAlert(type, message) {
 .custom-select:disabled + .select-icon {
   color: #A5ADBA;
 }
+
+@media (max-width: 767px) {
+  .form-row { flex-direction: column; }
+  .form-actions { flex-direction: column; gap: 8px; }
+  .form-actions .btn { width: 100%; justify-content: center; }
+}
 </style>

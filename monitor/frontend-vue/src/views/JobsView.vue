@@ -27,9 +27,12 @@
     <div v-else class="jobs-grid">
       <div v-for="job in jobs" :key="job.jid" class="job-card">
         <div class="job-header">
-          <div>
-            <h3 class="job-name">{{ job.name }}</h3>
-            <p class="job-id">Job ID: {{ job.jid }}</p>
+          <div class="job-header-info">
+            <h3 class="job-name" :title="job.name">{{ job.name }}</h3>
+            <p class="job-id" :title="job.jid">
+              Job ID: <span class="job-id-val">{{ job.jid?.slice(0, 8) }}…</span>
+              <button class="copy-btn" @click.stop="copyId(job.jid)" title="复制完整 ID">⎘</button>
+            </p>
           </div>
           <span :class="['status-badge', `status-${job.state.toLowerCase()}`]">
             {{ getStatusText(job.state) }}
@@ -230,6 +233,12 @@ function showAlert(type, message) {
     alert.value.show = false
   }, 5000)
 }
+
+function copyId(id) {
+  navigator.clipboard?.writeText(id).then(() => {
+    showAlert('success', 'Job ID 已复制')
+  }).catch(() => {})
+}
 </script>
 
 <style scoped>
@@ -255,6 +264,7 @@ function showAlert(type, message) {
   justify-content: space-between;
   align-items: flex-start;
   margin-bottom: 16px;
+  min-width: 0;
 }
 
 .job-name {
@@ -262,13 +272,44 @@ function showAlert(type, message) {
   font-weight: 600;
   color: #172B4D;
   margin-bottom: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.job-header-info {
+  min-width: 0;   /* 让 flex 子元素可以收缩 */
+  flex: 1;
+  margin-right: 12px;
 }
 
 .job-id {
   font-size: 11px;
   color: #97A0AF;
-  font-family: monospace;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
+
+.job-id-val {
+  font-family: monospace;
+  background: #F4F5F7;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.copy-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #97A0AF;
+  font-size: 12px;
+  padding: 0 2px;
+  line-height: 1;
+  transition: color 0.15s;
+}
+.copy-btn:hover { color: #0052CC; }
 
 .status-badge {
   padding: 2px 6px;
@@ -385,5 +426,13 @@ function showAlert(type, message) {
   font-size: 13px;
   color: #172B4D;
   font-weight: 500;
+}
+
+@media (max-width: 767px) {
+  .page-header { flex-direction: column; gap: 10px; align-items: flex-start; }
+  .job-card { flex-wrap: wrap; }
+  .job-actions { width: 100%; justify-content: flex-end; margin-top: 8px; }
+  .job-meta { flex-wrap: wrap; gap: 6px; }
+  .stats-row { flex-wrap: wrap; gap: 8px; }
 }
 </style>

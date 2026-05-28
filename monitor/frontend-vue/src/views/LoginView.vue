@@ -213,4 +213,8 @@ button:disabled {
   text-align: center;
   font-size: 14px;
 }
+
+@media (max-width: 480px) {
+  .login-box { padding: 28px 20px; margin: 16px; }
+}
 </style>

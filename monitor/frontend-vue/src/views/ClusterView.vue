@@ -642,4 +642,10 @@ function showAlert(type, message) {
   color: #172B4D;
   font-weight: 600;
 }
+
+@media (max-width: 767px) {
+  .cluster-grid { grid-template-columns: 1fr; }
+  .metrics-grid { grid-template-columns: 1fr 1fr; }
+  .tm-list { gap: 8px; }
+}
 </style>

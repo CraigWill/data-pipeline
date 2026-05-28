@@ -1288,4 +1288,13 @@ function testTrendChart() {
 .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.5; }
 .empty-state h3 { font-size: 16px; color: #5E6C84; margin: 0 0 6px; }
 .empty-state p { font-size: 13px; margin: 0; }
+
+@media (max-width: 767px) {
+  .page-header { flex-direction: column; gap: 10px; align-items: flex-start; }
+  .filter-bar { flex-wrap: wrap; gap: 8px; }
+  .filter-bar select,
+  .filter-bar input { width: 100%; }
+  .event-table th:nth-child(3),
+  .event-table td:nth-child(3) { display: none; }
+}
 </style>

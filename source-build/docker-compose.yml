@@ -1,0 +1,215 @@
+# Docker Compose for Flink Source-Build Images
+# This compose file uses Flink images built from source code.
+# 
+# Prerequisites:
+#   Run the source build first:
+#     ./source-build/build-from-source.sh
+#
+# Usage:
+#   docker-compose -f source-build/docker-compose.yml up -d
+#   docker-compose -f source-build/docker-compose.yml up -d --scale taskmanager=3
+#   docker-compose -f source-build/docker-compose.yml down
+
+services:
+  # Zookeeper (Flink HA dependency)
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper-source
+    hostname: zookeeper
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_SYNC_LIMIT: 2
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-logs:/var/lib/zookeeper/log
+    networks:
+      - flink-source-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "2181"]
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      retries: 3
+
+  # Flink JobManager (source-built)
+  jobmanager:
+    image: flink-jobmanager:source-latest
+    build:
+      context: ..
+      dockerfile: source-build/jobmanager/Dockerfile
+      args:
+        FLINK_VERSION: "1.20.0"
+        SCALA_VERSION: "2.12"
+        FLINK_GIT_TAG: "release-1.20.0"
+    container_name: flink-jobmanager-source
+    hostname: jobmanager
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      - "8081:8081"  # Web UI
+      - "6123:6123"  # RPC
+      - "6124:6124"  # Blob Server
+      - "9249:9249"  # Prometheus Metrics
+    environment:
+      # JobManager configuration
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+      - JOB_MANAGER_RPC_PORT=6123
+      - JOB_MANAGER_HEAP_SIZE=1024m
+      - REST_PORT=8081
+      - PARALLELISM_DEFAULT=4
+      
+      # Checkpoint configuration
+      - CHECKPOINT_INTERVAL=300000
+      - CHECKPOINT_DIR=file:///opt/flink/checkpoints
+      - SAVEPOINT_DIR=file:///opt/flink/savepoints
+      - STATE_BACKEND=hashmap
+      
+      # HA configuration
+      - HA_MODE=${HA_MODE:-zookeeper}
+      - HA_ZOOKEEPER_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
+      - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+      - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+      - HA_STORAGE_DIR=${HA_STORAGE_DIR:-file:///opt/flink/ha}
+      
+      # Database configuration
+      - DATABASE_HOST=${DATABASE_HOST:-localhost}
+      - DATABASE_PORT=${DATABASE_PORT:-1521}
+      - DATABASE_USERNAME=${DATABASE_USERNAME:-system}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_SID=${DATABASE_SID:-helowin}
+      - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
+      - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
+      - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-10}
+      - TZ=Asia/Shanghai
+      
+      # Auto job submission (disabled, managed by monitor-backend)
+      - AUTO_SUBMIT_JOB=false
+      # Heartbeat timeout configuration
+      - |
+        FLINK_PROPERTIES=
+        heartbeat.interval: 10000
+        heartbeat.timeout: 180000
+        heartbeat.rpc-failure-threshold: 5
+        akka.ask.timeout: 60s
+        akka.lookup.timeout: 60s
+        akka.client.timeout: 60s
+    volumes:
+      - ../data/flink-checkpoints:/opt/flink/checkpoints
+      - ../data/flink-savepoints:/opt/flink/savepoints
+      - ../data/flink-ha:/opt/flink/ha
+      - flink-logs:/opt/flink/logs
+    networks:
+      - flink-source-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/overview"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+  # Flink TaskManager (source-built)
+  taskmanager:
+    image: flink-taskmanager:source-latest
+    build:
+      context: ..
+      dockerfile: source-build/taskmanager/Dockerfile
+      args:
+        FLINK_VERSION: "1.20.0"
+        SCALA_VERSION: "2.12"
+        FLINK_GIT_TAG: "release-1.20.0"
+    depends_on:
+      jobmanager:
+        condition: service_healthy
+    ports:
+      - "6121-6130:6121"  # Data Port (supports multiple TaskManagers)
+      - "6122"            # RPC Port (dynamic)
+      - "9249"            # Prometheus Metrics (dynamic)
+    environment:
+      # JobManager connection
+      - JOB_MANAGER_RPC_ADDRESS=jobmanager
+      - JOB_MANAGER_RPC_PORT=6123
+      
+      # TaskManager configuration
+      - TASK_MANAGER_HEAP_SIZE=1024m
+      - TASK_MANAGER_MEMORY_PROCESS_SIZE=1728m
+      - TASK_MANAGER_NUMBER_OF_TASK_SLOTS=2
+      - TASK_MANAGER_RPC_PORT=6122
+      - TASK_MANAGER_DATA_PORT=6121
+      - TASK_MANAGER_NETWORK_MEMORY_MIN=64m
+      - TASK_MANAGER_NETWORK_MEMORY_MAX=256m
+      
+      # HA configuration
+      - HA_MODE=${HA_MODE:-zookeeper}
+      - HA_ZOOKEEPER_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
+      - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+      - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+      
+      # Database configuration
+      - DATABASE_HOST=${DATABASE_HOST:-localhost}
+      - DATABASE_PORT=${DATABASE_PORT:-1521}
+      - DATABASE_USERNAME=${DATABASE_USERNAME:-finance_user}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
+      - DATABASE_SID=${DATABASE_SID:-helowin}
+      - DATABASE_SCHEMA=${DATABASE_SCHEMA:-finance_user}
+      - DATABASE_TABLES=${DATABASE_TABLES:-trans_info}
+      - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-10}
+      - TZ=Asia/Shanghai
+      # Heartbeat timeout configuration
+      - |
+        FLINK_PROPERTIES=
+        heartbeat.interval: 10000
+        heartbeat.timeout: 180000
+        heartbeat.rpc-failure-threshold: 5
+        akka.ask.timeout: 60s
+        akka.lookup.timeout: 60s
+        akka.client.timeout: 60s
+    volumes:
+      - ../data/flink-checkpoints:/opt/flink/checkpoints
+      - ../data/flink-savepoints:/opt/flink/savepoints
+      - flink-logs:/opt/flink/logs
+      - flink-data:/opt/flink/data
+      - ../output:/opt/flink/output
+    networks:
+      - flink-source-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "org.apache.flink.runtime.taskexecutor.TaskManagerRunner"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 4G
+        reservations:
+          cpus: '1.0'
+          memory: 1G
+
+networks:
+  flink-source-network:
+    driver: bridge
+
+volumes:
+  zookeeper-data:
+  zookeeper-logs:
+  flink-logs:
+  flink-data:

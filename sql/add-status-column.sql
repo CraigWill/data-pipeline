@@ -1,0 +1,1 @@
+ALTER TABLE cdc_datasources ADD status VARCHAR2(20) DEFAULT 'UNTESTED';

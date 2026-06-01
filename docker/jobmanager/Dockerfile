@@ -5,7 +5,7 @@
 FROM eclipse-temurin:17-jre
 
 # Flink 版本
-ENV FLINK_VERSION=1.20.0 \
+ENV FLINK_VERSION=1.20.4 \
     SCALA_VERSION=2.12 \
     FLINK_HOME=/opt/flink \
     FLINK_USER=flink \
@@ -51,16 +51,30 @@ RUN mkdir -p /opt/flink/checkpoints && \
     mkdir -p /opt/flink/usrlib && \
     chown -R ${FLINK_USER}:${FLINK_USER} /opt/flink
 
-# 下载 Oracle JDBC 驱动到 Flink lib 目录（添加重试机制）
+# 下载 JDBC 驱动到 Flink lib 目录
+# - Oracle ojdbc8：连接 Oracle 业务库（CDC 数据源）
+# - OceanBase oceanbase-client：连接 OceanBase（原生协议，推荐）
+# - MySQL mysql-connector-j：连接 OceanBase（MySQL 兼容协议）或 MySQL
 RUN set -ex && \
     for i in 1 2 3; do \
         curl -L https://repo1.maven.org/maven2/com/oracle/database/jdbc/ojdbc8/19.3.0.0/ojdbc8-19.3.0.0.jar \
             -o /opt/flink/lib/ojdbc8.jar && break || sleep 10; \
     done && \
-    chown ${FLINK_USER}:${FLINK_USER} /opt/flink/lib/ojdbc8.jar
+    for i in 1 2 3; do \
+        curl -L https://repo1.maven.org/maven2/com/oceanbase/oceanbase-client/2.4.18/oceanbase-client-2.4.18.jar \
+            -o /opt/flink/lib/oceanbase-client.jar && break || sleep 10; \
+    done && \
+    for i in 1 2 3; do \
+        curl -L https://repo1.maven.org/maven2/com/mysql/mysql-connector-j/9.5.0/mysql-connector-j-9.5.0.jar \
+            -o /opt/flink/lib/mysql-connector-j.jar && break || sleep 10; \
+    done && \
+    chown ${FLINK_USER}:${FLINK_USER} \
+        /opt/flink/lib/ojdbc8.jar \
+        /opt/flink/lib/oceanbase-client.jar \
+        /opt/flink/lib/mysql-connector-j.jar
 
-# 复制应用程序JAR包
-COPY --chown=${FLINK_USER}:${FLINK_USER} flink-jobs/target/flink-jobs-*.jar /opt/flink/usrlib/flink-jobs.jar
+# 复制应用程序JAR包（保留原始文件名，EmbeddedCdcService 依赖此路径）
+COPY --chown=${FLINK_USER}:${FLINK_USER} flink-jobs/target/flink-jobs-*.jar /opt/flink/usrlib/
 
 # 复制Flink配置文件
 COPY --chown=${FLINK_USER}:${FLINK_USER} docker/jobmanager/flink-conf.yaml /opt/flink/conf/flink-conf.yaml

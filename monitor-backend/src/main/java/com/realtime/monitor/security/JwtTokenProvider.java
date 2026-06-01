@@ -1,25 +1,58 @@
 package com.realtime.monitor.security;
 
-import io.jsonwebtoken.*;
-import io.jsonwebtoken.security.Keys;
-import lombok.extern.slf4j.Slf4j;
+import java.nio.charset.StandardCharsets;
+import java.util.Date;
+
+import javax.crypto.SecretKey;
+
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.Authentication;
 import org.springframework.stereotype.Component;
 
-import javax.crypto.SecretKey;
-import java.nio.charset.StandardCharsets;
-import java.util.Date;
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 
+/**
+ * JWT Token 提供者
+ * 
+ * ⚠️ 安全提示：请将 jwt.secret 配置项设置为从环境变量读取的强密钥
+ * 生成命令：openssl rand -base64 32
+ */
 @Slf4j
 @Component
 public class JwtTokenProvider {
 
-    @Value("${jwt.secret:your-256-bit-secret-key-change-this-in-production-environment-please-use-strong-key}")
+    @Value("${jwt.secret}")
     private String jwtSecret;
 
-    @Value("${jwt.expiration:86400000}") // 24小时
+    @Value("${jwt.expiration:86400000}") // 24 小时
     private long jwtExpiration;
+
+    /**
+     * 安全修复：验证 JWT Secret 强度
+     * - 密钥长度至少 32 字符（256 位）
+     * - 防止使用弱密钥导致 token 被伪造
+     */
+    @PostConstruct
+    public void validateJwtSecret() {
+        if (jwtSecret == null) {
+            throw new IllegalStateException(
+                "JWT_SECRET 未设置！请在环境变量中配置 JWT_SECRET。\n" +
+                "生成密钥：openssl rand -base64 64"
+            );
+        }
+        if (jwtSecret.length() < 32) {
+            throw new IllegalStateException(
+                "JWT_SECRET 长度不足！必须至少 32 字符（当前：" + jwtSecret.length() + "）。\n" +
+                "生成密钥：openssl rand -base64 64"
+            );
+        }
+        log.info("JWT Secret 验证通过，长度：{} 字符", jwtSecret.length());
+    }
 
     private SecretKey getSigningKey() {
         byte[] keyBytes = jwtSecret.getBytes(StandardCharsets.UTF_8);
@@ -32,40 +65,32 @@ public class JwtTokenProvider {
         Date expiryDate = new Date(now.getTime() + jwtExpiration);
 
         return Jwts.builder()
-                .setSubject(username)
-                .setIssuedAt(now)
-                .setExpiration(expiryDate)
-                .signWith(getSigningKey(), SignatureAlgorithm.HS256)
+                .subject(username)
+                .issuedAt(now)
+                .expiration(expiryDate)
+                .signWith(getSigningKey(), Jwts.SIG.HS256)
                 .compact();
     }
 
     public String getUsernameFromToken(String token) {
-        Claims claims = Jwts.parserBuilder()
-                .setSigningKey(getSigningKey())
+        Claims claims = Jwts.parser()
+                .verifyWith(getSigningKey())
                 .build()
-                .parseClaimsJws(token)
-                .getBody();
+                .parseSignedClaims(token)
+                .getPayload();
 
         return claims.getSubject();
     }
 
     public boolean validateToken(String token) {
         try {
-            Jwts.parserBuilder()
-                    .setSigningKey(getSigningKey())
+            Jwts.parser()
+                    .verifyWith(getSigningKey())
                     .build()
-                    .parseClaimsJws(token);
+                    .parseSignedClaims(token);
             return true;
-        } catch (SecurityException ex) {
-            log.error("Invalid JWT signature");
-        } catch (MalformedJwtException ex) {
-            log.error("Invalid JWT token");
-        } catch (ExpiredJwtException ex) {
-            log.error("Expired JWT token");
-        } catch (UnsupportedJwtException ex) {
-            log.error("Unsupported JWT token");
-        } catch (IllegalArgumentException ex) {
-            log.error("JWT claims string is empty");
+        } catch (JwtException | IllegalArgumentException ex) {
+            log.error("Invalid JWT token: {}", ex.getMessage());
         }
         return false;
     }

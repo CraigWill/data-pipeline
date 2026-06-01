@@ -6,6 +6,9 @@ jobmanager.rpc.port: 6123
 jobmanager.bind-host: 0.0.0.0
 jobmanager.memory.process.size: 1600m
 
+# ZooKeeper SASL 禁用（开发/内网环境无需 SASL 认证）
+zookeeper.sasl.disable: true
+
 # Web UI配置
 rest.port: 8081
 rest.address: 0.0.0.0
@@ -73,4 +76,6 @@ jobmanager.execution.failover-strategy: region
 env.log.dir: /opt/flink/logs
 
 # 类加载器配置
-classloader.resolve-order: parent-first
+classloader.resolve-order: child-first
+# 将 Kafka 相关包设为 child-first 加载，确保用户 JAR 中的 3.8.1 优先于集群自带的 3.1.2
+classloader.parent-first-patterns.additional: org.apache.flink

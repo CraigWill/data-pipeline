@@ -6,15 +6,13 @@ import com.realtime.monitor.service.CdcStatsService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
 
-/**
- * CDC 事件监控 API
- */
 /**
  * CDC 事件监控 API
  */
@@ -164,19 +162,19 @@ public class CdcEventsController {
     }
 
     /**
-     * 获取文件内容（分页）
+     * 获取文件内容（分页）— 通过文件 ID 访问，不暴露文件路径
      */
-    @GetMapping("/files/content")
-    public ApiResponse<Map<String, Object>> getFileContent(
-            @RequestParam String path,
+    @GetMapping(value = "/files/content", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<ApiResponse<Map<String, Object>>> getFileContent(
+            @RequestParam String fileId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "100") int size) {
         try {
-            Map<String, Object> result = cdcEventsService.getFileContent(path, page, size);
-            return ApiResponse.success(result);
+            Map<String, Object> result = cdcEventsService.getFileContentById(fileId, page, size);
+            return ResponseEntity.ok(ApiResponse.success(result));
         } catch (Exception e) {
-            log.error("获取文件内容失败: {}", path, e);
-            return ApiResponse.error(e.getMessage());
+            log.error("获取文件内容失败: fileId={}", fileId, e);
+            return ResponseEntity.internalServerError().body(ApiResponse.error("获取文件内容失败"));
         }
     }
 

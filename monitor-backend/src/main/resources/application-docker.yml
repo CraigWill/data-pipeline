@@ -1,39 +1,28 @@
+# Docker / K8s 容器环境配置
+# 激活方式: -Dspring.profiles.active=docker（Dockerfile 中已写死）
+# 说明：datasource 连接由 DataSourceConfig.java 通过 CDC_ADMIN_* 环境变量动态构建，
+#       此处不再声明 spring.datasource.url，避免与 DataSourceConfig Bean 冲突。
+
 server:
   port: 5001
 
 spring:
   application:
     name: realtime-data-pipeline
-  
-  # 数据源配置 - 连接到 Oracle 数据库
-  datasource:
-    url: jdbc:oracle:thin:@${DATABASE_HOST:host.docker.internal}:${DATABASE_PORT:1521}:${DATABASE_SID:helowin}
-    username: ${DATABASE_USERNAME:finance_user}
-    password: ${DATABASE_PASSWORD}
-    driver-class-name: oracle.jdbc.OracleDriver
-    hikari:
-      maximum-pool-size: 10
-      minimum-idle: 2
-      connection-timeout: 30000
-      idle-timeout: 600000
-      max-lifetime: 1800000
 
-# Flink 配置
+# Flink REST API 地址（由环境变量注入）
 flink:
   rest:
     url: ${FLINK_REST_URL:http://localhost:8081}
+  rest-urls: ${FLINK_REST_URLS:}
 
-# 输出路径配置
+# CDC 输出路径（由环境变量注入）
 output:
   path: ${OUTPUT_PATH:./output/cdc}
 
 # 配置目录
 config:
-  dir: ${CONFIG_DIR:./monitor/config}
-
-# Oracle 容器配置
-oracle:
-  container: ${ORACLE_CONTAINER:oracle11g}
+  dir: ${CONFIG_DIR:./config}
 
 # 日志配置
 logging:
@@ -43,7 +32,7 @@ logging:
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
 
-# Actuator 配置
+# Actuator 端点
 management:
   endpoints:
     web:

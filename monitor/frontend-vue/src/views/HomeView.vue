@@ -70,14 +70,18 @@
         </thead>
         <tbody>
           <tr v-for="job in jobs.slice(0, 5)" :key="job.jid">
-            <td>{{ job.name || 'Unknown' }}</td>
-            <td><code>{{ job.jid }}</code></td>
+            <td class="col-name">
+              <span class="text-truncate" :title="job.name">{{ job.name || 'Unknown' }}</span>
+            </td>
+            <td class="col-id">
+              <code class="job-id-short" :title="job.jid">{{ job.jid?.slice(0, 8) }}…</code>
+            </td>
             <td>
               <span :class="['badge', getStatusClass(job.state)]">
                 {{ job.state }}
               </span>
             </td>
-            <td>{{ formatTimestamp(job['start-time']) }}</td>
+            <td class="col-time">{{ formatTimestamp(job['start-time']) }}</td>
             <td>{{ formatDuration(job.duration) }}</td>
             <td>
               <button 
@@ -204,7 +208,7 @@ const formatDuration = (ms) => {
 onMounted(() => {
   refreshAll()
   // 自动刷新 (每 30 秒)
-  refreshInterval = setInterval(refreshAll, 30000)
+  // refreshInterval = setInterval(refreshAll, 30000) // 已禁用自动刷新
 })
 
 onUnmounted(() => {
@@ -244,6 +248,45 @@ onUnmounted(() => {
   margin-bottom: 80px;
 }
 
+/* 表格列宽控制 */
+.recent-jobs .table {
+  table-layout: fixed;
+  width: 100%;
+}
+
+.col-name {
+  width: 28%;
+  max-width: 0;          /* 配合 table-layout:fixed 触发截断 */
+  overflow: hidden;
+}
+
+.col-id {
+  width: 14%;
+}
+
+.col-time {
+  width: 18%;
+  white-space: nowrap;
+}
+
+.text-truncate {
+  display: block;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.job-id-short {
+  font-family: monospace;
+  font-size: 11px;
+  background: #F4F5F7;
+  padding: 2px 5px;
+  border-radius: 3px;
+  color: #5E6C84;
+  cursor: default;
+  white-space: nowrap;
+}
+
 .refresh-btn {
   position: fixed;
   bottom: 28px;
@@ -268,5 +311,11 @@ onUnmounted(() => {
   background: #0065FF;
   box-shadow: 0 6px 12px rgba(0,82,204,0.5);
   transform: scale(1.05);
+}
+
+@media (max-width: 767px) {
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
+  .chart-grid  { grid-template-columns: 1fr; }
+  .info-grid   { grid-template-columns: 1fr; }
 }
 </style>

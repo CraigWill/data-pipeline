@@ -1,0 +1,113 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitor-backend
+  namespace: flink
+spec:
+  replicas: 1  # 本地环境：单个实例
+  selector:
+    matchLabels:
+      app: monitor-backend
+  template:
+    metadata:
+      labels:
+        app: monitor-backend
+    spec:
+      containers:
+      - name: monitor-backend
+        image: monitor-backend:latest
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 5001
+          name: http
+        livenessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 5001
+          initialDelaySeconds: 40
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /actuator/health
+            port: 5001
+          initialDelaySeconds: 20
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+        env:
+        - name: FLINK_REST_URL
+          value: "http://flink-jobmanager:8081"
+        - name: FLINK_REST_URLS
+          value: "http://flink-jobmanager:8081"
+        - name: OUTPUT_PATH
+          value: "/app/output/cdc"
+        - name: CONFIG_DIR
+          value: "/app/config"
+        # 数据库配置
+        - name: DATABASE_HOST
+          value: "host.docker.internal"
+        - name: DATABASE_PORT
+          value: "1521"
+        - name: DATABASE_USERNAME
+          value: "finance_user"
+        - name: DATABASE_PASSWORD
+          value: "CO9AKFeKC6vYyJ5yd6bXSQ=="
+        - name: DATABASE_SID
+          value: "helowin"
+        - name: DATABASE_SCHEMA
+          value: "finance_user"
+        - name: TZ
+          value: "Asia/Shanghai"
+        # JWT 安全配置
+        - name: JWT_SECRET
+          value: "xGTMWGPrwsj9s1DtwQuQhl0GfLaetGcy0KXMAeaKIEIgv46z+SM3sg4+4q1GIlX2ApDK5GUw4wbEFCUn1Aa8LQ=="
+        - name: JWT_EXPIRATION
+          value: "86400000"
+        # AES 密码加密配置
+        - name: AES_ENCRYPTION_KEY
+          value: "E5TDKE7NvyphzdaW0SIUfAhZl2v9sRnjHl1Egqx9arM="
+        # 管理员初始密码
+        - name: ADMIN_INITIAL_PASSWORD
+          value: "Admin2026Secure"
+        # CORS 配置
+        - name: ALLOWED_ORIGINS
+          value: "http://monitor-frontend,http://localhost:3000,http://localhost:8888,https://datapipeline.aimachine-tech.cn"
+        # Oracle 容器配置（用于主机名解析）
+        - name: ORACLE_CONTAINER
+          value: ""
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "2Gi"
+            cpu: "1000m"
+        volumeMounts:
+        - name: flink-data
+          mountPath: /app/output
+          subPath: output
+        - name: config
+          mountPath: /app/config
+      volumes:
+      - name: flink-data
+        hostPath:
+          path: /tmp/flink-data
+          type: DirectoryOrCreate
+      - name: config
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: monitor-backend
+  namespace: flink
+spec:
+  type: ClusterIP
+  ports:
+  - port: 5001
+    targetPort: 5001
+    name: http
+  selector:
+    app: monitor-backend

@@ -1,13 +1,20 @@
 package com.realtime.monitor.controller;
 
-import com.realtime.monitor.dto.ApiResponse;
-import com.realtime.monitor.service.FlinkService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.web.bind.annotation.*;
-
 import java.util.List;
 import java.util.Map;
+
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import com.realtime.monitor.dto.ApiResponse;
+import com.realtime.monitor.service.FlinkService;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * Flink 作业管理 API
@@ -17,7 +24,7 @@ import java.util.Map;
 @RequestMapping("/api/jobs")
 @RequiredArgsConstructor
 public class JobController {
-    
+
     private final FlinkService flinkService;
     
     @GetMapping
@@ -33,7 +40,11 @@ public class JobController {
     @GetMapping("/{jobId}")
     public ApiResponse<Map<String, Object>> getJobDetail(@PathVariable String jobId) {
         try {
-            return ApiResponse.success(flinkService.getJobDetail(jobId));
+            Map<String, Object> result = flinkService.getJobDetail(jobId);
+            if (result == null) {
+                return ApiResponse.error("Flink 集群不可用");
+            }
+            return ApiResponse.success(result);
         } catch (Exception e) {
             log.error("获取作业详情失败: {}", jobId, e);
             return ApiResponse.error(e.getMessage());
@@ -63,17 +74,17 @@ public class JobController {
     
     /**
      * 带 Savepoint 停止作业（推荐方式，不丢失数据）
+     * savepoint 目录从 app_config 表读取，不接受外部输入
      */
     @PostMapping("/{jobId}/stop")
-    public ApiResponse<Map<String, Object>> stopJobWithSavepoint(
-            @PathVariable String jobId,
-            @RequestParam(defaultValue = "file:///opt/flink/savepoints") String targetDirectory) {
+    public ResponseEntity<ApiResponse<Map<String, Object>>> stopJobWithSavepoint(
+            @PathVariable String jobId) {
         try {
-            Map<String, Object> result = flinkService.stopJobWithSavepoint(jobId, targetDirectory);
-            return ApiResponse.success(result, "作业已停止，Savepoint 已创建");
+            flinkService.stopJobWithSavepoint(jobId);
+            return ResponseEntity.ok(ApiResponse.success(null, "作业已停止，Savepoint 已创建"));
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
-            return ApiResponse.error(e.getMessage());
+            return ResponseEntity.internalServerError().body(ApiResponse.error(e.getMessage()));
         }
     }
     

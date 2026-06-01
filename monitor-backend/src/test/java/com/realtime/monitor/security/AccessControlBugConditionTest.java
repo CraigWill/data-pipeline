@@ -1,0 +1,158 @@
+package com.realtime.monitor.security;
+
+import com.realtime.monitor.repository.DataSourceRepository;
+import com.realtime.monitor.service.CdcEventsService;
+import com.realtime.monitor.service.CdcStatsService;
+import com.realtime.monitor.service.FlinkService;
+import com.realtime.monitor.service.OutputFileService;
+import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.web.servlet.MockMvc;
+
+import javax.sql.DataSource;
+
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
+/**
+ * Bug Condition Exploration Tests — Route Access Control Defects
+ *
+ * These tests encode the EXPECTED (fixed) behavior.
+ * On UNFIXED code they are expected to FAIL — failure confirms the bugs exist.
+ *
+ * Validates: Requirements 1.8, 1.9, 1.10, 1.11, 1.12
+ */
+@SpringBootTest
+@AutoConfigureMockMvc
+class AccessControlBugConditionTest {
+
+    /**
+     * Set required env-var substitutes as system properties before the Spring context loads.
+     * DataSourceConfig reads DATABASE_PASSWORD via System.getenv(), so we mock the DataSource
+     * bean directly. JWT_SECRET and AES_ENCRYPTION_KEY are set here so Spring can resolve
+     * the ${JWT_SECRET} and ${AES_ENCRYPTION_KEY} placeholders in application.yml.
+     */
+    @BeforeAll
+    static void setSystemProperties() {
+        System.setProperty("JWT_SECRET", "test-secret-key-for-unit-tests-only-32chars!!");
+        System.setProperty("AES_ENCRYPTION_KEY", "test-aes-key-16b");
+    }
+
+    // Mock infrastructure beans that require real DB/Flink connections
+    @MockBean
+    DataSource dataSource;
+
+    @MockBean
+    DataSourceRepository dataSourceRepository;
+
+    @MockBean
+    FlinkService flinkService;
+
+    @MockBean
+    CdcEventsService cdcEventsService;
+
+    @MockBean
+    CdcStatsService cdcStatsService;
+
+    @MockBean
+    OutputFileService outputFileService;
+
+    @Autowired
+    private MockMvc mockMvc;
+
+    /**
+     * Test 1 — Bug condition: unauthenticated GET /api/auth/me
+     *
+     * Current (buggy): SecurityConfig has .antMatchers("/api/auth/**").permitAll()
+     * which exposes /api/auth/me without authentication → returns 200.
+     * Expected (fixed): should return 401 Unauthorized.
+     *
+     * Validates: Requirement 1.10
+     */
+    @Test
+    @DisplayName("Unauthenticated GET /api/auth/me should return 401 (currently returns 200 — bug)")
+    void unauthenticated_getAuthMe_shouldReturn401() throws Exception {
+        mockMvc.perform(get("/api/auth/me"))
+                .andExpect(status().isUnauthorized()); // 401
+    }
+
+    /**
+     * Test 2 — Bug condition: non-admin POST /api/admin/datasources/reencrypt
+     *
+     * Current (buggy): no @PreAuthorize on the endpoint → any authenticated user
+     * can trigger the sensitive re-encryption operation → returns 200.
+     * Expected (fixed): should return 403 Forbidden for non-admin users.
+     *
+     * Validates: Requirement 1.8
+     */
+    @Test
+    @WithMockUser(roles = "USER")
+    @DisplayName("Non-admin POST /api/admin/datasources/reencrypt should return 403 (currently returns 200 — bug)")
+    void nonAdmin_postReencrypt_shouldReturn403() throws Exception {
+        mockMvc.perform(post("/api/admin/datasources/reencrypt"))
+                .andExpect(status().isForbidden()); // 403
+    }
+
+    /**
+     * Test 3 — Bug condition: non-admin GET /api/system/info
+     *
+     * Current (buggy): no @PreAuthorize on the endpoint → any authenticated user
+     * can read sensitive JVM/Flink info → returns 200.
+     * Expected (fixed): should return 403 Forbidden for non-admin users.
+     *
+     * Validates: Requirement 1.11
+     */
+    @Test
+    @WithMockUser(roles = "USER")
+    @DisplayName("Non-admin GET /api/system/info should return 403 (currently returns 200 — bug)")
+    void nonAdmin_getSystemInfo_shouldReturn403() throws Exception {
+        mockMvc.perform(get("/api/system/info"))
+                .andExpect(status().isForbidden()); // 403
+    }
+
+    /**
+     * Test 4 — Bug condition: invalid fileId in GET /api/cdc/events/files/content
+     *
+     * Current (fixed): fileId is looked up in the database, not used as a path.
+     * An invalid fileId returns empty result (no path traversal possible).
+     *
+     * Validates: Requirement 1.9
+     */
+    @Test
+    @WithMockUser
+    @DisplayName("Authenticated GET /api/cdc/events/files/content?fileId=nonexistent should return 200 with empty result")
+    void authenticated_getFileContent_invalidFileId_shouldReturn200Empty() throws Exception {
+        mockMvc.perform(get("/api/cdc/events/files/content")
+                        .param("fileId", "nonexistent-id"))
+                .andExpect(status().isOk()); // 200 with empty result (ID not found)
+    }
+
+    /**
+     * Test 5 — Bug condition: unsafe targetDirectory in POST /api/jobs/{jobId}/stop
+     *
+     * Current (buggy): targetDirectory parameter is passed directly to the Flink
+     * savepoint operation with no validation → attacker can direct savepoints to
+     * arbitrary paths → returns 200 (or 500 on Flink error, but never 400).
+     * Expected (fixed): should return 400 Bad Request for paths outside the
+     * allowed savepoint base directory.
+     *
+     * Validates: Requirement 1.12
+     */
+    @Test
+    @WithMockUser
+    @DisplayName("POST /api/jobs/{jobId}/stop ignores targetDirectory param — reads from database config")
+    void authenticated_stopJob_ignoresTargetDirectoryParam() throws Exception {
+        // targetDirectory 不再作为入参，即使传了也会被忽略
+        // 端点从 app_config 表读取 savepoint 目录，不再有 400 Bad Request 的情况
+        mockMvc.perform(post("/api/jobs/test-job-id/stop")
+                        .param("targetDirectory", "/tmp/evil"))
+                .andExpect(status().isOk()); // 200 — 参数被忽略，正常执行
+    }
+}

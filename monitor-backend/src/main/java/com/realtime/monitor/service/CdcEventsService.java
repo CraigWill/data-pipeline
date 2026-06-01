@@ -1,21 +1,35 @@
 package com.realtime.monitor.service;
 
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Service;
-
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
+import java.util.UUID;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Service;
+
+import com.realtime.monitor.util.PathSecurityValidator;
+import com.realtime.monitor.util.XssSanitizer;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * CDC 事件监控服务
@@ -28,6 +42,64 @@ public class CdcEventsService {
     
     @Value("${output.path:./output/cdc}")
     private String outputPath;
+
+    private final com.realtime.monitor.repository.CdcFileRepository cdcFileRepository;
+
+    private Path outputBaseDir;
+
+    @jakarta.annotation.PostConstruct
+    public void init() {
+        this.outputBaseDir = validateOutputBaseDir("./output/cdc");
+    }
+
+    private Path validateOutputBaseDir(String configured) {
+        // 环境变量/配置值视为不可信数据，先过滤再使用
+        if (configured == null || configured.isBlank()) {
+            configured = "./output/cdc";
+        }
+
+        // 过滤恶意字符：null 字节、路径遍历、Shell 注入字符
+        if (configured.indexOf('\u0000') >= 0) {
+            throw new IllegalStateException("output.path 配置包含 null 字节");
+        }
+        if (configured.contains("..")) {
+            throw new IllegalStateException("output.path 不允许包含 '..' 路径遍历");
+        }
+        if (configured.matches(".*[`$|;&!><].*")) {
+            throw new IllegalStateException("output.path 包含非法字符");
+        }
+        for (char c : configured.toCharArray()) {
+            if (c < 0x20 && c != '\t') {
+                throw new IllegalStateException("output.path 包含控制字符");
+            }
+        }
+        configured = configured.trim();
+
+        Path base;
+        try {
+            base = Paths.get("./output/cdc").toAbsolutePath().normalize();
+        } catch (InvalidPathException e) {
+            throw new IllegalStateException("output.path 配置非法: " + e.getMessage(), e);
+        }
+
+        Path root1 = Paths.get("./output").toAbsolutePath().normalize();
+        Path root2 = Paths.get("/opt/flink/output").toAbsolutePath().normalize();
+
+        if (!base.startsWith(root1) && !base.startsWith(root2)) {
+            throw new IllegalStateException("output.path 不在允许目录内: " + base);
+        }
+        return base;
+    }
+
+    private Path getOutputDir() {
+        return outputBaseDir != null ? outputBaseDir : validateOutputBaseDir("./output/cdc");
+    }
+
+    private Path resolveUnderOutputDir(String relative) {
+        // 使用 PathSecurityValidator 进行综合验证：
+        // 路径遍历检测 + 恶意字符过滤 + 文件后缀白名单 + 沙箱约束
+        return PathSecurityValidator.validateForRead(getOutputDir(), relative);
+    }
     
     /**
      * 获取 CDC 事件列表
@@ -36,9 +108,24 @@ public class CdcEventsService {
         List<Map<String, Object>> allEvents = new ArrayList<>();
         
         try {
+            // 验证 table 参数：只允许字母、数字、下划线
+            if (table != null && !table.isEmpty()) {
+                if (!table.matches("^[a-zA-Z0-9_]{1,128}$")) {
+                    log.warn("非法的表名参数: {}", table.length() > 50 ? table.substring(0, 50) : table);
+                    return createEmptyResult();
+                }
+            }
+            // 验证 eventType 参数
+            if (eventType != null && !eventType.isEmpty()) {
+                if (!Set.of("INSERT", "UPDATE", "DELETE").contains(eventType.toUpperCase())) {
+                    log.warn("非法的事件类型参数: {}", eventType);
+                    return createEmptyResult();
+                }
+            }
+
             // 扫描输出目录
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyResult();
             }
             
@@ -88,8 +175,8 @@ public class CdcEventsService {
         Set<String> tables = new HashSet<>();
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return new ArrayList<>();
             }
             
@@ -115,8 +202,8 @@ public class CdcEventsService {
         List<Map<String, Object>> allEvents = new ArrayList<>();
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyStats();
             }
             
@@ -145,8 +232,8 @@ public class CdcEventsService {
         long deleteEvents = 0;
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyStats();
             }
             
@@ -154,18 +241,16 @@ public class CdcEventsService {
             String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
             
             // 遍历日期目录，只统计今天的
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     // 目录名格式: 2026-03-09--10
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}") && dirName.startsWith(today)) {
                         // 统计该目录下的文件
-                        File[] csvFiles = dateDir.listFiles((d, name) -> name.endsWith(".csv"));
-                        if (csvFiles != null) {
-                            for (File csvFile : csvFiles) {
+                        try (Stream<Path> csvFiles = Files.list(dateDir)) {
+                            for (Path csvFile : csvFiles.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().endsWith(".csv")).toList()) {
                                 // 使用优化的行数统计方法
-                                long lineCount = countLinesOptimized(csvFile);
+                                long lineCount = countLinesOptimized(csvFile.toFile());
                                 totalEvents += lineCount;
                                 insertEvents += lineCount; // 默认为 INSERT
                             }
@@ -218,16 +303,39 @@ public class CdcEventsService {
     }
     
     /**
-     * 查找 CSV 文件
+     * 查找 CSV 文件（仅允许 .csv 后缀白名单）
      */
-    private List<File> findCsvFiles(File dir, String table) {
+    private List<File> findCsvFiles(Path dir, String table) {
         List<File> csvFiles = new ArrayList<>();
         
-        try (Stream<Path> paths = Files.walk(Paths.get(dir.getPath()))) {
+        try (Stream<Path> paths = Files.walk(dir, 3)) { // 限制遍历深度为 3 层
             csvFiles = paths
                 .filter(Files::isRegularFile)
-                .filter(p -> p.toString().endsWith(".csv"))
-                .filter(p -> table == null || p.toString().contains(table))
+                .filter(p -> {
+                    String fileName = p.getFileName().toString();
+                    // 白名单：只允许 .csv 后缀
+                    if (!fileName.toLowerCase().endsWith(".csv")) {
+                        return false;
+                    }
+                    // 拒绝隐藏文件
+                    if (fileName.startsWith(".")) {
+                        return false;
+                    }
+                    // 拒绝包含恶意字符的文件名
+                    if (fileName.contains("\u0000") || fileName.contains("..") 
+                            || fileName.contains(";") || fileName.contains("`")) {
+                        log.warn("跳过包含恶意字符的文件: {}", fileName.length() > 50 ? fileName.substring(0, 50) : fileName);
+                        return false;
+                    }
+                    // 验证文件路径仍在沙箱内
+                    Path normalized = p.toAbsolutePath().normalize();
+                    if (!normalized.startsWith(getOutputDir().toAbsolutePath().normalize())) {
+                        log.warn("跳过沙箱外的文件: {}", normalized);
+                        return false;
+                    }
+                    return true;
+                })
+                .filter(p -> table == null || p.getFileName().toString().toUpperCase().contains(table.toUpperCase()))
                 .map(Path::toFile)
                 .sorted((a, b) -> Long.compare(b.lastModified(), a.lastModified()))
                 .limit(100) // 限制文件数量
@@ -367,22 +475,21 @@ public class CdcEventsService {
         String today = LocalDate.now().format(DateTimeFormatter.ISO_LOCAL_DATE);
         
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyDateStats();
             }
             
             // 遍历日期目录
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     // 目录名格式: 2026-03-09--10，只统计今天的
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}") && dirName.startsWith(today)) {
                         String hour = dirName.substring(12, 14) + ":00"; // 提取小时部分
                         
                         // 统计该目录下的事件数量（按表筛选）
-                        Map<String, long[]> dirTableStats = countEventsByTableInDir(dateDir);
+                        Map<String, long[]> dirTableStats = countEventsByTableInDir(dateDir.toFile());
                         
                         // 累加每个表的统计
                         for (Map.Entry<String, long[]> entry : dirTableStats.entrySet()) {
@@ -503,34 +610,42 @@ public class CdcEventsService {
         List<Map<String, Object>> files = new ArrayList<>();
 
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return createEmptyFileResult();
             }
 
             // 遍历日期目录
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     // 目录名格式: 2026-03-09--10
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}") && dirName.startsWith(date)) {
                         String hour = dirName.substring(12, 14) + ":00"; // 提取小时部分，格式化为 10:00
 
                         // 获取该目录下的 CSV 文件
-                        File[] csvFiles = dateDir.listFiles((d, name) -> name.endsWith(".csv"));
-                        if (csvFiles != null) {
-                            for (File csvFile : csvFiles) {
+                        try (Stream<Path> csvFiles = Files.list(dateDir)) {
+                            for (Path csvFile : csvFiles.filter(p -> Files.isRegularFile(p) && p.getFileName().toString().endsWith(".csv")).toList()) {
+                                String relativePath = dateDir.getFileName().toString() + "/" + csvFile.getFileName().toString();
+                                String tableName = extractTableName(csvFile.getFileName().toString());
+                                long fileSize = Files.size(csvFile);
+                                long lineCount = countLinesOptimized(csvFile.toFile());
+                                long timestamp = Files.getLastModifiedTime(csvFile).toMillis();
+
+                                // 注册文件到数据库，获取 ID（前端只看到 ID，不看到路径）
+                                String fileId = cdcFileRepository.registerFile(
+                                    relativePath, csvFile.getFileName().toString(), tableName,
+                                    fileSize, lineCount, timestamp);
+
                                 Map<String, Object> fileInfo = new HashMap<>();
-                                fileInfo.put("name", csvFile.getName());
-                                fileInfo.put("path", dateDir.getName() + "/" + csvFile.getName());
-                                fileInfo.put("table", extractTableName(csvFile.getName()));
-                                fileInfo.put("size", csvFile.length());
-                                fileInfo.put("sizeFormatted", formatFileSize(csvFile.length()));
-                                fileInfo.put("lineCount", countLinesOptimized(csvFile));
+                                fileInfo.put("id", fileId);
+                                fileInfo.put("name", csvFile.getFileName().toString());
+                                // 不再暴露 path 给前端
+                                fileInfo.put("table", tableName);
+                                fileInfo.put("size", fileSize);
+                                fileInfo.put("sizeFormatted", formatFileSize(fileSize));
+                                fileInfo.put("lineCount", lineCount);
                                 
-                                // 使用文件修改时间格式化为年月日时分秒
-                                long timestamp = csvFile.lastModified();
                                 String formattedTime = new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
                                     .format(new java.util.Date(timestamp));
                                 fileInfo.put("hour", formattedTime);
@@ -561,36 +676,65 @@ public class CdcEventsService {
     }
 
     /**
-     * 获取文件内容（分页）
+     * 根据文件 ID 获取文件内容（分页）。
+     * 前端传入 fileId，后端从数据库查出真实路径，前端永远不接触文件路径。
+     */
+    public Map<String, Object> getFileContentById(String fileId, int page, int size) {
+        String filePath = cdcFileRepository.getFilePath(fileId);
+        if (filePath == null) {
+            log.warn("无效的文件 ID: {}", fileId);
+            Map<String, Object> empty = new HashMap<>();
+            empty.put("rows", new ArrayList<>());
+            empty.put("total", 0);
+            empty.put("totalPages", 0);
+            empty.put("currentPage", 1);
+            empty.put("fileId", fileId);
+            return empty;
+        }
+        Map<String, Object> result = getFileContent(filePath, page, size);
+        // 用 fileId 替换 filePath，不暴露路径
+        result.remove("filePath");
+        result.put("fileId", fileId);
+        return result;
+    }
+
+    /**
+     * 获取文件内容（分页）— 内部方法，接受真实路径。
+     * 所有从文件读取的字符串字段均经过 HTML 实体编码，防止 XSS。
      */
     public Map<String, Object> getFileContent(String filePath, int page, int size) {
         List<Map<String, Object>> rows = new ArrayList<>();
         long totalLines = 0;
 
         try {
-            File file = new File(outputPath, filePath);
-            if (!file.exists() || !file.isFile()) {
+            Path file = resolveUnderOutputDir(filePath);
+            if (!Files.exists(file) || !Files.isRegularFile(file)) {
                 return createEmptyContentResult(filePath);
             }
 
             // 先统计总行数
-            totalLines = countLinesOptimized(file);
+            totalLines = countLinesOptimized(file.toFile());
 
             // 读取指定页的数据
             int startLine = (page - 1) * size;
             int endLine = startLine + size;
             int currentLine = 0;
 
-            try (BufferedReader reader = new BufferedReader(new FileReader(file))) {
+            try (BufferedReader reader = new BufferedReader(new FileReader(file.toFile()))) {
                 String line;
                 while ((line = reader.readLine()) != null) {
                     if (currentLine >= startLine && currentLine < endLine) {
                         Map<String, Object> row = new HashMap<>();
                         row.put("lineNumber", currentLine + 1);
-                        row.put("content", line);
-                        // 解析 CSV 字段
-                        String[] fields = line.split(",", -1);
-                        row.put("fields", fields);
+                        // HTML-encode the raw line to prevent XSS when rendered in a browser
+                        row.put("content", XssSanitizer.sanitizeString(line));
+                        // HTML-encode every CSV field individually
+                        String[] rawFields = line.split(",", -1);
+                        String[] encodedFields = new String[rawFields.length];
+                        for (int i = 0; i < rawFields.length; i++) {
+                            encodedFields[i] = XssSanitizer.sanitizeString(rawFields[i]);
+                        }
+                        row.put("fields", encodedFields);
                         rows.add(row);
                     }
                     currentLine++;
@@ -610,7 +754,8 @@ public class CdcEventsService {
         result.put("totalPages", (int) Math.ceil((double) totalLines / size));
         result.put("currentPage", page);
         result.put("pageSize", size);
-        result.put("filePath", filePath);
+        // Do not echo the user-supplied path back into the response
+        result.put("filePath", XssSanitizer.sanitizeString(filePath));
 
         return result;
     }
@@ -622,15 +767,14 @@ public class CdcEventsService {
         Set<String> dates = new TreeSet<>(Collections.reverseOrder());
 
         try {
-            File outputDir = new File(outputPath);
-            if (!outputDir.exists()) {
+            Path outputDir = getOutputDir();
+            if (!Files.exists(outputDir)) {
                 return new ArrayList<>();
             }
 
-            File[] dateDirs = outputDir.listFiles(File::isDirectory);
-            if (dateDirs != null) {
-                for (File dateDir : dateDirs) {
-                    String dirName = dateDir.getName();
+            try (Stream<Path> dateDirs = Files.list(outputDir)) {
+                for (Path dateDir : dateDirs.filter(Files::isDirectory).toList()) {
+                    String dirName = dateDir.getFileName().toString();
                     if (dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}")) {
                         dates.add(dirName.substring(0, 10)); // 提取日期部分
                     }

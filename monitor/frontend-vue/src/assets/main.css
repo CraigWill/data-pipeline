@@ -436,3 +436,40 @@ code {
   border-radius: var(--radius-sm);
   color: var(--color-text-secondary);
 }
+
+/* ===== 响应式断点 ===== */
+/* sm: ≥ 480px  md: ≥ 768px  lg: ≥ 1024px */
+
+@media (max-width: 767px) {
+  /* 表格在小屏横向滚动 */
+  .table-responsive {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  /* 卡片内边距收窄 */
+  .card {
+    padding: 14px 16px;
+  }
+
+  /* 按钮组换行 */
+  .btn-group {
+    flex-wrap: wrap;
+  }
+
+  /* 模态框全屏 */
+  .modal {
+    padding: 0;
+    align-items: flex-end;
+  }
+  .modal-content {
+    max-width: 100%;
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-height: 92vh;
+  }
+
+  /* 页头标题缩小 */
+  .page-header h2 {
+    font-size: var(--font-size-lg);
+  }
+}

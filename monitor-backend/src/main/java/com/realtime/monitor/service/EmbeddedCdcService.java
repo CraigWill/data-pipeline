@@ -1,20 +1,33 @@
 package com.realtime.monitor.service;
 
+import java.io.File;
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriComponentsBuilder;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.realtime.monitor.config.AppConfig;
 import com.realtime.monitor.dto.CdcSubmitRequest;
 import com.realtime.monitor.dto.DataSourceConfig;
 import com.realtime.monitor.dto.TaskConfig;
+import com.realtime.monitor.util.XssSanitizer;
+
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.*;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
-
-import javax.annotation.PostConstruct;
-import java.io.File;
-import java.util.*;
 
 /**
  * 嵌入式 CDC 服务
@@ -29,8 +42,28 @@ import java.util.*;
 public class EmbeddedCdcService {
 
     private static final String CDC_MAIN_CLASS = "com.realtime.pipeline.CdcJobMain";
-    /** flink-jobs JAR 路径（从 JobManager 容器挂载的共享目录） */
-    private static final String LOCAL_JAR_PATH = "/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar";
+    private static final Pattern SAFE_PATH_SEGMENT = Pattern.compile("^[a-zA-Z0-9._-]{1,200}$");
+
+    /** 允许的输出路径前缀白名单 */
+    private static final List<String> ALLOWED_OUTPUT_PREFIXES = List.of(
+            "./output/", "/opt/flink/output/", "output/"
+    );
+
+    /** 允许的 savepoint/checkpoint 路径前缀白名单 */
+    private static final List<String> ALLOWED_STATE_PREFIXES = List.of(
+            "file:///opt/flink/savepoints", "file:///opt/flink/checkpoints",
+            "/opt/flink/savepoints", "/opt/flink/checkpoints",
+            "hdfs://", "s3://"
+    );
+
+    /** 恶意路径字符模式 */
+    private static final Pattern MALICIOUS_PATH_CHARS = Pattern.compile(
+            "[\\x00-\\x1f`$|;&!><]|(\\.\\./)|(\\.\\.\\.)"
+    );
+
+    /** flink-jobs JAR 路径，可通过配置覆盖（本地开发 vs 容器部署） */
+    @org.springframework.beans.factory.annotation.Value("${flink.job.jar-path:/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar}")
+    private String localJarPath;
 
     private final AppConfig appConfig;
     private final DataSourceService dataSourceService;
@@ -41,9 +74,91 @@ public class EmbeddedCdcService {
     /** 缓存已上传的 JAR ID，避免重复上传 */
     private volatile String cachedJarId;
 
+    /** 已验证的 JAR 路径 */
+    private String validatedJarPath;
+
+    /** JAR 文件允许的路径前缀白名单 */
+    private static final List<String> ALLOWED_JAR_PREFIXES = List.of(
+            "/opt/flink/usrlib/",
+            "/opt/flink/lib/",
+            "./flink-jobs/target/",
+            "flink-jobs/target/"
+    );
+
+    /** JAR 文件允许的后缀 */
+    private static final String ALLOWED_JAR_EXTENSION = ".jar";
+
     @PostConstruct
     public void init() {
-        restTemplate = new RestTemplate();
+        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
+                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        factory.setConnectTimeout(5000);
+        factory.setReadTimeout(30000);
+        restTemplate = new RestTemplate(factory);
+
+        // 验证从环境变量读取的 localJarPath
+        this.validatedJarPath = validateLocalJarPath("/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar");
+    }
+
+    /**
+     * 验证从环境变量读取的 JAR 路径。
+     * 
+     * localJarPath 来自 @Value 注入（环境变量/配置文件），视为不可信数据。
+     * 必须满足：
+     * - 无 null 字节、控制字符
+     * - 无路径遍历（..）
+     * - 无 Shell 注入字符
+     * - 在允许的路径前缀白名单内
+     * - 以 .jar 后缀结尾
+     */
+    private String validateLocalJarPath(String jarPath) {
+        if (jarPath == null || jarPath.isBlank()) {
+            throw new IllegalStateException("flink.job.jar-path 配置不能为空");
+        }
+
+        // 过滤 null 字节
+        if (jarPath.indexOf('\u0000') >= 0) {
+            throw new IllegalStateException("JAR 路径包含 null 字节");
+        }
+        // 过滤控制字符
+        for (char c : jarPath.toCharArray()) {
+            if (c < 0x20 && c != '\t') {
+                throw new IllegalStateException("JAR 路径包含控制字符");
+            }
+        }
+        // 过滤路径遍历
+        if (jarPath.contains("..")) {
+            throw new IllegalStateException("JAR 路径不允许包含 '..'");
+        }
+        // 过滤 Shell 注入字符
+        if (jarPath.matches(".*[`$|;&!><\\s].*")) {
+            throw new IllegalStateException("JAR 路径包含非法字符");
+        }
+
+        jarPath = jarPath.trim();
+
+        // 后缀白名单：只允许 .jar 文件
+        if (!jarPath.toLowerCase().endsWith(ALLOWED_JAR_EXTENSION)) {
+            throw new IllegalStateException("JAR 路径必须以 .jar 结尾: " + jarPath);
+        }
+
+        // 路径前缀白名单
+        String normalizedPath = jarPath.replace("\\", "/");
+        boolean allowed = ALLOWED_JAR_PREFIXES.stream()
+                .anyMatch(prefix -> normalizedPath.startsWith(prefix));
+        if (!allowed) {
+            throw new IllegalStateException("JAR 路径不在允许的目录内: " + jarPath);
+        }
+
+        // 验证 Paths.get() 不会抛异常
+        try {
+            java.nio.file.Paths.get(jarPath);
+        } catch (java.nio.file.InvalidPathException e) {
+            throw new IllegalStateException("JAR 路径格式非法: " + e.getMessage(), e);
+        }
+
+        log.info("JAR 路径验证通过: {}", jarPath);
+        return jarPath;
     }
 
     /**
@@ -56,7 +171,7 @@ public class EmbeddedCdcService {
 
         try {
             // 1. 获取 JAR ID（先查已上传的，没有则上传）
-            String jarId = getOrUploadJar();
+            String jarId = requireSafePathSegment(getOrUploadJar(), "jarId");
 
             // 2. 构建 programArgs
             List<String> programArgs = new ArrayList<>();
@@ -68,12 +183,16 @@ public class EmbeddedCdcService {
             programArgs.add("--schema"); programArgs.add(request.getSchema());
             programArgs.add("--tables"); programArgs.add(String.join(",", request.getTables()));
             programArgs.add("--outputPath"); programArgs.add(
-                    request.getOutputPath() != null ? request.getOutputPath() : appConfig.getFlinkOutputPath());
+                    validateOutputPath(request.getOutputPath() != null ? request.getOutputPath() : appConfig.getFlinkOutputPath()));
             programArgs.add("--parallelism"); programArgs.add(String.valueOf(
                     request.getParallelism() > 0 ? request.getParallelism() : 2));
             programArgs.add("--splitSize"); programArgs.add(String.valueOf(
                     request.getSplitSize() > 0 ? request.getSplitSize() : 8096));
             
+            // Checkpoint/Savepoint 目录（本地 vs Docker 路径不同）
+            programArgs.add("--checkpointDir"); programArgs.add(appConfig.getCheckpointDir());
+            programArgs.add("--savepointDir"); programArgs.add(appConfig.getSavepointDir());
+
             // 添加作业名称参数
             if (request.getJobName() != null && !request.getJobName().isEmpty()) {
                 programArgs.add("--jobName");
@@ -81,7 +200,8 @@ public class EmbeddedCdcService {
             }
 
             // 3. 通过 REST API 提交作业
-            String url = flinkService.getActiveLeaderUrl() + "/jars/" + jarId + "/run";
+            // 使用 UriComponentsBuilder 防止 URL 注入和目录遍历
+            URI uri = buildFlinkUri("jars", jarId, "run");
 
             Map<String, Object> body = new HashMap<>();
             body.put("entryClass", CDC_MAIN_CLASS);
@@ -95,17 +215,18 @@ public class EmbeddedCdcService {
             }
             // 从 savepoint 恢复
             if (request.getSavepointPath() != null && !request.getSavepointPath().isEmpty()) {
-                body.put("savepointPath", request.getSavepointPath());
+                String safeSavepointPath = validateStatePath(request.getSavepointPath());
+                body.put("savepointPath", safeSavepointPath);
                 body.put("allowNonRestoredState", true);
-                log.info("  从 savepoint 恢复: {}", request.getSavepointPath());
+                log.info("  从 savepoint 恢复: {}", safeSavepointPath);
             }
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<String> entity = new HttpEntity<>(objectMapper.writeValueAsString(body), headers);
 
-            log.info("提交到: {}", url);
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
+            log.info("提交到: {}", uri);
+            ResponseEntity<String> response = restTemplate.postForEntity(uri, entity, String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode result = objectMapper.readTree(response.getBody());
@@ -124,8 +245,11 @@ public class EmbeddedCdcService {
                         "tables", request.getTables()));
                 return resultMap;
             } else {
-                throw new RuntimeException("Flink REST API 返回错误: " + response.getStatusCode()
-                        + " " + response.getBody());
+                String responseBody = response.getBody();
+                if (responseBody != null && !responseBody.isBlank()) {
+                    log.debug("Flink REST API 提交返回: {}", XssSanitizer.sanitizeString(limitForLog(responseBody)));
+                }
+                throw new RuntimeException("Flink REST API 返回错误: HTTP " + response.getStatusCode());
             }
         } catch (Exception e) {
             log.error("提交 CDC 作业失败", e);
@@ -178,8 +302,104 @@ public class EmbeddedCdcService {
     }
 
     // ============================================
+    // ============================================
     // Flink REST API - JAR 管理
     // ============================================
+    private URI buildFlinkUri(String... pathSegments) {
+        URI baseUri = URI.create(flinkService.getActiveLeaderUrl());
+        String scheme = baseUri.getScheme();
+        if (scheme == null || (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))) {
+            throw new IllegalArgumentException("无效的 Flink REST URL scheme: " + scheme);
+        }
+        if (baseUri.getHost() == null || baseUri.getHost().isEmpty()) {
+            throw new IllegalArgumentException("无效的 Flink REST URL host");
+        }
+        if (baseUri.getRawFragment() != null) {
+            throw new IllegalArgumentException("无效的 Flink REST URL fragment");
+        }
+        String[] safeSegments = new String[pathSegments.length];
+        for (int i = 0; i < pathSegments.length; i++) {
+            safeSegments[i] = requireSafePathSegment(pathSegments[i], "pathSegment[" + i + "]");
+        }
+        return UriComponentsBuilder.fromUri(baseUri).pathSegment(safeSegments).build().toUri();
+    }
+
+    private String requireSafePathSegment(String value, String name) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("无效的路径参数: " + name);
+        }
+        if (!SAFE_PATH_SEGMENT.matcher(value).matches()) {
+            throw new IllegalArgumentException("不安全的路径参数: " + name);
+        }
+        return value;
+    }
+
+    /**
+     * 验证输出路径安全性：
+     * - 必须在允许的前缀白名单内
+     * - 不能包含路径遍历字符（../ 等）
+     * - 不能包含恶意符号
+     */
+    private String validateOutputPath(String outputPath) {
+        if (outputPath == null || outputPath.isBlank()) {
+            return appConfig.getFlinkOutputPath(); // 使用默认安全路径
+        }
+
+        // 检测恶意字符
+        if (MALICIOUS_PATH_CHARS.matcher(outputPath).find()) {
+            log.warn("输出路径包含恶意字符，使用默认路径: {}", 
+                    outputPath.length() > 50 ? outputPath.substring(0, 50) + "..." : outputPath);
+            throw new SecurityException("输出路径包含非法字符");
+        }
+
+        // 检测路径遍历
+        if (outputPath.contains("..")) {
+            log.warn("输出路径包含路径遍历字符: {}", outputPath);
+            throw new SecurityException("输出路径不允许包含 '..'");
+        }
+
+        // 白名单前缀检查
+        String normalized = outputPath.replace("\\", "/");
+        boolean allowed = ALLOWED_OUTPUT_PREFIXES.stream()
+                .anyMatch(prefix -> normalized.startsWith(prefix));
+        if (!allowed) {
+            log.warn("输出路径不在白名单内: {}", outputPath);
+            throw new SecurityException("输出路径不在允许的目录范围内");
+        }
+
+        return outputPath;
+    }
+
+    /**
+     * 验证 savepoint/checkpoint 路径安全性
+     */
+    private String validateStatePath(String statePath) {
+        if (statePath == null || statePath.isBlank()) {
+            return null;
+        }
+
+        // 检测恶意字符
+        if (MALICIOUS_PATH_CHARS.matcher(statePath).find()) {
+            log.warn("状态路径包含恶意字符: {}", 
+                    statePath.length() > 50 ? statePath.substring(0, 50) + "..." : statePath);
+            throw new SecurityException("Savepoint 路径包含非法字符");
+        }
+
+        // 检测路径遍历
+        if (statePath.contains("..")) {
+            throw new SecurityException("Savepoint 路径不允许包含 '..'");
+        }
+
+        // 白名单前缀检查
+        boolean allowed = ALLOWED_STATE_PREFIXES.stream()
+                .anyMatch(prefix -> statePath.startsWith(prefix));
+        if (!allowed) {
+            log.warn("状态路径不在白名单内: {}", statePath);
+            throw new SecurityException("Savepoint 路径不在允许的目录范围内");
+        }
+
+        return statePath;
+    }
 
     /**
      * 获取或上传 JAR：先查已上传的，没有则上传本地 JAR
@@ -214,12 +434,16 @@ public class EmbeddedCdcService {
      * 上传本地 JAR 到 Flink 集群（流式上传，避免 OOM）
      */
     private String uploadJar() throws Exception {
-        File jarFile = new File(LOCAL_JAR_PATH);
+        // 使用已验证的路径，而非原始环境变量值
+        File jarFile = new File(validatedJarPath);
         if (!jarFile.exists()) {
-            throw new RuntimeException("本地 JAR 文件不存在: " + LOCAL_JAR_PATH);
+            throw new RuntimeException("本地 JAR 文件不存在: " + validatedJarPath);
         }
 
-        String url = flinkService.getActiveLeaderUrl() + "/jars/upload";
+        String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
+                .pathSegment("jars", "upload")
+                .build()
+                .toUriString();
         log.info("上传 JAR 到 Flink: {} ({}MB)", url, jarFile.length() / 1024 / 1024);
 
         // 使用 HttpURLConnection 流式上传，避免 RestTemplate 将整个文件加载到内存
@@ -267,8 +491,17 @@ public class EmbeddedCdcService {
             log.info("JAR 上传成功: {}", jarId);
             return jarId;
         } else {
-            throw new RuntimeException("JAR 上传失败: " + responseCode + " " + responseBody);
+            if (responseBody != null && !responseBody.isBlank()) {
+                log.debug("JAR 上传返回: {}", XssSanitizer.sanitizeString(limitForLog(responseBody)));
+            }
+            throw new RuntimeException("JAR 上传失败: HTTP " + responseCode);
         }
+    }
+
+    private String limitForLog(String value) {
+        if (value == null) return null;
+        String v = value.trim();
+        return v.length() > 1000 ? v.substring(0, 1000) : v;
     }
 
     /**
@@ -276,7 +509,10 @@ public class EmbeddedCdcService {
      */
     private String findJarId() {
         try {
-            String url = flinkService.getActiveLeaderUrl() + "/jars";
+            String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
+                    .pathSegment("jars")
+                    .build()
+                    .toUriString();
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
 
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
@@ -303,7 +539,10 @@ public class EmbeddedCdcService {
      */
     private boolean isJarValid(String jarId) {
         try {
-            String url = flinkService.getActiveLeaderUrl() + "/jars";
+            String url = UriComponentsBuilder.fromHttpUrl(flinkService.getActiveLeaderUrl())
+                    .pathSegment("jars")
+                    .build()
+                    .toUriString();
             ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
             if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
                 JsonNode root = objectMapper.readTree(response.getBody());
@@ -347,7 +586,8 @@ public class EmbeddedCdcService {
 
     public Map<String, Object> getJobDetail(String jobId) {
         try {
-            return flinkService.getJobDetail(jobId);
+            Map<String, Object> result = flinkService.getJobDetail(jobId);
+            return result != null ? result : Collections.emptyMap();
         } catch (Exception e) {
             log.error("获取作业详情失败: {}", jobId, e);
             return Map.of("success", false, "error", e.getMessage());

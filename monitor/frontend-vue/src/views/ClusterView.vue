@@ -255,7 +255,7 @@ let refreshInterval = null
 onMounted(() => {
   loadClusterInfo()
   // 每 10 秒自动刷新
-  refreshInterval = setInterval(loadClusterInfo, 10000)
+  // refreshInterval = setInterval(loadClusterInfo, 10000) // 已禁用自动刷新
 })
 
 onUnmounted(() => {
@@ -641,5 +641,11 @@ function showAlert(type, message) {
   font-size: 12px;
   color: #172B4D;
   font-weight: 600;
+}
+
+@media (max-width: 767px) {
+  .cluster-grid { grid-template-columns: 1fr; }
+  .metrics-grid { grid-template-columns: 1fr 1fr; }
+  .tm-list { gap: 8px; }
 }
 </style>

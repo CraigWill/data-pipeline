@@ -1,16 +1,39 @@
 package com.realtime.monitor.service;
 
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+import org.owasp.encoder.Encode;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.util.UriComponentsBuilder;
+
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.realtime.monitor.config.AppConfig;
+import com.realtime.monitor.repository.AppConfigRepository;
+import static com.realtime.monitor.util.XssSanitizer.sanitize;
+import static com.realtime.monitor.util.XssSanitizer.sanitizeList;
+
+import jakarta.annotation.PostConstruct;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.*;
-import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
-import javax.annotation.PostConstruct;
-import java.util.*;
+import org.springframework.http.HttpStatus;
+
+import com.realtime.monitor.util.XssSanitizer;
 
 /**
  * Flink REST API 服务
@@ -22,8 +45,14 @@ import java.util.*;
 public class FlinkService {
     
     private final AppConfig appConfig;
+    private final AppConfigRepository appConfigRepository;
     private final ObjectMapper objectMapper = new ObjectMapper();
     private RestTemplate restTemplate;
+
+    /** 配置键：savepoint 目标目录 */
+    private static final String CONFIG_KEY_SAVEPOINT_DIR = "savepoint.target.directory";
+    /** 默认 savepoint 目录 */
+    private static final String DEFAULT_SAVEPOINT_DIR = "file:///opt/flink/savepoints";
 
     /** 当前已知的活跃 leader URL */
     private volatile String activeLeaderUrl;
@@ -31,28 +60,404 @@ public class FlinkService {
     private volatile long lastLeaderCheckTime = 0;
     /** leader 缓存有效期（毫秒） */
     private static final long LEADER_CACHE_TTL = 30_000;
+    /** 允许的最大响应体大小 (10 MB) */
+    private static final int MAX_RESPONSE_BODY_SIZE = 10 * 1024 * 1024;
     
     @PostConstruct
     public void init() {
-        // 设置较短的超时，避免 standby 节点长时间阻塞
-        org.springframework.http.client.SimpleClientHttpRequestFactory factory =
-                new org.springframework.http.client.SimpleClientHttpRequestFactory();
+        // 使用 HttpComponentsClientHttpRequestFactory 替代 SimpleClientHttpRequestFactory
+        // 因为 HttpURLConnection 不支持 PATCH 方法，而 Flink cancel API 需要 PATCH
+        org.springframework.http.client.HttpComponentsClientHttpRequestFactory factory =
+                new org.springframework.http.client.HttpComponentsClientHttpRequestFactory();
         factory.setConnectTimeout(3000);
         factory.setReadTimeout(10000);
         restTemplate = new RestTemplate(factory);
     }
 
+    // -------------------------------------------------------------------------
+    // URL construction helpers — all URLs go through UriComponentsBuilder so
+    // that path segments are percent-encoded and injection is prevented.
+    // -------------------------------------------------------------------------
+
     /**
-     * 获取所有候选 URL 列表（主 + 备）
+     * Build a safe URI from the leader base URL and one or more path segments.
+     * Each segment is encoded individually, preventing path traversal or host
+     * injection via user-supplied values like jobId / requestId.
      */
+    private URI buildUri(String base, String... pathSegments) {
+        UriComponentsBuilder builder = UriComponentsBuilder.fromHttpUrl(base);
+        for (String segment : pathSegments) {
+            builder.pathSegment(segment);
+        }
+        return builder.build().toUri();
+    }
+
+    /**
+     * Validate that a candidate base URL uses http/https and does not contain
+     * unexpected characters that could redirect requests to unintended hosts.
+     */
+    private boolean isAllowedBaseUrl(String url) {
+        if (url == null || url.isBlank()) return false;
+        try {
+            URI uri = URI.create(url.trim());
+            String scheme = uri.getScheme();
+            return "http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Response validation — treat all external responses as untrusted
+    // -------------------------------------------------------------------------
+
+    /**
+     * Regex patterns for detecting script injection in response bodies.
+     * These catch common XSS/script injection vectors that could be embedded
+     * in JSON string values from a compromised upstream service.
+     */
+    private static final java.util.regex.Pattern[] SCRIPT_INJECTION_PATTERNS = {
+        // <script>...</script> tags (with optional attributes)
+        java.util.regex.Pattern.compile("<\\s*script[^>]*>", java.util.regex.Pattern.CASE_INSENSITIVE),
+        java.util.regex.Pattern.compile("</\\s*script\\s*>", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // javascript: protocol in any context
+        java.util.regex.Pattern.compile("javascript\\s*:", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // vbscript: protocol
+        java.util.regex.Pattern.compile("vbscript\\s*:", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // data: URI with script content types
+        java.util.regex.Pattern.compile("data\\s*:[^,]*text/html", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // Event handler attributes (onclick, onerror, onload, onmouseover, etc.)
+        java.util.regex.Pattern.compile("\\bon\\w+\\s*=", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // <iframe>, <object>, <embed>, <applet>, <form> tags
+        java.util.regex.Pattern.compile("<\\s*(iframe|object|embed|applet|form)[^>]*>", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // expression() CSS injection
+        java.util.regex.Pattern.compile("expression\\s*\\(", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // eval(), Function(), setTimeout/setInterval with string arg
+        java.util.regex.Pattern.compile("\\b(eval|Function)\\s*\\(", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // <img src=x onerror=...> pattern
+        java.util.regex.Pattern.compile("<\\s*img[^>]+onerror\\s*=", java.util.regex.Pattern.CASE_INSENSITIVE),
+        // SVG onload
+        java.util.regex.Pattern.compile("<\\s*svg[^>]+onload\\s*=", java.util.regex.Pattern.CASE_INSENSITIVE),
+    };
+
+    /**
+     * Validate and extract the body from a RestTemplate response.
+     * Guards against:
+     * - Non-2xx status codes (treated as failures)
+     * - Null or empty bodies
+     * - Oversized response bodies (potential DoS / memory exhaustion)
+     * - Non-JSON content types when JSON is expected
+     * - Script injection / XSS payloads embedded in response content
+     *
+     * @param response the ResponseEntity from restTemplate
+     * @param context  description for logging (e.g. "getJobs")
+     * @return the validated and sanitized response body string, or null if invalid
+     */
+    private String validateResponse(ResponseEntity<String> response, String context) {
+        if (response == null) {
+            log.warn("[{}] 收到 null 响应", context);
+            return null;
+        }
+
+        HttpStatus status = (HttpStatus) response.getStatusCode();
+        if (!status.is2xxSuccessful()) {
+            log.warn("[{}] 非成功状态码: {}", context, status.value());
+            return null;
+        }
+
+        String body = response.getBody();
+        if (body == null || body.isBlank()) {
+            log.debug("[{}] 响应体为空", context);
+            return null;
+        }
+
+        // Guard against oversized responses that could exhaust memory
+        if (body.length() > MAX_RESPONSE_BODY_SIZE) {
+            log.error("[{}] 响应体过大 ({} bytes)，超过限制 ({} bytes)，丢弃",
+                    context, body.length(), MAX_RESPONSE_BODY_SIZE);
+            return null;
+        }
+
+        // Validate content-type header if present — expect JSON from Flink REST API
+        MediaType contentType = response.getHeaders().getContentType();
+        if (contentType != null
+                && !contentType.isCompatibleWith(MediaType.APPLICATION_JSON)
+                && !contentType.isCompatibleWith(MediaType.TEXT_PLAIN)) {
+            log.warn("[{}] 意外的 Content-Type: {}，期望 JSON", context, contentType);
+            return null;
+        }
+
+        // Basic structural check: Flink REST API always returns JSON objects or arrays
+        String trimmed = body.trim();
+        char firstChar = trimmed.charAt(0);
+        if (firstChar != '{' && firstChar != '[') {
+            log.warn("[{}] 响应体不是有效的 JSON 结构 (首字符: '{}')", context, firstChar);
+            return null;
+        }
+
+        // Script injection detection and neutralization
+        body = neutralizeScriptInjection(body, context);
+
+        return body;
+    }
+
+    /**
+     * Detect and neutralize script injection patterns in the response body.
+     * If dangerous patterns are found, they are stripped/escaped to prevent
+     * XSS when the data is eventually rendered in a browser context.
+     *
+     * This is a defense-in-depth measure — the primary defense is the OWASP
+     * HTML encoding in XssSanitizer, but stripping at the source prevents
+     * payloads from ever reaching downstream processing.
+     */
+    private String neutralizeScriptInjection(String body, String context) {
+        boolean injectionDetected = false;
+
+        for (java.util.regex.Pattern pattern : SCRIPT_INJECTION_PATTERNS) {
+            if (pattern.matcher(body).find()) {
+                if (!injectionDetected) {
+                    log.warn("[{}] 检测到潜在脚本注入内容，执行净化处理", context);
+                    injectionDetected = true;
+                }
+                // Replace the dangerous pattern with a safe placeholder
+                body = pattern.matcher(body).replaceAll("[SANITIZED]");
+            }
+        }
+
+        // Additional: strip null bytes which can be used to bypass filters
+        if (body.indexOf('\u0000') >= 0) {
+            log.warn("[{}] 检测到 null 字节，已移除", context);
+            body = body.replace("\u0000", "");
+        }
+
+        // Strip Unicode direction override characters (used in bidi attacks)
+        body = body.replaceAll("[\\u200E\\u200F\\u202A-\\u202E\\u2066-\\u2069]", "");
+
+        return body;
+    }
+
+    /**
+     * Safe wrapper around restTemplate.getForEntity that:
+     * 1. Encodes the URL using OWASP ESAPI to prevent URL injection
+     * 2. Validates the response body for script injection
+     * 3. Sets security headers (HttpOnly, X-Content-Type-Options, etc.)
+     *    on the current HTTP response if available
+     *
+     * @param uri     the target URI
+     * @param context description for logging
+     * @return validated response body, or null if the response is invalid/untrusted
+     */
+    private String safeGet(URI uri, String context) {
+        // Step 1: Encode URL components using OWASP ESAPI to prevent injection
+        URI safeUri = encodeUriWithEsapi(uri, context);
+
+        // Step 2: Execute the request
+        ResponseEntity<String> response = restTemplate.getForEntity(safeUri, String.class);
+
+        // Step 3: Response-level security validation
+        validateResponseSecurity(response, context);
+
+        // Step 4: Set security headers on the outgoing HTTP response
+        setSecurityResponseHeaders();
+
+        // Step 5: Validate the response body (size, content-type, JSON structure, script injection)
+        return validateResponse(response, context);
+    }
+
+    /**
+     * Safe wrapper around restTemplate.postForEntity that:
+     * 1. Encodes the URL using OWASP Java Encoder to prevent URL injection
+     * 2. Validates the response body for script injection
+     * 3. Sets security headers on the current HTTP response
+     *
+     * @param uri     the target URI
+     * @param entity  the request entity (headers + body)
+     * @param context description for logging
+     * @return validated response body, or null if the response is invalid/untrusted
+     */
+    private String safePost(URI uri, HttpEntity<?> entity, String context) {
+        // Step 1: Encode URL components
+        URI safeUri = encodeUriWithEsapi(uri, context);
+
+        // Step 2: Execute the POST request
+        ResponseEntity<String> response = restTemplate.postForEntity(safeUri, entity, String.class);
+
+        // Step 3: Response-level security validation
+        validateResponseSecurity(response, context);
+
+        // Step 4: Set security headers
+        setSecurityResponseHeaders();
+
+        // Step 5: Validate the response body (size, content-type, JSON structure, script injection)
+        return validateResponse(response, context);
+    }
+
+    /**
+     * Validate response-level security properties before processing the body.
+     * Checks for:
+     * - Unexpected redirects (3xx) that could indicate SSRF or open redirect
+     * - Suspicious response headers that could indicate a compromised upstream
+     * - Response status indicating server-side issues
+     */
+    private void validateResponseSecurity(ResponseEntity<String> response, String context) {
+        if (response == null) {
+            return; // Will be caught by validateResponse
+        }
+
+        int statusCode = response.getStatusCode().value();
+
+        // Reject redirects — Flink REST API should never redirect
+        if (statusCode >= 300 && statusCode < 400) {
+            String location = response.getHeaders().getFirst("Location");
+            log.warn("[{}] 拒绝重定向响应 ({}): Location={}", context, statusCode,
+                    location != null ? location.substring(0, Math.min(location.length(), 100)) : "null");
+            throw new SecurityException("不允许的重定向响应: " + statusCode);
+        }
+
+        // Check for suspicious headers that shouldn't come from Flink REST API
+        String contentDisposition = response.getHeaders().getFirst("Content-Disposition");
+        if (contentDisposition != null && contentDisposition.toLowerCase().contains("attachment")) {
+            log.warn("[{}] 拒绝包含 Content-Disposition: attachment 的响应", context);
+            throw new SecurityException("意外的文件下载响应");
+        }
+
+        // Reject responses with Set-Cookie from upstream (potential session fixation)
+        if (response.getHeaders().containsKey("Set-Cookie")) {
+            log.warn("[{}] 上游响应包含 Set-Cookie 头，已忽略", context);
+        }
+
+        // Warn on very large Content-Length header (early detection before body is fully read)
+        String contentLength = response.getHeaders().getFirst("Content-Length");
+        if (contentLength != null) {
+            try {
+                long length = Long.parseLong(contentLength);
+                if (length > MAX_RESPONSE_BODY_SIZE) {
+                    log.error("[{}] Content-Length ({}) 超过限制 ({})", context, length, MAX_RESPONSE_BODY_SIZE);
+                    throw new SecurityException("响应体过大: Content-Length=" + length);
+                }
+            } catch (NumberFormatException e) {
+                log.warn("[{}] 无效的 Content-Length 头: {}", context, contentLength);
+            }
+        }
+    }
+
+    /**
+     * Encode URI using OWASP Java Encoder to prevent URL-based injection attacks.
+     * Uses Encode.forUriComponent() which is equivalent to ESAPI's encodeForURL
+     * but requires no configuration files.
+     */
+    private URI encodeUriWithEsapi(URI uri, String context) {
+        try {
+            // Validate the scheme — only allow http/https
+            String scheme = uri.getScheme();
+            if (scheme == null || (!scheme.equalsIgnoreCase("http") && !scheme.equalsIgnoreCase("https"))) {
+                throw new SecurityException("不允许的 URI scheme: " + scheme);
+            }
+
+            // Encode the path segments to neutralize injection characters
+            String path = uri.getRawPath();
+            if (path != null && !path.isEmpty()) {
+                // Split path, encode each segment individually, rejoin
+                String[] segments = path.split("/", -1);
+                StringBuilder safePath = new StringBuilder();
+                for (String segment : segments) {
+                    if (!segment.isEmpty()) {
+                        // OWASP Encode.forUriComponent() encodes all special characters
+                        // that could be used for path traversal or injection
+                        String encoded = Encode.forUriComponent(segment);
+                        safePath.append("/").append(encoded);
+                    } else {
+                        safePath.append("/");
+                    }
+                }
+                // Rebuild URI with encoded path
+                return UriComponentsBuilder.newInstance()
+                        .scheme(scheme)
+                        .host(uri.getHost())
+                        .port(uri.getPort())
+                        .path(safePath.toString())
+                        .query(uri.getRawQuery() != null ? Encode.forUriComponent(uri.getRawQuery()) : null)
+                        .build(true)
+                        .toUri();
+            }
+
+            return uri;
+        } catch (SecurityException se) {
+            throw se;
+        } catch (Exception e) {
+            log.warn("[{}] URL 编码失败，使用原始 URI: {}", context, e.getMessage());
+            return uri;
+        }
+    }
+
+    /**
+     * Set security headers on the current HTTP response to prevent
+     * script injection and cookie theft when the response reaches the browser.
+     *
+     * Headers set:
+     * - X-Content-Type-Options: nosniff (prevent MIME-type sniffing)
+     * - X-XSS-Protection: 1; mode=block (legacy XSS filter)
+     * - Cache-Control: no-store (prevent caching of sensitive data)
+     * - Set-Cookie attributes: HttpOnly; Secure; SameSite=Strict
+     */
+    private void setSecurityResponseHeaders() {
+        try {
+            ServletRequestAttributes attrs =
+                    (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+            if (attrs == null) {
+                return; // Not in a web request context (e.g., async task)
+            }
+            HttpServletResponse httpResponse = attrs.getResponse();
+            if (httpResponse == null) {
+                return;
+            }
+
+            // Prevent MIME-type sniffing — stops browsers from interpreting
+            // JSON responses as HTML/script
+            httpResponse.setHeader("X-Content-Type-Options", "nosniff");
+
+            // Legacy XSS protection header (still useful for older browsers)
+            httpResponse.setHeader("X-XSS-Protection", "1; mode=block");
+
+            // Prevent caching of potentially sensitive Flink cluster data
+            httpResponse.setHeader("Cache-Control", "no-store, no-cache, must-revalidate");
+            httpResponse.setHeader("Pragma", "no-cache");
+
+            // Content-Security-Policy to block inline scripts
+            // Only set if not already set by a filter
+            if (httpResponse.getHeader("Content-Security-Policy") == null) {
+                httpResponse.setHeader("Content-Security-Policy",
+                        "default-src 'self'; script-src 'self'; object-src 'none'");
+            }
+
+            // Ensure any cookies set in this response have HttpOnly + Secure + SameSite
+            // This is done via Set-Cookie header manipulation
+            String existingCookie = httpResponse.getHeader("Set-Cookie");
+            if (existingCookie != null && !existingCookie.contains("HttpOnly")) {
+                httpResponse.setHeader("Set-Cookie",
+                        existingCookie + "; HttpOnly; Secure; SameSite=Strict");
+            }
+
+        } catch (Exception e) {
+            log.debug("设置安全响应头失败（非 Web 上下文）: {}", e.getMessage());
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Leader discovery
+    // -------------------------------------------------------------------------
+
     private List<String> getCandidateUrls() {
         List<String> urls = new ArrayList<>();
-        urls.add(appConfig.getFlinkRestUrl());
+        String primary = appConfig.getFlinkRestUrl();
+        if (isAllowedBaseUrl(primary)) {
+            urls.add(primary.trim());
+        }
         String extra = appConfig.getFlinkRestUrls();
         if (extra != null && !extra.isBlank()) {
             for (String u : extra.split(",")) {
                 String trimmed = u.trim();
-                if (!trimmed.isEmpty() && !urls.contains(trimmed)) {
+                if (!trimmed.isEmpty() && isAllowedBaseUrl(trimmed) && !urls.contains(trimmed)) {
                     urls.add(trimmed);
                 }
             }
@@ -60,98 +465,101 @@ public class FlinkService {
         return urls;
     }
 
-    /**
-     * 获取活跃 leader 的 URL，带缓存
-     */
     private String getLeaderUrl() {
         long now = System.currentTimeMillis();
         if (activeLeaderUrl != null && (now - lastLeaderCheckTime) < LEADER_CACHE_TTL) {
             return activeLeaderUrl;
         }
-        // 重新探测 leader
-        for (String url : getCandidateUrls()) {
+        for (String base : getCandidateUrls()) {
             try {
-                String testUrl = url + "/jobs/overview";
-                ResponseEntity<String> resp = restTemplate.getForEntity(testUrl, String.class);
-                if (resp.getStatusCode().is2xxSuccessful()) {
-                    if (!url.equals(activeLeaderUrl)) {
-                        log.info("Flink leader: {}", url);
+                URI testUri = buildUri(base, "jobs", "overview");
+                String body = safeGet(testUri, "leaderDiscovery");
+                if (body != null) {
+                    if (!base.equals(activeLeaderUrl)) {
+                        log.info("Flink leader: {}", base);
                     }
-                    activeLeaderUrl = url;
+                    activeLeaderUrl = base;
                     lastLeaderCheckTime = now;
-                    return url;
+                    return base;
                 }
             } catch (Exception e) {
-                log.debug("Flink 候选节点 {} 不可用: {}", url, e.getMessage());
+                log.debug("Flink 候选节点 {} 不可用: {}", base, e.getMessage());
             }
         }
-        // 所有节点都不可用，返回主 URL（让调用方处理异常）
         log.warn("未找到可用的 Flink leader，使用默认 URL");
-        return appConfig.getFlinkRestUrl();
+        String fallback = appConfig.getFlinkRestUrl();
+        if (!isAllowedBaseUrl(fallback)) {
+            throw new IllegalStateException("Flink REST URL 配置无效: " + fallback);
+        }
+        return fallback.trim();
     }
 
-    /** 获取活跃 leader URL（供其他服务使用） */
     public String getActiveLeaderUrl() {
         return getLeaderUrl();
     }
-    
-    /**
-     * 获取所有作业列表
-     */
+
+    // -------------------------------------------------------------------------
+    // API methods — all use buildUri() instead of string concatenation
+    // -------------------------------------------------------------------------
+
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getJobs() {
         try {
-            String url = getLeaderUrl() + "/jobs/overview";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                JsonNode root = objectMapper.readTree(response.getBody());
+            URI uri = buildUri(getLeaderUrl(), "jobs", "overview");
+            String body = safeGet(uri, "getJobs");
+            if (body != null) {
+                JsonNode root = objectMapper.readTree(body);
                 JsonNode jobs = root.get("jobs");
                 if (jobs != null && jobs.isArray()) {
                     List<Map<String, Object>> result = new ArrayList<>();
                     for (JsonNode job : jobs) {
                         result.add(objectMapper.convertValue(job, Map.class));
                     }
-                    return result;
+                    return sanitizeList(result);
                 }
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取作业列表跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取作业列表失败", e);
+            log.warn("获取作业列表失败: {}", e.getMessage());
         }
         return Collections.emptyList();
     }
-    
-    /**
-     * 获取作业详情
-     */
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> getJobDetail(String jobId) {
         try {
-            String url = getLeaderUrl() + "/jobs/" + jobId;
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), Map.class);
+            URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
+            String body = safeGet(uri, "getJobDetail");
+            if (body != null) {
+                return sanitize(objectMapper.readValue(body, Map.class));
             }
+        } catch (org.springframework.web.client.HttpClientErrorException.NotFound e) {
+            // 404 — job no longer exists on Flink, confirmed not found
+            log.debug("作业不存在于 Flink 集群: {}", jobId);
+            return Collections.emptyMap();
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            // 连接失败 — Flink 不可用，无法确认作业状态
+            log.debug("Flink 不可用，无法查询作业 {}: {}", jobId, e.getMessage());
+            return null;
         } catch (Exception e) {
-            log.error("获取作业详情失败: {}", jobId, e);
+            log.warn("获取作业详情失败: {} — {}", jobId, e.getMessage());
+            return null;
         }
         return Collections.emptyMap();
     }
-    
-    /**
-     * 获取作业指标
-     */
+
     public Map<String, Object> getJobMetrics(String jobId) {
         Map<String, Object> jobData = getJobDetail(jobId);
-        
+        if (jobData == null) {
+            jobData = Collections.emptyMap();
+        }
         Map<String, Object> metrics = new HashMap<>();
         metrics.put("job_id", jobId);
         metrics.put("name", jobData.get("name"));
         metrics.put("state", jobData.get("state"));
         metrics.put("start_time", jobData.get("start-time"));
         metrics.put("duration", jobData.get("duration"));
-        
         List<Map<String, Object>> vertices = new ArrayList<>();
         Object verticesObj = jobData.get("vertices");
         if (verticesObj instanceof List) {
@@ -168,44 +576,22 @@ public class FlinkService {
             }
         }
         metrics.put("vertices", vertices);
-        
-        return metrics;
+        return sanitize(metrics);
     }
-    
+
     /**
-     * 取消作业
-     */
-    /**
-     * 取消作业
-     * 注意：Java 11 的 HttpURLConnection 不支持 PATCH 方法，
-     * 所以用 HttpURLConnection + 反射 hack 来发送 PATCH 请求
+     * 取消作业（使用 RestTemplate + PATCH via exchange，避免反射 hack）
      */
     public void cancelJob(String jobId) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "?mode=cancel";
+        // Flink REST API: PATCH /jobs/:jobid 用于取消作业
         try {
-            java.net.HttpURLConnection conn = (java.net.HttpURLConnection)
-                    new java.net.URL(url).openConnection();
-            conn.setRequestMethod("POST");
-            // Flink REST API 接受 PATCH，但 HttpURLConnection 不支持
-            // 使用反射强制设置 method 为 PATCH
-            try {
-                java.lang.reflect.Field methodField = java.net.HttpURLConnection.class.getDeclaredField("method");
-                methodField.setAccessible(true);
-                methodField.set(conn, "PATCH");
-            } catch (Exception e) {
-                // 反射失败时回退：直接用 POST 到 yarn-cancel 端点
-                conn.disconnect();
-                conn = (java.net.HttpURLConnection)
-                        new java.net.URL(getLeaderUrl() + "/jobs/" + jobId + "/yarn-cancel").openConnection();
-                conn.setRequestMethod("GET");
-            }
-            conn.setRequestProperty("Content-Type", "application/json");
-            conn.setDoOutput(false);
-
-            int code = conn.getResponseCode();
-            conn.disconnect();
-            if (code < 200 || code >= 300) {
-                throw new RuntimeException("取消作业失败: HTTP " + code);
+            URI uri = buildUri(getLeaderUrl(), "jobs", jobId);
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            HttpEntity<String> entity = new HttpEntity<>("{}", headers);
+            ResponseEntity<String> response = restTemplate.exchange(uri, HttpMethod.PATCH, entity, String.class);
+            if (!response.getStatusCode().is2xxSuccessful()) {
+                throw new RuntimeException("取消作业失败: HTTP " + response.getStatusCode());
             }
             log.info("作业已取消: {}", jobId);
         } catch (RuntimeException re) {
@@ -214,197 +600,166 @@ public class FlinkService {
             throw new RuntimeException("取消作业失败: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * 获取集群概览
-     */
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> getClusterOverview() {
         try {
-            String url = getLeaderUrl() + "/overview";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), Map.class);
+            URI uri = buildUri(getLeaderUrl(), "overview");
+            String body = safeGet(uri, "getClusterOverview");
+            if (body != null) {
+                return sanitize(objectMapper.readValue(body, Map.class));
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取集群概览跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取集群概览失败", e);
+            log.warn("获取集群概览失败: {}", e.getMessage());
         }
         return Collections.emptyMap();
     }
-    
-    /**
-     * 获取 TaskManager 列表
-     */
+
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getTaskManagers() {
         try {
-            String url = getLeaderUrl() + "/taskmanagers";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                JsonNode root = objectMapper.readTree(response.getBody());
+            URI uri = buildUri(getLeaderUrl(), "taskmanagers");
+            String body = safeGet(uri, "getTaskManagers");
+            if (body != null) {
+                JsonNode root = objectMapper.readTree(body);
                 JsonNode taskmanagers = root.get("taskmanagers");
                 if (taskmanagers != null && taskmanagers.isArray()) {
                     List<Map<String, Object>> result = new ArrayList<>();
                     for (JsonNode tm : taskmanagers) {
                         result.add(objectMapper.convertValue(tm, Map.class));
                     }
-                    return result;
+                    return sanitizeList(result);
                 }
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取 TaskManager 列表跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取 TaskManager 列表失败", e);
+            log.warn("获取 TaskManager 列表失败: {}", e.getMessage());
         }
         return Collections.emptyList();
     }
-    
-    /**
-     * 获取 JobManager 配置
-     */
+
     @SuppressWarnings("unchecked")
     public List<Map<String, Object>> getJobManagerConfig() {
         try {
-            String url = getLeaderUrl() + "/jobmanager/config";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), List.class);
+            URI uri = buildUri(getLeaderUrl(), "jobmanager", "config");
+            String body = safeGet(uri, "getJobManagerConfig");
+            if (body != null) {
+                List<Map<String, Object>> raw = objectMapper.readValue(body, List.class);
+                return sanitizeList(raw);
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取 JobManager 配置跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取 JobManager 配置失败", e);
+            log.warn("获取 JobManager 配置失败: {}", e.getMessage());
         }
         return Collections.emptyList();
     }
-    
-    /**
-     * 获取运行中的作业
-     */
+
     public List<Map<String, Object>> getRunningJobs() {
-        List<Map<String, Object>> allJobs = getJobs();
         List<Map<String, Object>> runningJobs = new ArrayList<>();
-        
-        for (Map<String, Object> job : allJobs) {
+        for (Map<String, Object> job : getJobs()) {
             if ("RUNNING".equals(job.get("state"))) {
                 runningJobs.add(job);
             }
         }
-        
         return runningJobs;
     }
-    
-    /**
-     * 检查 Flink 连接状态
-     */
+
     public boolean isFlinkHealthy() {
         try {
-            String url = getLeaderUrl() + "/overview";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            return response.getStatusCode().is2xxSuccessful();
+            URI uri = buildUri(getLeaderUrl(), "overview");
+            String body = safeGet(uri, "isFlinkHealthy");
+            return body != null;
         } catch (Exception e) {
             log.warn("Flink 连接检查失败: {}", e.getMessage());
             return false;
         }
     }
-    
-    /**
-     * 触发 Savepoint（不停止作业，仅创建快照）
-     */
+
     @SuppressWarnings("unchecked")
-    public Map<String, Object> triggerSavepoint(String jobId, String targetDirectory) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "/savepoints";
+    public Map<String, Object> triggerSavepoint(String jobId) {
+        // 从数据库 app_config 表读取 savepoint 目录
+        String targetDirectory = appConfigRepository.getValue(CONFIG_KEY_SAVEPOINT_DIR, DEFAULT_SAVEPOINT_DIR);
+
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "savepoints");
         try {
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("target-directory", targetDirectory);
             requestBody.put("cancel-job", false);
-
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
 
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
+            String body = safePost(uri, entity, "triggerSavepoint");
+            if (body != null) {
+                Map<String, Object> result = objectMapper.readValue(body, Map.class);
                 String requestId = (String) result.get("request-id");
                 if (requestId != null) {
-                    return waitForSavepoint(jobId, requestId);
+                    return sanitize(waitForSavepoint(jobId, requestId));
                 }
             }
-            throw new RuntimeException("触发 savepoint 失败: HTTP " + response.getStatusCode());
+            throw new RuntimeException("触发 savepoint 失败: 响应验证未通过");
+        } catch (RuntimeException re) {
+            throw re;
         } catch (Exception e) {
             log.error("触发 savepoint 失败: jobId={}", jobId, e);
             throw new RuntimeException("触发 savepoint 失败: " + e.getMessage(), e);
         }
     }
 
-    /**
-     * 带 Savepoint 停止作业（推荐方式，不丢失数据）
-     * 
-     * 这会触发一个 savepoint，然后停止作业。
-     * 作业可以从这个 savepoint 恢复，不会丢失任何数据。
-     */
     @SuppressWarnings("unchecked")
-    public Map<String, Object> stopJobWithSavepoint(String jobId, String targetDirectory) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "/stop";
-        
+    public Map<String, Object> stopJobWithSavepoint(String jobId) {
+        // 从数据库 app_config 表读取 savepoint 目录
+        String targetDirectory = appConfigRepository.getValue(CONFIG_KEY_SAVEPOINT_DIR, DEFAULT_SAVEPOINT_DIR);
+
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "stop");
         try {
-            // 构建请求体
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("targetDirectory", targetDirectory);
-            requestBody.put("drain", false);  // 不等待所有数据处理完成
-            
+            requestBody.put("drain", false);
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(requestBody, headers);
-            
-            ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
+
+            String body = safePost(uri, entity, "stopJobWithSavepoint");
+            if (body != null) {
+                Map<String, Object> result = objectMapper.readValue(body, Map.class);
                 String requestId = (String) result.get("request-id");
-                
-                // 等待 savepoint 完成
                 if (requestId != null) {
                     Map<String, Object> savepointResult = waitForSavepoint(jobId, requestId);
                     result.putAll(savepointResult);
                 }
-                
                 log.info("作业 {} 已停止，Savepoint: {}", jobId, result.get("location"));
-                return result;
+                return sanitize(result);
             }
-            
-            throw new RuntimeException("停止作业失败: HTTP " + response.getStatusCode());
+            throw new RuntimeException("停止作业失败: 响应验证未通过");
+        } catch (RuntimeException re) {
+            throw re;
         } catch (Exception e) {
             log.error("停止作业失败: {}", jobId, e);
             throw new RuntimeException("停止作业失败: " + e.getMessage(), e);
         }
     }
-    
-    /**
-     * 等待 Savepoint 完成
-     */
+
     @SuppressWarnings("unchecked")
     private Map<String, Object> waitForSavepoint(String jobId, String requestId) {
-        String url = getLeaderUrl() + "/jobs/" + jobId + "/savepoints/" + requestId;
-        
-        int maxRetries = 60;  // 最多等待60秒
+        URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "savepoints", requestId);
+        int maxRetries = 60;
         for (int i = 0; i < maxRetries; i++) {
             try {
                 Thread.sleep(1000);
-                
-                ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-                if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                    Map<String, Object> result = objectMapper.readValue(response.getBody(), Map.class);
+                String body = safeGet(uri, "waitForSavepoint");
+                if (body != null) {
+                    Map<String, Object> result = objectMapper.readValue(body, Map.class);
                     Map<String, Object> status = (Map<String, Object>) result.get("status");
-                    
                     if (status != null) {
                         String statusId = (String) status.get("id");
                         if ("COMPLETED".equals(statusId)) {
                             Map<String, Object> operation = (Map<String, Object>) result.get("operation");
-                            if (operation != null) {
-                                return operation;
-                            }
-                            return result;
+                            return operation != null ? operation : result;
                         } else if ("FAILED".equals(statusId)) {
                             Map<String, Object> operation = (Map<String, Object>) result.get("operation");
                             String failureCause = operation != null ? (String) operation.get("failure-cause") : "Unknown";
@@ -421,24 +776,21 @@ public class FlinkService {
                 log.warn("检查 Savepoint 状态失败: {}", e.getMessage());
             }
         }
-        
         throw new RuntimeException("等待 Savepoint 超时");
     }
-    
-    /**
-     * 获取作业的 Checkpoint 信息
-     */
+
     @SuppressWarnings("unchecked")
     public Map<String, Object> getCheckpoints(String jobId) {
         try {
-            String url = getLeaderUrl() + "/jobs/" + jobId + "/checkpoints";
-            ResponseEntity<String> response = restTemplate.getForEntity(url, String.class);
-            
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                return objectMapper.readValue(response.getBody(), Map.class);
+            URI uri = buildUri(getLeaderUrl(), "jobs", jobId, "checkpoints");
+            String body = safeGet(uri, "getCheckpoints");
+            if (body != null) {
+                return sanitize(objectMapper.readValue(body, Map.class));
             }
+        } catch (org.springframework.web.client.ResourceAccessException e) {
+            log.debug("Flink 不可用，获取 Checkpoint 信息跳过: {}", e.getMessage());
         } catch (Exception e) {
-            log.error("获取 Checkpoint 信息失败: {}", jobId, e);
+            log.warn("获取 Checkpoint 信息失败: {} — {}", jobId, e.getMessage());
         }
         return Collections.emptyMap();
     }

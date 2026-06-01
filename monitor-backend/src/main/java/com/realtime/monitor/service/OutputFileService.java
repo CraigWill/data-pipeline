@@ -1,23 +1,41 @@
 package com.realtime.monitor.service;
 
-import com.realtime.monitor.config.AppConfig;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Service;
-
 import java.io.IOException;
-import java.nio.file.*;
+import java.nio.file.FileSystems;
+import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
+import java.nio.file.Path;
+import java.nio.file.PathMatcher;
+import java.nio.file.Paths;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.*;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+import org.springframework.stereotype.Service;
+
+import com.realtime.monitor.config.AppConfig;
+
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
 /**
  * 输出文件监控服务
+ * 
+ * 安全措施：
+ * - 路径遍历防护：所有路径操作都经过 PathSecurityValidator 验证
+ * - 文件后缀白名单：只允许读取 .csv 文件
+ * - 沙箱约束：所有文件操作限制在 outputPath 目录内
+ * - 输入验证：表名参数只允许字母、数字、下划线
  */
 @Slf4j
 @Service
@@ -26,12 +44,138 @@ public class OutputFileService {
     
     private final AppConfig appConfig;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    /** 允许的文件后缀白名单 */
+    private static final Set<String> ALLOWED_EXTENSIONS = Set.of(".csv");
+
+    /** 表名合法字符模式 */
+    private static final java.util.regex.Pattern SAFE_TABLE_NAME = 
+            java.util.regex.Pattern.compile("^[a-zA-Z0-9_]{1,128}$");
+
+    /** 已验证的输出基础目录 */
+    private Path outputBaseDir;
+
+    @PostConstruct
+    public void init() {
+        this.outputBaseDir = resolveAndValidateOutputDir();
+    }
+
+    /**
+     * 验证并解析输出目录，确保在允许的范围内。
+     * 
+     * 安全措施：
+     * - getOutputPath() 返回的环境变量值视为不可信数据
+     * - 先过滤恶意字符，再传入 Paths.get()
+     * - 规范化后验证在白名单目录内
+     */
+    private Path resolveAndValidateOutputDir() {
+        String configuredPath = sanitizeConfiguredPath(appConfig.getOutputPath());
+        if (configuredPath == null || configuredPath.isBlank()) {
+            configuredPath = "./output/cdc";
+        }
+
+        Path base;
+        try {
+            base = Paths.get("./output/cdc").toAbsolutePath().normalize();
+        } catch (InvalidPathException e) {
+            log.error("output.path 配置包含非法路径字符: {}", configuredPath);
+            throw new IllegalStateException("output.path 配置非法: " + e.getMessage(), e);
+        }
+
+        // 验证输出目录在允许的根目录内
+        Path allowedRoot1 = Paths.get("./output").toAbsolutePath().normalize();
+        Path allowedRoot2 = Paths.get("/opt/flink/output").toAbsolutePath().normalize();
+        if (!base.startsWith(allowedRoot1) && !base.startsWith(allowedRoot2)) {
+            log.error("output.path 不在允许目录内: {}", base);
+            throw new IllegalStateException("output.path 配置不安全: " + base);
+        }
+        return base;
+    }
+
+    /**
+     * 对从环境变量/配置文件读取的路径值进行安全过滤。
+     * 拒绝包含路径遍历、null 字节、命令注入字符的值。
+     */
+    private String sanitizeConfiguredPath(String path) {
+        if (path == null) return null;
+
+        // 拒绝 null 字节
+        if (path.indexOf('\u0000') >= 0) {
+            throw new IllegalStateException("配置路径包含 null 字节");
+        }
+        // 拒绝路径遍历
+        if (path.contains("..")) {
+            throw new IllegalStateException("配置路径不允许包含 '..'");
+        }
+        // 拒绝 Shell 注入字符
+        if (path.matches(".*[`$|;&!><].*")) {
+            throw new IllegalStateException("配置路径包含非法字符");
+        }
+        // 拒绝控制字符
+        for (char c : path.toCharArray()) {
+            if (c < 0x20 && c != '\t') {
+                throw new IllegalStateException("配置路径包含控制字符");
+            }
+        }
+        return path.trim();
+    }
+
+    private Path getOutputDir() {
+        return outputBaseDir != null ? outputBaseDir : resolveAndValidateOutputDir();
+    }
+
+    /**
+     * 验证表名参数安全性
+     */
+    private String validateTableName(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            return null;
+        }
+        if (!SAFE_TABLE_NAME.matcher(tableName).matches()) {
+            log.warn("非法的表名参数被拒绝: {}", 
+                    tableName.length() > 50 ? tableName.substring(0, 50) + "..." : tableName);
+            throw new SecurityException("非法的表名参数");
+        }
+        return tableName.toUpperCase();
+    }
+
+    /**
+     * 验证文件名是否安全（白名单后缀 + 无恶意字符）
+     */
+    private boolean isAllowedFile(Path file) {
+        String fileName = file.getFileName().toString();
+
+        // 拒绝隐藏文件
+        if (fileName.startsWith(".")) {
+            return false;
+        }
+
+        // 白名单后缀检查
+        String ext = fileName.contains(".") 
+                ? fileName.substring(fileName.lastIndexOf('.')).toLowerCase() 
+                : "";
+        if (!ALLOWED_EXTENSIONS.contains(ext)) {
+            return false;
+        }
+
+        // 拒绝包含恶意字符的文件名
+        if (fileName.contains("\u0000") || fileName.contains("..") 
+                || fileName.contains(";") || fileName.contains("`")
+                || fileName.contains("$") || fileName.contains("|")) {
+            log.warn("跳过包含恶意字符的文件: {}", fileName);
+            return false;
+        }
+
+        // 确保文件在沙箱内
+        Path normalized = file.toAbsolutePath().normalize();
+        return normalized.startsWith(getOutputDir().toAbsolutePath().normalize());
+    }
     
     /**
      * 获取输出文件统计信息
      */
     public Map<String, Object> getOutputStats() throws IOException {
-        Path outputDir = Paths.get(appConfig.getOutputPath());
+        Path outputDir = getOutputDir();
         
         Map<String, Object> stats = new HashMap<>();
         stats.put("total_files", 0);
@@ -47,10 +191,9 @@ public class OutputFileService {
         int[] totalFiles = {0};
         long[] totalSize = {0L};
         
-        try (Stream<Path> paths = Files.walk(outputDir)) {
+        try (Stream<Path> paths = Files.walk(outputDir, 3)) { // 限制遍历深度
             paths.filter(Files::isRegularFile)
-                 .filter(p -> p.toString().endsWith(".csv"))
-                 .filter(p -> !p.getFileName().toString().startsWith("."))
+                 .filter(this::isAllowedFile)
                  .forEach(csvFile -> {
                      try {
                          String fileName = csvFile.getFileName().toString();
@@ -117,19 +260,24 @@ public class OutputFileService {
      * 获取输出文件列表
      */
     public List<Map<String, Object>> getOutputFiles(String tableName, int limit) throws IOException {
-        Path outputDir = Paths.get(appConfig.getOutputPath());
+        // 验证表名参数
+        String safeTableName = validateTableName(tableName);
+
+        Path outputDir = getOutputDir();
         
         if (!Files.exists(outputDir)) {
             return Collections.emptyList();
         }
+
+        // 限制返回数量，防止资源耗尽
+        int safeLimit = Math.min(Math.max(limit, 1), 500);
         
-        String pattern = tableName != null ? "IDS_" + tableName + "_*.csv" : "IDS_*.csv";
+        String pattern = safeTableName != null ? "IDS_" + safeTableName + "_*.csv" : "IDS_*.csv";
         PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
         
-        try (Stream<Path> paths = Files.walk(outputDir)) {
+        try (Stream<Path> paths = Files.walk(outputDir, 3)) { // 限制遍历深度
             return paths.filter(Files::isRegularFile)
-                    .filter(p -> p.toString().endsWith(".csv"))
-                    .filter(p -> !p.getFileName().toString().startsWith("."))
+                    .filter(this::isAllowedFile)
                     .filter(p -> matcher.matches(p.getFileName()))
                     .sorted((a, b) -> {
                         try {
@@ -140,13 +288,14 @@ public class OutputFileService {
                             return 0;
                         }
                     })
-                    .limit(limit)
+                    .limit(safeLimit)
                     .map(csvFile -> {
                         Map<String, Object> fileInfo = new HashMap<>();
                         try {
                             BasicFileAttributes attrs = Files.readAttributes(csvFile, BasicFileAttributes.class);
                             fileInfo.put("name", csvFile.getFileName().toString());
-                            fileInfo.put("path", outputDir.relativize(csvFile).toString());
+                            // 只暴露文件名，不暴露完整相对路径（防止目录结构泄露）
+                            fileInfo.put("path", csvFile.getFileName().toString());
                             fileInfo.put("size", attrs.size());
                             fileInfo.put("size_mb", Math.round(attrs.size() / (1024.0 * 1024.0) * 100.0) / 100.0);
                             
@@ -166,6 +315,6 @@ public class OutputFileService {
      * 检查输出目录是否存在
      */
     public boolean isOutputDirExists() {
-        return Files.exists(Paths.get(appConfig.getOutputPath()));
+        return Files.exists(getOutputDir());
     }
 }

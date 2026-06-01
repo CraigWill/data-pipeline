@@ -1,18 +1,23 @@
 package com.realtime.monitor.service;
 
-import com.realtime.monitor.dto.RuntimeJob;
-import com.realtime.monitor.dto.TaskConfig;
-import com.realtime.monitor.repository.RuntimeJobRepository;
-import lombok.extern.slf4j.Slf4j;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import javax.annotation.PostConstruct;
-import java.time.Instant;
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
+import com.realtime.monitor.dto.RuntimeJob;
+import com.realtime.monitor.dto.TaskConfig;
+import com.realtime.monitor.repository.RuntimeJobRepository;
+
+import jakarta.annotation.PostConstruct;
+import lombok.extern.slf4j.Slf4j;
 
 /**
  * 运行时作业管理服务
@@ -36,9 +41,6 @@ public class RuntimeJobService {
         this.embeddedCdcService = embeddedCdcService;
     }
 
-    /**
-     * 应用启动时加载运行中的作业，并自动恢复
-     */
     @PostConstruct
     public void loadRunningJobsOnStartup() {
         log.info("加载运行中的作业...");
@@ -252,8 +254,7 @@ public class RuntimeJobService {
         for (RuntimeJob job : runningJobs) {
             if (job.getFlinkJobId() == null) continue;
             try {
-                String savepointDir = "file:///opt/flink/savepoints";
-                Map<String, Object> result = flinkService.triggerSavepoint(job.getFlinkJobId(), savepointDir);
+                Map<String, Object> result = flinkService.triggerSavepoint(job.getFlinkJobId());
                 String location = (String) result.get("location");
                 if (location != null) {
                     runtimeJobRepository.updateSavepoint(job.getId(), location);
@@ -288,8 +289,22 @@ public class RuntimeJobService {
     private void syncJobStatus(RuntimeJob job) {
         try {
             Map<String, Object> flinkJob = flinkService.getJobDetail(job.getFlinkJobId());
-            String flinkState = (String) flinkJob.get("state");
             
+            if (flinkJob == null) {
+                // Flink 不可用（连接失败/超时），跳过本次同步，不改变作业状态
+                log.debug("Flink 不可用，跳过作业 {} 状态同步", job.getId());
+                return;
+            }
+            
+            if (flinkJob.isEmpty()) {
+                // Flink 明确返回 404 — 作业确实不存在，标记为 LOST
+                log.info("作业 {} (flinkJobId={}) 在 Flink 集群中不存在，标记为 LOST",
+                        job.getId(), job.getFlinkJobId());
+                runtimeJobRepository.updateStatus(job.getId(), "LOST", "作业在 Flink 集群中不存在");
+                return;
+            }
+            
+            String flinkState = (String) flinkJob.get("state");
             if (flinkState != null) {
                 String newStatus = mapFlinkStateToStatus(flinkState);
                 if (!newStatus.equals(job.getStatus())) {

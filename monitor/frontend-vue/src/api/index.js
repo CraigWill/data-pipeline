@@ -59,11 +59,7 @@ export const taskAPI = {
   getDetail: (id) => api.get(`/cdc/tasks/${id}/detail`),
   create: (data) => api.post('/cdc/tasks', data),
   delete: (id) => api.delete(`/cdc/tasks/${id}`),
-  submit: (id) => api.post(`/cdc/tasks/${id}/submit`),
-  
-  // 数据源相关
-  getSchemas: (data) => api.post('/cdc/datasource/schemas', data),
-  getTables: (data) => api.post('/cdc/datasource/tables', data)
+  submit: (id) => api.post(`/cdc/tasks/${id}/submit`)
 }
 
 // Flink 作业 API
@@ -105,9 +101,9 @@ export const cdcEventsAPI = {
   stats: () => api.get('/cdc/events/stats'),
   todayStats: () => api.get('/cdc/events/stats/today'),
   dailyStats: (table) => api.get('/cdc/events/stats/daily', { params: { table } }),
-  // 文件列表和内容
+  // 文件列表和内容（通过 fileId 访问，不暴露文件路径）
   files: (date) => api.get('/cdc/events/files', { params: { date } }),
-  fileContent: (path, page, size) => api.get('/cdc/events/files/content', { params: { path, page, size } }),
+  fileContent: (fileId, page, size) => api.get('/cdc/events/files/content', { params: { fileId, page, size } }),
   dates: () => api.get('/cdc/events/dates')
 }
 

@@ -140,7 +140,7 @@
           </tr>
         </thead>
         <tbody>
-          <tr v-for="file in files" :key="file.path">
+          <tr v-for="file in files" :key="file.id">
             <td class="file-name">{{ file.name }}</td>
             <td><span class="table-badge">{{ file.table }}</span></td>
             <td>{{ file.hour }}</td>
@@ -161,7 +161,7 @@
     </div>
 
     <!-- 文件内容模态框 -->
-    <div v-if="showContentModal" class="modal-overlay" @click.self="closeModal">
+    <div v-if="showContentModal" class="modal-overlay">
       <div class="modal-content">
         <div class="modal-header">
           <h3><icon-file-text theme="outline" size="16" /> 文件内容</h3>
@@ -397,7 +397,7 @@ async function loadFileContent(page) {
   contentPage.value = page
   try {
     const response = await cdcEventsAPI.fileContent(
-      currentFile.value.path, 
+      currentFile.value.id, 
       page, 
       contentPageSize
     )
@@ -1288,4 +1288,13 @@ function testTrendChart() {
 .empty-icon { font-size: 48px; margin-bottom: 12px; opacity: 0.5; }
 .empty-state h3 { font-size: 16px; color: #5E6C84; margin: 0 0 6px; }
 .empty-state p { font-size: 13px; margin: 0; }
+
+@media (max-width: 767px) {
+  .page-header { flex-direction: column; gap: 10px; align-items: flex-start; }
+  .filter-bar { flex-wrap: wrap; gap: 8px; }
+  .filter-bar select,
+  .filter-bar input { width: 100%; }
+  .event-table th:nth-child(3),
+  .event-table td:nth-child(3) { display: none; }
+}
 </style>

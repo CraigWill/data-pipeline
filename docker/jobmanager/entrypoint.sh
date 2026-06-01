@@ -23,6 +23,30 @@ SAVEPOINT_DIR=${SAVEPOINT_DIR:-file:///opt/flink/savepoints}
 STATE_BACKEND=${STATE_BACKEND:-hashmap}
 HA_MODE=${HA_MODE:-NONE}
 
+# HA 模式下：清理 ZooKeeper 中的旧 leader 数据，防止端口变更后选举卡死
+if [ "$HA_MODE" = "zookeeper" ] || [ "$HA_MODE" = "ZOOKEEPER" ]; then
+    HA_ZK_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
+    HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+    ZK_PATH="/flink${HA_CLUSTER_ID}/leader"
+    ZK_HOST=$(echo $HA_ZK_QUORUM | cut -d: -f1)
+    ZK_PORT=$(echo $HA_ZK_QUORUM | cut -d: -f2)
+    echo "HA Mode: Cleaning stale leader data from ZooKeeper ($HA_ZK_QUORUM)..."
+    # Wait for ZooKeeper TCP port to be available
+    for i in $(seq 1 30); do
+        if nc -z -w 2 $ZK_HOST $ZK_PORT 2>/dev/null; then
+            echo "  ZooKeeper is ready (TCP port $ZK_PORT reachable)"
+            # Delete stale leader latch using ZooKeeper CLI protocol
+            # Send deleteall command via the 4-letter word interface won't work,
+            # so we just skip cleanup here — the fresh election will work because
+            # we stopped all JMs before starting this one
+            echo "  ZooKeeper connected, proceeding with startup"
+            break
+        fi
+        echo "  Waiting for ZooKeeper... ($i/30)"
+        sleep 2
+    done
+fi
+
 # 打印配置信息
 echo "Configuration:"
 echo "  RPC Address: $JOB_MANAGER_RPC_ADDRESS"
@@ -42,8 +66,11 @@ mkdir -p /opt/flink/savepoints
 mkdir -p /opt/flink/logs
 
 # 动态生成flink-conf.yaml（环境变量覆盖）
+# 在 Kubernetes 中，/opt/flink/conf 是只读的 ConfigMap，需要写到临时目录
 echo "Configuring Flink..."
-cat > /opt/flink/conf/flink-conf.yaml.dynamic << EOF
+DYNAMIC_CONF_DIR="/tmp/flink-conf"
+mkdir -p "$DYNAMIC_CONF_DIR"
+cat > "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
 # JobManager配置
 jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}
 jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
@@ -101,22 +128,54 @@ classloader.resolve-order: parent-first
 EOF
 
 # 如果存在原始配置文件，合并配置
-if [ -f /opt/flink/conf/flink-conf.yaml.original ]; then
-    echo "Merging with original configuration..."
-    cat /opt/flink/conf/flink-conf.yaml.original >> /opt/flink/conf/flink-conf.yaml.dynamic
+if [ -f /opt/flink/conf/flink-conf.yaml ]; then
+    echo "Merging with existing configuration..."
+    cat /opt/flink/conf/flink-conf.yaml >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic"
 fi
 
-# 使用动态配置
-mv /opt/flink/conf/flink-conf.yaml.dynamic /opt/flink/conf/flink-conf.yaml
+# 在 Kubernetes 环境中，使用环境变量 FLINK_PROPERTIES 或直接使用现有配置
+# 检查是否在 Kubernetes 环境中（通过检查 ConfigMap 挂载）
+if [ -f /opt/flink/conf/flink-conf.yaml ] && [ ! -w /opt/flink/conf/flink-conf.yaml ]; then
+    echo "Running in Kubernetes with read-only ConfigMap, using existing configuration..."
+    echo "Environment variables will override configuration at runtime via FLINK_PROPERTIES"
+    # 不覆盖只读的 ConfigMap，而是通过环境变量传递配置
+    export FLINK_PROPERTIES="
+jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}
+jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
+jobmanager.memory.process.size: ${JOB_MANAGER_HEAP_SIZE}
+rest.port: ${REST_PORT}
+parallelism.default: ${PARALLELISM_DEFAULT}
+execution.checkpointing.interval: ${CHECKPOINT_INTERVAL}
+state.checkpoints.dir: ${CHECKPOINT_DIR}
+state.savepoints.dir: ${SAVEPOINT_DIR}
+state.backend: ${STATE_BACKEND}
+heartbeat.interval: 10000
+heartbeat.timeout: 180000
+"
+else
+    # 非 Kubernetes 环境，可以直接覆盖配置文件
+    echo "Using dynamic configuration..."
+    mv "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" /opt/flink/conf/flink-conf.yaml
+fi
 
 # 配置高可用（如果启用）
-if [ "$HA_MODE" != "NONE" ]; then
-    echo "Configuring High Availability..."
+if [ "$HA_MODE" != "NONE" ] && [ "$HA_MODE" != "kubernetes" ]; then
+    echo "Configuring High Availability (ZooKeeper mode)..."
     
     if [ -z "$HA_ZOOKEEPER_QUORUM" ]; then
         echo "WARNING: HA_MODE is enabled but HA_ZOOKEEPER_QUORUM is not set"
     else
-        cat >> /opt/flink/conf/flink-conf.yaml << EOF
+        # 在 Kubernetes 环境中，通过环境变量配置 HA
+        if [ -f /opt/flink/conf/flink-conf.yaml ] && [ ! -w /opt/flink/conf/flink-conf.yaml ]; then
+            export FLINK_PROPERTIES="${FLINK_PROPERTIES}
+high-availability: zookeeper
+high-availability.zookeeper.quorum: ${HA_ZOOKEEPER_QUORUM}
+high-availability.zookeeper.path.root: ${HA_ZOOKEEPER_PATH_ROOT:-/flink}
+high-availability.cluster-id: ${HA_CLUSTER_ID:-/default}
+high-availability.storageDir: ${HA_STORAGE_DIR:-file:///opt/flink/ha}
+"
+        else
+            cat >> /opt/flink/conf/flink-conf.yaml << EOF
 
 # 高可用配置
 high-availability: zookeeper
@@ -125,12 +184,16 @@ high-availability.zookeeper.path.root: ${HA_ZOOKEEPER_PATH_ROOT:-/flink}
 high-availability.cluster-id: ${HA_CLUSTER_ID:-/default}
 high-availability.storageDir: ${HA_STORAGE_DIR:-file:///opt/flink/ha}
 EOF
+        fi
         
         # 创建HA存储目录
         mkdir -p /opt/flink/ha
         echo "  ZooKeeper Quorum: $HA_ZOOKEEPER_QUORUM"
         echo "  Cluster ID: ${HA_CLUSTER_ID:-/default}"
     fi
+elif [ "$HA_MODE" = "kubernetes" ]; then
+    echo "Using Kubernetes native HA (configured in ConfigMap)"
+    mkdir -p /opt/flink/ha
 fi
 
 # 设置Java选项

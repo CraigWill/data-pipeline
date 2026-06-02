@@ -272,6 +272,8 @@ services:
       context: .
       dockerfile: monitor-backend/Dockerfile
     container_name: flink-monitor-backend
+    extra_hosts:
+      - "centos-ob:172.22.0.1"
     depends_on:
       jobmanager:
         condition: service_healthy
@@ -284,11 +286,11 @@ services:
       - CONFIG_DIR=/app/config
       - ORACLE_CONTAINER=
       # ── CDC 管理库（OceanBase，MySQL 兼容协议）──────────────────
-      - CDC_ADMIN_TYPE=${CDC_ADMIN_TYPE:-MYSQL}
-      - CDC_ADMIN_HOST=${CDC_ADMIN_HOST:-cdcdb}
+      - CDC_ADMIN_TYPE=${CDC_ADMIN_TYPE:-OCEANBASE_ORACLE}
+      - CDC_ADMIN_HOST=${CDC_ADMIN_HOST:-centos-ob}
       - CDC_ADMIN_PORT=${CDC_ADMIN_PORT:-2881}
-      - CDC_ADMIN_DATABASE=${CDC_ADMIN_DATABASE:-cdcdb}
-      - CDC_ADMIN_USERNAME=${CDC_ADMIN_USERNAME:-root@test}
+      - CDC_ADMIN_DATABASE=${CDC_ADMIN_DATABASE:-CDC_ADMIN}
+      - CDC_ADMIN_USERNAME=${CDC_ADMIN_USERNAME:-cdc_admin@oratenant}
       - CDC_ADMIN_PASSWORD=${CDC_ADMIN_PASSWORD}
       # Oracle 模式时使用（MYSQL 模式忽略）
       - CDC_ADMIN_SID=${CDC_ADMIN_SID:-helowin}

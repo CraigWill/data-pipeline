@@ -98,6 +98,7 @@ public class CdcTaskService {
                     }
                     break;
                 }
+                case "OCEANBASE_ORACLE":
                 default: {
                     // Oracle: all_tables
                     String sql = "SELECT DISTINCT owner FROM all_tables " +
@@ -185,6 +186,7 @@ public class CdcTaskService {
                     }
                     break;
                 }
+                case "OCEANBASE_ORACLE":
                 default: {
                     // Oracle: all_tables
                     String sql = "SELECT t.table_name, " +
@@ -233,6 +235,11 @@ public class CdcTaskService {
                 return String.format(
                     "jdbc:mysql://%s:%d/%s?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true",
                     host, config.getPort(), config.getSid());
+            case "OCEANBASE_ORACLE":
+                ensureDriver("com.oceanbase.jdbc.Driver");
+                return String.format(
+                    "jdbc:oceanbase://%s:%d/%s?compatibleMode=ORACLE&useUnicode=true&characterEncoding=utf8&useSSL=false",
+                    host, config.getPort(), config.getSid());
             case "POSTGRES":
                 ensureDriver("org.postgresql.Driver");
                 return String.format("jdbc:postgresql://%s:%d/%s", host, config.getPort(), config.getSid());
@@ -255,6 +262,7 @@ public class CdcTaskService {
         String type = config.getType() != null ? config.getType().toUpperCase() : "ORACLE";
         return switch (type) {
             case "MYSQL", "OCEANBASE", "POSTGRES" -> "SELECT 1";
+            case "OCEANBASE_ORACLE" -> "SELECT 1 FROM DUAL";
             default -> "SELECT 1 FROM DUAL";
         };
     }

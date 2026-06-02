@@ -50,7 +50,8 @@ flink-savepoints/
 *.bak
 *.swp
 *~
-
+monitor/frontend-vue/.node-version
+monitor-backend/src/main/resources/curpif.yml
 # Test
 test-output/
 .jqwik-database

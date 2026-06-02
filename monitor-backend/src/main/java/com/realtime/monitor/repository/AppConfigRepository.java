@@ -117,17 +117,18 @@ public class AppConfigRepository {
     public void upsert(String key, String value, String description) {
         try {
             Timestamp now = new Timestamp(System.currentTimeMillis());
+            String desc = description != null ? description : "";
             if (exists(key)) {
                 jdbcTemplate.update(
                     "UPDATE " + TABLE +
                     " SET config_value=?, description=?, updated_at=? WHERE config_key=?",
-                    value, description, now, key);
+                    value, desc, now, key);
             } else {
                 jdbcTemplate.update(
                     "INSERT INTO " + TABLE +
                     " (config_key, config_value, description, created_at, updated_at)" +
                     " VALUES (?, ?, ?, ?, ?)",
-                    key, value, description, now, now);
+                    key, value, desc, now, now);
             }
             log.debug("配置已保存: {} = {}", key, value);
         } catch (Exception e) {

@@ -283,6 +283,14 @@ const dbTypes = [
     sidPlaceholder: 'test',
   },
   {
+    value: 'OCEANBASE_ORACLE',
+    label: 'OB Oracle',
+    icon: '🌊',
+    defaultPort: '2881',
+    sidLabel: '数据库名',
+    sidPlaceholder: 'cdcdb',
+  },
+  {
     value: 'MYSQL',
     label: 'MySQL',
     icon: '🐬',

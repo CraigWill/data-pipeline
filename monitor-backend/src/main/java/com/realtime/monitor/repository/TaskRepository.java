@@ -68,8 +68,8 @@ public class TaskRepository {
                     " SET name=?, datasource_id=?, schema_name=?, tables=?," +
                     "     output_path=?, parallelism=?, split_size=?, updated_at=?" +
                     " WHERE id=?",
-                    config.getName(), config.getDatasourceId(), config.getSchema(), tablesJson,
-                    config.getOutputPath(), config.getParallelism(), config.getSplitSize(), now,
+                    config.getName(), nn(config.getDatasourceId()), config.getSchema(), tablesJson,
+                    nn(config.getOutputPath()), config.getParallelism(), config.getSplitSize(), now,
                     config.getId());
             } else {
                 jdbcTemplate.update(
@@ -77,8 +77,8 @@ public class TaskRepository {
                     " (id, name, datasource_id, schema_name, tables, output_path," +
                     "  parallelism, split_size, created_at, updated_at)" +
                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    config.getId(), config.getName(), config.getDatasourceId(), config.getSchema(),
-                    tablesJson, config.getOutputPath(), config.getParallelism(), config.getSplitSize(),
+                    config.getId(), config.getName(), nn(config.getDatasourceId()), config.getSchema(),
+                    tablesJson, nn(config.getOutputPath()), config.getParallelism(), config.getSplitSize(),
                     now, now);
             }
             log.info("任务配置已保存: {}", config.getId());
@@ -113,4 +113,7 @@ public class TaskRepository {
         jdbcTemplate.update("DELETE FROM " + TABLE + " WHERE id = ?", id);
         log.info("删除任务配置: {}", id);
     }
+
+    /** null → 空字符串（OceanBase 驱动兼容） */
+    private static String nn(String v) { return v != null ? v : ""; }
 }

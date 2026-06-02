@@ -124,27 +124,31 @@ public class DataSourceRepository {
 
     public void save(DataSourceConfig config) {
         Timestamp now = new Timestamp(System.currentTimeMillis());
-        String type = config.getType() != null ? config.getType() : "ORACLE";
+        String type = nn(config.getType(), "ORACLE");
         if (existsById(config.getId())) {
             jdbcTemplate.update(
                 "UPDATE " + TABLE +
                 " SET name=?, host=?, port=?, username=?, password=?, sid=?," +
                 "     description=?, status=?, type=?, updated_at=? WHERE id=?",
-                config.getName(), config.getHost(), config.getPort(),
-                config.getUsername(), config.getPassword(), config.getSid(),
-                config.getDescription(), config.getStatus(), type, now,
+                nn(config.getName()), nn(config.getHost()), config.getPort(),
+                nn(config.getUsername()), nn(config.getPassword()), nn(config.getSid()),
+                nn(config.getDescription()), nn(config.getStatus(), "UNTESTED"), type, now,
                 config.getId());
         } else {
             jdbcTemplate.update(
                 "INSERT INTO " + TABLE +
                 " (id, name, host, port, username, password, sid, description, status, type, created_at, updated_at)" +
                 " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                config.getId(), config.getName(), config.getHost(), config.getPort(),
-                config.getUsername(), config.getPassword(), config.getSid(),
-                config.getDescription(), config.getStatus(), type, now, now);
+                config.getId(), nn(config.getName()), nn(config.getHost()), config.getPort(),
+                nn(config.getUsername()), nn(config.getPassword()), nn(config.getSid()),
+                nn(config.getDescription()), nn(config.getStatus(), "UNTESTED"), type, now, now);
         }
         log.info("保存数据源配置: {} (type={})", config.getId(), type);
     }
+
+    /** null → 空字符串（避免 OceanBase 驱动 ParameterMetaData NPE） */
+    private static String nn(String value) { return value != null ? value : ""; }
+    private static String nn(String value, String defaultValue) { return value != null ? value : defaultValue; }
 
     public void updateStatus(String id, String status) {
         jdbcTemplate.update(

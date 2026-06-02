@@ -21,10 +21,22 @@ import lombok.extern.slf4j.Slf4j;
  *
  * <p>支持的类型：
  * <ul>
- *   <li>MYSQL   — MySQL 5.7+ / OceanBase（MySQL 兼容模式），端口默认 3306 / OB 默认 2881</li>
- *   <li>ORACLE  — Oracle 11g+，端口默认 1521，需要 SID（CDC_ADMIN_SID）</li>
- *   <li>POSTGRES — PostgreSQL 12+，端口默认 5432</li>
+ *   <li>MYSQL            — MySQL 5.7+ / OceanBase MySQL 模式，默认端口 3306 / OB 默认 2881</li>
+ *   <li>OCEANBASE_ORACLE — OceanBase Oracle 兼容模式，使用 OceanBase JDBC Driver，
+ *                          用户名格式 {@code user@tenant}，默认端口 2881</li>
+ *   <li>ORACLE           — Oracle 11g+，默认端口 1521，需要 SID</li>
+ *   <li>POSTGRES         — PostgreSQL 12+，默认端口 5432</li>
  * </ul>
+ *
+ * <p>OceanBase Oracle 模式示例环境变量：
+ * <pre>
+ * CDC_ADMIN_TYPE=OCEANBASE_ORACLE
+ * CDC_ADMIN_HOST=172.17.0.1
+ * CDC_ADMIN_PORT=2881
+ * CDC_ADMIN_DATABASE=cdcdb
+ * CDC_ADMIN_USERNAME=cdc_admin@oracle_tenant
+ * CDC_ADMIN_PASSWORD=xxx
+ * </pre>
  */
 @Slf4j
 @Configuration
@@ -34,7 +46,7 @@ public class DataSourceConfig {
     @Primary
     @ConfigurationProperties(prefix = "spring.datasource.hikari")
     public DataSource dataSource() {
-        DbType dbType = DbType.fromEnv();
+        DbType dbType   = DbType.fromEnv();
         String url      = buildJdbcUrl(dbType);
         String username = System.getenv().getOrDefault("CDC_ADMIN_USERNAME", defaultUsername(dbType));
         String password = EnvironmentPasswordUtil.getPasswordRequired("CDC_ADMIN_PASSWORD");
@@ -45,7 +57,7 @@ public class DataSourceConfig {
         log.info("  Username: {}", username);
         log.info("  Driver:   {}", driver);
 
-        return DataSourceBuilder
+        HikariDataSource ds = (HikariDataSource) DataSourceBuilder
                 .create()
                 .type(HikariDataSource.class)
                 .url(url)
@@ -53,6 +65,13 @@ public class DataSourceConfig {
                 .password(password)
                 .driverClassName(driver)
                 .build();
+
+        // OceanBase Oracle 模式额外连接属性
+        if (dbType == DbType.OCEANBASE_ORACLE) {
+            ds.addDataSourceProperty("useOraclePrepareExecute", "true");
+        }
+
+        return ds;
     }
 
     // ── URL 构建 ──────────────────────────────────────────────────
@@ -65,10 +84,20 @@ public class DataSourceConfig {
             case MYSQL: {
                 if (port == null) port = "3306";
                 String database = System.getenv().getOrDefault("CDC_ADMIN_DATABASE", "cdc_admin");
-                // useSSL=false 兼容无 SSL 环境；allowPublicKeyRetrieval 兼容 MySQL 8+
                 return String.format(
                     "jdbc:mysql://%s:%s/%s?useUnicode=true&characterEncoding=utf8"
                     + "&useSSL=false&allowPublicKeyRetrieval=true",
+                    host, port, database);
+            }
+            case OCEANBASE_ORACLE: {
+                // OceanBase Oracle 模式使用 OceanBase JDBC Driver
+                // useServerPrepStmts=false 避免 ParameterMetaData 为 null 的问题
+                if (port == null) port = "2881";
+                String database = System.getenv().getOrDefault("CDC_ADMIN_DATABASE", "cdc_admin");
+                return String.format(
+                    "jdbc:oceanbase://%s:%s/%s?compatibleMode=ORACLE"
+                    + "&useUnicode=true&characterEncoding=utf8&useSSL=false"
+                    + "&useServerPrepStmts=false&useInformationSchema=false",
                     host, port, database);
             }
             case ORACLE: {
@@ -90,19 +119,18 @@ public class DataSourceConfig {
 
     private String driverClassName(DbType dbType) {
         switch (dbType) {
-            case MYSQL:    return "com.mysql.cj.jdbc.Driver";
-            case ORACLE:   return "oracle.jdbc.OracleDriver";
-            case POSTGRES: return "org.postgresql.Driver";
-            default:       throw new IllegalStateException("未处理的数据库类型: " + dbType);
+            case MYSQL:            return "com.mysql.cj.jdbc.Driver";
+            case OCEANBASE_ORACLE: return "com.alipay.oceanbase.jdbc.Driver";
+            case ORACLE:           return "oracle.jdbc.OracleDriver";
+            case POSTGRES:         return "org.postgresql.Driver";
+            default:               throw new IllegalStateException("未处理的数据库类型: " + dbType);
         }
     }
 
     private String defaultUsername(DbType dbType) {
         switch (dbType) {
-            case MYSQL:    return "cdc_admin";
-            case ORACLE:   return "cdc_admin";
-            case POSTGRES: return "cdc_admin";
-            default:       return "cdc_admin";
+            case OCEANBASE_ORACLE: return "cdc_admin@oracle_tenant";
+            default:               return "cdc_admin";
         }
     }
 }

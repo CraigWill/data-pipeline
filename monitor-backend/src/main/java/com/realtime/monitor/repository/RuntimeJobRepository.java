@@ -73,31 +73,36 @@ public class RuntimeJobRepository {
 
     // ── 写入 ──────────────────────────────────────────────────────
 
-    /** 新增作业记录（runtime_jobs 只 INSERT，不 UPDATE）。 */
+    /** 新增作业记录。 */
     public void save(RuntimeJob job) {
         try {
             String tablesJson = job.getTables() != null
                 ? objectMapper.writeValueAsString(job.getTables()) : "[]";
 
-            jdbcTemplate.update(
-                "INSERT INTO " + TABLE +
-                " (id, task_id, flink_job_id, job_name, status, schema_name, tables, parallelism," +
-                "  submit_time, start_time, end_time, error_message, last_savepoint_path, last_savepoint_time)" +
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                job.getId(),
-                job.getTaskId(),
-                job.getFlinkJobId(),
-                job.getJobName(),
-                job.getStatus(),
-                job.getSchemaName(),
-                tablesJson,
-                job.getParallelism(),
-                parseTimestamp(job.getSubmitTime(), new Timestamp(System.currentTimeMillis())),
-                parseTimestamp(job.getStartTime(), null),
-                parseTimestamp(job.getEndTime(), null),
-                job.getErrorMessage(),
-                job.getLastSavepointPath(),
-                parseTimestamp(job.getLastSavepointTime(), null));
+            Timestamp submitTime = parseTimestamp(job.getSubmitTime(), new Timestamp(System.currentTimeMillis()));
+            Timestamp startTime  = parseTimestamp(job.getStartTime(), null);
+            Timestamp endTime    = parseTimestamp(job.getEndTime(), null);
+            Timestamp spTime     = parseTimestamp(job.getLastSavepointTime(), null);
+
+            // OceanBase Oracle 驱动不支持 null ParameterMetaData，
+            // 对 null 时间列使用占位 Timestamp(0) 再 UPDATE 为 NULL 的方式不可行，
+            // 改用动态 SQL：只插入非 null 的列
+            StringBuilder cols = new StringBuilder(
+                "id, task_id, flink_job_id, job_name, status, schema_name, tables, parallelism, submit_time");
+            StringBuilder vals = new StringBuilder("?, ?, ?, ?, ?, ?, ?, ?, ?");
+            java.util.List<Object> params = new java.util.ArrayList<>(java.util.List.of(
+                nn(job.getId()), nn(job.getTaskId()), nn(job.getFlinkJobId()),
+                nn(job.getJobName()), nn(job.getStatus(), "SUBMITTING"),
+                nn(job.getSchemaName()), tablesJson, job.getParallelism(), submitTime));
+
+            if (startTime != null) { cols.append(", start_time"); vals.append(", ?"); params.add(startTime); }
+            if (endTime != null)   { cols.append(", end_time");   vals.append(", ?"); params.add(endTime); }
+            if (job.getErrorMessage() != null) { cols.append(", error_message"); vals.append(", ?"); params.add(job.getErrorMessage()); }
+            if (job.getLastSavepointPath() != null) { cols.append(", last_savepoint_path"); vals.append(", ?"); params.add(job.getLastSavepointPath()); }
+            if (spTime != null) { cols.append(", last_savepoint_time"); vals.append(", ?"); params.add(spTime); }
+
+            String sql = "INSERT INTO " + TABLE + " (" + cols + ") VALUES (" + vals + ")";
+            jdbcTemplate.update(sql, params.toArray());
 
             log.info("保存运行时作业: {}", job.getId());
         } catch (JsonProcessingException e) {
@@ -105,6 +110,10 @@ public class RuntimeJobRepository {
             throw new RuntimeException("保存运行时作业失败", e);
         }
     }
+
+    /** null → 空字符串 */
+    private static String nn(String v) { return v != null ? v : ""; }
+    private static String nn(String v, String def) { return v != null ? v : def; }
 
     public void updateSavepoint(String id, String savepointPath) {
         jdbcTemplate.update(
@@ -121,15 +130,20 @@ public class RuntimeJobRepository {
     }
 
     public void updateStatus(String id, String status, String errorMessage) {
-        // 截断过长的错误信息（保守截断到 4000 字符，兼容各数据库）
         String truncatedError = errorMessage;
         if (truncatedError != null && truncatedError.length() > 4000) {
             truncatedError = truncatedError.substring(0, 4000) + "...(truncated)";
         }
-        Timestamp endTime = "RUNNING".equals(status) ? null : new Timestamp(System.currentTimeMillis());
-        jdbcTemplate.update(
-            "UPDATE " + TABLE + " SET status=?, error_message=?, end_time=? WHERE id=?",
-            status, truncatedError, endTime, id);
+        if ("RUNNING".equals(status)) {
+            // 不设置 end_time（避免传 null）
+            jdbcTemplate.update(
+                "UPDATE " + TABLE + " SET status=?, error_message=? WHERE id=?",
+                status, nn(truncatedError), id);
+        } else {
+            jdbcTemplate.update(
+                "UPDATE " + TABLE + " SET status=?, error_message=?, end_time=? WHERE id=?",
+                status, nn(truncatedError), new Timestamp(System.currentTimeMillis()), id);
+        }
         log.info("更新作业状态: {} -> {}", id, status);
     }
 

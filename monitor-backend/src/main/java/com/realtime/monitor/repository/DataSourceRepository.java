@@ -44,13 +44,13 @@ public class DataSourceRepository {
      * 3. 删除废弃的 db_type 列
      */
     private void migrateSchema() {
-        ensureColumn("status", "VARCHAR(20) DEFAULT 'UNTESTED'");
-        ensureColumn("type",   "VARCHAR(20) DEFAULT 'ORACLE'");
+        ensureColumn("status", "VARCHAR2(20) DEFAULT 'UNTESTED'");
+        ensureColumn("type",   "VARCHAR2(20) DEFAULT 'ORACLE'");
         migrateDbTypeToType();
         dropColumnIfExists("db_type");
     }
 
-    /** 确保指定列存在，不存在则添加。 */
+    /** 确保指定列存在，不存在则添加（使用 VARCHAR2 兼容 Oracle 模式）。 */
     private void ensureColumn(String column, String definition) {
         try {
             jdbcTemplate.queryForList("SELECT " + column + " FROM " + TABLE + " WHERE 1=0");

@@ -42,6 +42,31 @@
             <artifactId>flink-connector-oracle-cdc</artifactId>
         </dependency>
 
+        <!-- Flink CDC MySQL Connector (for MySQL / OceanBase MySQL mode) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-mysql-cdc</artifactId>
+        </dependency>
+
+        <!-- Flink CDC OceanBase Connector (for OceanBase Oracle mode) -->
+        <dependency>
+            <groupId>org.apache.flink</groupId>
+            <artifactId>flink-connector-oceanbase-cdc</artifactId>
+        </dependency>
+
+        <!-- MySQL JDBC Driver (for MySQL/OceanBase MySQL CDC) -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+        </dependency>
+
+        <!-- OceanBase JDBC Driver -->
+        <dependency>
+            <groupId>com.oceanbase</groupId>
+            <artifactId>oceanbase-client</artifactId>
+            <version>2.4.18</version>
+        </dependency>
+
         <!-- Oracle JDBC Driver -->
         <dependency>
             <groupId>com.oracle.database.jdbc</groupId>

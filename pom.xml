@@ -100,6 +100,16 @@
                 <artifactId>flink-connector-oracle-cdc</artifactId>
                 <version>${flink.cdc.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.apache.flink</groupId>
+                <artifactId>flink-connector-mysql-cdc</artifactId>
+                <version>${flink.cdc.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.flink</groupId>
+                <artifactId>flink-connector-oceanbase-cdc</artifactId>
+                <version>${flink.cdc.version}</version>
+            </dependency>
 
             <!-- Oracle JDBC - 使用 19.x 版本兼容 Oracle 11g -->
             <dependency>

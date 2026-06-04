@@ -23,22 +23,23 @@
 -- END;
 -- /
 
--- ============================================================
+- ============================================================
 -- 1. APP_CONFIG — 应用运行时配置
 -- ============================================================
 CREATE TABLE cdc_admin.app_config (
+    id           VARCHAR2(100)  NOT NULL,
     config_key   VARCHAR2(100)  NOT NULL,
     config_value VARCHAR2(1000) NOT NULL,
     description  VARCHAR2(500),
     created_at   DATE           DEFAULT SYSDATE,
     updated_at   DATE           DEFAULT SYSDATE,
-    CONSTRAINT pk_app_config PRIMARY KEY (config_key)
+    CONSTRAINT pk_app_config PRIMARY KEY (id)
 );
 
 COMMENT ON TABLE  cdc_admin.app_config              IS '应用运行时配置表';
 COMMENT ON COLUMN cdc_admin.app_config.config_key   IS '配置键';
 COMMENT ON COLUMN cdc_admin.app_config.config_value IS '配置值';
-COMMENT ON COLUMN cdc_admin.app_config.description  IS '配置说明';
+COMMENT ON COLUMN cdc_admin.app_config.description  IS '配置-说明';
 
 -- ============================================================
 -- 2. CDC_DATASOURCES — 数据源配置

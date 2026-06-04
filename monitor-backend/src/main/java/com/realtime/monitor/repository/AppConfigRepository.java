@@ -4,6 +4,7 @@ import java.sql.Timestamp;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -13,7 +14,8 @@ import lombok.extern.slf4j.Slf4j;
 /**
  * 应用配置 Repository
  *
- * <p>从 app_config 表读写系统运行时配置，使用标准 SQL（无数据库特定语法）。
+ * <p>表结构：id(PK) + config_key + config_value + description + created_at + updated_at
+ * <p>config_key 为普通字段（非 PK），通过 config_key 做业务查询。
  */
 @Slf4j
 @Repository
@@ -25,38 +27,56 @@ public class AppConfigRepository {
 
     public AppConfigRepository(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
-        ensureTableExists();
+        migrateSchema();
+        insertDefaults();
     }
 
-    // ── 表初始化 ──────────────────────────────────────────────────
+    // ── 表结构迁移 ────────────────────────────────────────────────
 
     /**
-     * 确保 app_config 表存在。
-     * 使用标准 SQL：先查 information_schema，不存在则 CREATE TABLE。
+     * 确保表存在且有 id 列。根据数据库类型使用不同 DDL。
      */
-    private void ensureTableExists() {
+    private void migrateSchema() {
         try {
-            // 先尝试查询，如果表存在直接返回
             jdbcTemplate.queryForObject("SELECT COUNT(*) FROM " + TABLE, Integer.class);
-            log.debug("APP_CONFIG 表已就绪");
+            // 表存在，检查是否有 id 列
+            try {
+                jdbcTemplate.queryForList("SELECT id FROM " + TABLE + " WHERE 1=0");
+                log.debug("APP_CONFIG 表已就绪（含 id 列）");
+            } catch (Exception e) {
+                // id 列不存在，添加
+                try {
+                    jdbcTemplate.execute("ALTER TABLE " + TABLE + " ADD id VARCHAR2(100)");
+                    List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                        "SELECT config_key FROM " + TABLE + " WHERE id IS NULL");
+                    for (Map<String, Object> row : rows) {
+                        String key = (String) row.get("config_key");
+                        jdbcTemplate.update("UPDATE " + TABLE + " SET id=? WHERE config_key=?",
+                            generateId(), key);
+                    }
+                    log.info("已为 APP_CONFIG 表添加 id 字段并填充数据");
+                } catch (Exception addEx) {
+                    log.debug("id 字段添加失败: {}", addEx.getMessage());
+                }
+            }
         } catch (Exception e) {
-            // 表不存在，创建（使用跨数据库兼容的 DDL）
+            // 表不存在，创建（Oracle 兼容语法，OceanBase Oracle 和原生 Oracle 都支持）
             try {
                 jdbcTemplate.execute(
                     "CREATE TABLE " + TABLE + " (" +
-                    "  config_key   VARCHAR(100)  NOT NULL," +
-                    "  config_value VARCHAR(1000) NOT NULL," +
-                    "  description  VARCHAR(500)," +
+                    "  id           VARCHAR2(100) NOT NULL," +
+                    "  config_key   VARCHAR2(100) NOT NULL," +
+                    "  config_value VARCHAR2(1000) NOT NULL," +
+                    "  description  VARCHAR2(500)," +
                     "  created_at   TIMESTAMP," +
                     "  updated_at   TIMESTAMP," +
-                    "  PRIMARY KEY (config_key)" +
+                    "  CONSTRAINT pk_app_config PRIMARY KEY (id)" +
                     ")");
                 log.info("APP_CONFIG 表创建成功");
             } catch (Exception createEx) {
-                log.warn("APP_CONFIG 表创建失败（可能已存在）: {}", createEx.getMessage());
+                log.warn("APP_CONFIG 表创建失败: {}", createEx.getMessage());
             }
         }
-        insertDefaults();
     }
 
     private void insertDefaults() {
@@ -109,10 +129,10 @@ public class AppConfigRepository {
         }
     }
 
-    // ── 写入（SELECT 检查后 INSERT / UPDATE）─────────────────────
+    // ── 写入 ─────────────────────────────────────────────────────
 
     /**
-     * 存在则更新，不存在则插入（不使用任何数据库特定的 upsert 语法）。
+     * 按 config_key 查找，存在则更新，不存在则插入（自动生成 id）。
      */
     public void upsert(String key, String value, String description) {
         try {
@@ -124,11 +144,12 @@ public class AppConfigRepository {
                     " SET config_value=?, description=?, updated_at=? WHERE config_key=?",
                     value, desc, now, key);
             } else {
+                String id = generateId();
                 jdbcTemplate.update(
                     "INSERT INTO " + TABLE +
-                    " (config_key, config_value, description, created_at, updated_at)" +
-                    " VALUES (?, ?, ?, ?, ?)",
-                    key, value, desc, now, now);
+                    " (id, config_key, config_value, description, created_at, updated_at)" +
+                    " VALUES (?, ?, ?, ?, ?, ?)",
+                    id, key, value, desc, now, now);
             }
             log.debug("配置已保存: {} = {}", key, value);
         } catch (Exception e) {
@@ -144,10 +165,11 @@ public class AppConfigRepository {
                     "UPDATE " + TABLE + " SET config_value=?, updated_at=? WHERE config_key=?",
                     value, now, key);
             } else {
+                String id = generateId();
                 jdbcTemplate.update(
                     "INSERT INTO " + TABLE +
-                    " (config_key, config_value, created_at, updated_at) VALUES (?, ?, ?, ?)",
-                    key, value, now, now);
+                    " (id, config_key, config_value, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    id, key, value, now, now);
             }
         } catch (Exception e) {
             log.error("保存配置失败 [{}]: {}", key, e.getMessage());
@@ -156,5 +178,11 @@ public class AppConfigRepository {
 
     public void delete(String key) {
         jdbcTemplate.update("DELETE FROM " + TABLE + " WHERE config_key = ?", key);
+    }
+
+    // ── 工具 ──────────────────────────────────────────────────────
+
+    private static String generateId() {
+        return UUID.randomUUID().toString().replace("-", "").substring(0, 20);
     }
 }

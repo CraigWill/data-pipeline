@@ -266,6 +266,24 @@ services:
           cpus: '1.0'
           memory: 1G
 
+  # OceanBase Binlog Service (obbinlog-ce) — OceanBase Oracle 租户 CDC 必需
+  # 支持 OceanBase 4.2.5.x
+  obbinlog:
+    image: oceanbase/obbinlog-ce:4.2.5-test
+    container_name: obbinlog
+    extra_hosts:
+      - "centos-ob:172.22.0.1"
+    environment:
+      - OB_SYS_USERNAME=root
+      - OB_SYS_PASSWORD=${OB_SYS_PASSWORD:-password}
+    ports:
+      - "2983:2983"
+    networks:
+      - flink-network
+    restart: unless-stopped
+    profiles:
+      - oceanbase-cdc
+
   # 监控后端
   monitor-backend:
     build:

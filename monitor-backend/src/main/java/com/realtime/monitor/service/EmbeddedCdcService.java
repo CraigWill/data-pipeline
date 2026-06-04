@@ -199,6 +199,29 @@ public class EmbeddedCdcService {
                 programArgs.add(request.getJobName());
             }
 
+            // 添加数据库类型参数
+            programArgs.add("--dbType");
+            String dbType = request.getDbType() != null ? request.getDbType() : "ORACLE";
+            programArgs.add(dbType);
+
+            // OceanBase Oracle 模式需要额外的 oblogproxy 参数
+            if ("OCEANBASE_ORACLE".equalsIgnoreCase(dbType)) {
+                programArgs.add("--logProxyHost");
+                programArgs.add(System.getenv().getOrDefault("OBLOGPROXY_HOST", "obbinlog"));
+                programArgs.add("--logProxyPort");
+                programArgs.add(System.getenv().getOrDefault("OBLOGPROXY_PORT", "2983"));
+                programArgs.add("--tenantName");
+                // 从 username 中提取租户名: username@tenant → tenant
+                String tenantName = "oratenant";
+                if (request.getUsername() != null && request.getUsername().contains("@")) {
+                    tenantName = request.getUsername().split("@")[1];
+                }
+                programArgs.add(tenantName);
+                programArgs.add("--rsList");
+                // rsList 格式: ip:rpc_port:sql_port（不能用 hostname，libobcdc 不认）
+                programArgs.add(request.getHostname() + ":2882:" + request.getPort());
+            }
+
             // 3. 通过 REST API 提交作业
             // 使用 UriComponentsBuilder 防止 URL 注入和目录遍历
             URI uri = buildFlinkUri("jars", jarId, "run");
@@ -288,6 +311,11 @@ public class EmbeddedCdcService {
         request.setOutputPath(taskConfig.getOutputPath());
         request.setParallelism(taskConfig.getParallelism());
         request.setSplitSize(taskConfig.getSplitSize());
+
+        // 设置数据库类型
+        if (dsConfig != null && dsConfig.getType() != null) {
+            request.setDbType(dsConfig.getType());
+        }
         
         // 设置作业名称
         if (taskConfig.getName() != null && !taskConfig.getName().isEmpty()) {

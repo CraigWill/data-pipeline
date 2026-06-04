@@ -18,6 +18,7 @@ import org.apache.flink.api.common.serialization.Encoder;
 import org.apache.flink.cdc.connectors.base.options.StartupOptions;
 import org.apache.flink.cdc.connectors.base.source.jdbc.JdbcIncrementalSource;
 import org.apache.flink.cdc.connectors.oracle.source.OracleSourceBuilder;
+import org.apache.flink.cdc.connectors.mysql.source.MySqlSource;
 import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
 import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.Configuration;
@@ -75,6 +76,7 @@ public class CdcJobMain {
         int parallelism = Integer.parseInt(params.getOrDefault("parallelism", "2"));
         int splitSize = Integer.parseInt(params.getOrDefault("splitSize", "8096"));
         String jobName = params.get("jobName");  // 可选的作业名称
+        String dbType = params.getOrDefault("dbType", "ORACLE").toUpperCase();
         String checkpointDir = params.getOrDefault("checkpointDir", "file:///opt/flink/checkpoints");
         String savepointDir = params.getOrDefault("savepointDir", "file:///opt/flink/savepoints");
 
@@ -84,6 +86,7 @@ public class CdcJobMain {
         }
 
         LOG.info("=== CDC Job Starting ===");
+        LOG.info("  DB Type: {}", dbType);
         LOG.info("  DB: {}:{}/{}", hostname, port, database);
         LOG.info("  Schema: {}, Tables: {}", schema, tables);
         LOG.info("  Output: {}, Parallelism: {}", outputPath, parallelism);
@@ -92,20 +95,45 @@ public class CdcJobMain {
         LOG.info("  Savepoint Dir: {}", savepointDir);
         LOG.info("  Password present: {}", password != null && !password.isEmpty());
 
-        // 注册 Oracle JDBC 驱动
+        // 注册 JDBC 驱动（根据数据库类型）
+        String jdbcDriverClass;
+        switch (dbType) {
+            case "MYSQL":
+            case "OCEANBASE":
+                jdbcDriverClass = "com.mysql.cj.jdbc.Driver";
+                break;
+            case "OCEANBASE_ORACLE":
+                jdbcDriverClass = "com.alipay.oceanbase.jdbc.Driver";
+                break;
+            default: // ORACLE
+                jdbcDriverClass = "oracle.jdbc.OracleDriver";
+                break;
+        }
         try {
-            Class<?> driverClass = Class.forName("oracle.jdbc.OracleDriver");
+            Class<?> driverClass = Class.forName(jdbcDriverClass);
             java.sql.Driver driver = (java.sql.Driver) driverClass.getDeclaredConstructor().newInstance();
             java.sql.DriverManager.registerDriver(driver);
-            LOG.info("Oracle JDBC Driver registered successfully");
+            LOG.info("{} JDBC Driver registered successfully", dbType);
         } catch (ClassNotFoundException | NoSuchMethodException | InstantiationException
                 | IllegalAccessException | java.lang.reflect.InvocationTargetException
                 | java.sql.SQLException e) {
-            LOG.warn("Oracle JDBC Driver 注册失败: {}", e.getMessage());
+            LOG.warn("{} JDBC Driver 注册失败: {}", dbType, e.getMessage());
         }
 
         // 先测试 JDBC 连接，确认凭据有效
-        String testUrl = "jdbc:oracle:thin:@" + hostname + ":" + port + ":" + database;
+        String testUrl;
+        switch (dbType) {
+            case "MYSQL":
+            case "OCEANBASE":
+                testUrl = "jdbc:mysql://" + hostname + ":" + port + "/" + database + "?useSSL=false";
+                break;
+            case "OCEANBASE_ORACLE":
+                testUrl = "jdbc:oceanbase://" + hostname + ":" + port + "/" + database + "?compatibleMode=ORACLE";
+                break;
+            default: // ORACLE
+                testUrl = "jdbc:oracle:thin:@" + hostname + ":" + port + ":" + database;
+                break;
+        }
         try {
             Properties testProps = new Properties();
             testProps.setProperty("user", username);
@@ -162,79 +190,163 @@ public class CdcJobMain {
             tableListBuilder.append(schema).append(".").append(tables.get(i).trim());
         }
 
-        // Debezium 配置
-        Properties debeziumProps = new Properties();
-        debeziumProps.setProperty("log.mining.strategy", "online_catalog");
-        debeziumProps.setProperty("log.mining.continuous.mine", "true");
-        debeziumProps.setProperty("decimal.handling.mode", "string");
-        debeziumProps.setProperty("time.precision.mode", "adaptive");
-        debeziumProps.setProperty("database.connection.timeout.ms", "30000");
-        debeziumProps.setProperty("database.query.timeout.ms", "600000");
-        debeziumProps.setProperty("database.jdbc.driver", "oracle.jdbc.OracleDriver");
-        debeziumProps.setProperty("database.tcpKeepAlive", "true");
-        debeziumProps.setProperty("database.autocommit", "false");  // 禁用自动提交，LogMiner 需要手动提交
-        debeziumProps.setProperty("errors.max.retries", "-1");
-        debeziumProps.setProperty("errors.retry.delay.initial.ms", "1000");
-        debeziumProps.setProperty("errors.retry.delay.max.ms", "30000");
-        debeziumProps.setProperty("errors.tolerance", "all");
-        debeziumProps.setProperty("log.mining.restart.connection", "false");
-        debeziumProps.setProperty("log.mining.session.max.ms", "0");
-        // DDL 捕获配置
-        debeziumProps.setProperty("include.schema.changes", "true");  // 启用 schema 变更捕获
-        debeziumProps.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");  // 只记录监控表的 DDL
-        // LogMiner 批处理优化 - 提高大批量数据捕获性能
-        debeziumProps.setProperty("log.mining.batch.size.default", "50000");  // 从 1000 增加到 50000
-        debeziumProps.setProperty("log.mining.batch.size.min", "10000");      // 从 100 增加到 10000
-        debeziumProps.setProperty("log.mining.batch.size.max", "100000");     // 从 10000 增加到 100000
-        debeziumProps.setProperty("log.mining.sleep.time.default.ms", "1000"); // 从 3000 减少到 1000
-        debeziumProps.setProperty("log.mining.sleep.time.min.ms", "200");      // 从 1000 减少到 200
-        debeziumProps.setProperty("log.mining.sleep.time.max.ms", "5000");     // 从 10000 减少到 5000
-        debeziumProps.setProperty("log.mining.sleep.time.increment.ms", "200"); // 从 500 减少到 200
-        debeziumProps.setProperty("log.mining.transaction.retention.hours", "2");
-        debeziumProps.setProperty("database.connection.pool.size", "3");
-        // LogMiner 会话管理配置
-        debeziumProps.setProperty("log.mining.session.max.ms", "0");  // 不限制会话时长
-        debeziumProps.setProperty("log.mining.restart.connection", "true");  // 连接断开时重新连接
-        debeziumProps.setProperty("log.mining.archive.destination.name", "");  // 不指定归档目标
-        // log_mining_flush 表由 Debezium 自动在连接用户 schema 下创建和管理
-        // 不再指定 flink_user schema，避免权限和 synonym 冲突
-        // 显式设置数据库连接信息（确保 coordinator 序列化后也能正确连接）
-        debeziumProps.setProperty("database.hostname", hostname);
-        debeziumProps.setProperty("database.port", String.valueOf(port));
-        debeziumProps.setProperty("database.user", username);
-        debeziumProps.setProperty("database.password", password);
-        debeziumProps.setProperty("database.dbname", database);
-        // JDBC URL 嵌入凭据（Oracle 11g SID 格式）
-        // 原因：OperatorCoordinator 在 JobManager 上运行，Debezium Configuration 的
-        // subset("database.",true) 操作后 password 可能丢失（null），
-        // 但 URL 中嵌入的凭据不受影响，Oracle thin driver 会优先使用 URL 中的凭据
-        String jdbcUrl = "jdbc:oracle:thin:" + username + "/" + password + "@" + hostname + ":" + port + ":" + database;
-        debeziumProps.setProperty("database.url", jdbcUrl);
-        LOG.info("  JDBC URL (credentials embedded): jdbc:oracle:thin:{}/*****@{}:{}:{}", username, hostname, port, database);
-        LOG.info("  DDL Capture: ENABLED");
+        // 根据数据库类型构建不同的 CDC Source
+        DataStream<String> cdcStream;
 
-        JdbcIncrementalSource<String> oracleSource = new OracleSourceBuilder<String>()
-                .hostname(hostname)
-                .port(port)
-                .databaseList(database)
-                .schemaList(schema)
-                .tableList(tableListBuilder.toString())
-                .username(username)
-                .password(password)
-                .deserializer(new JsonDebeziumDeserializationSchema())
-                .includeSchemaChanges(true)  // 启用 DDL 事件捕获
-                .startupOptions(StartupOptions.latest())
-                .debeziumProperties(debeziumProps)
-                .splitSize(splitSize)
-                .build();
-        
-        LOG.info("=== Schema Change Capture ENABLED ===");
+        switch (dbType) {
+            case "MYSQL":
+            case "OCEANBASE": {
+                // MySQL / OceanBase MySQL 模式使用 MySqlSource
+                // 构建 database.table 列表格式
+                String[] tableArray = tables.stream()
+                        .map(t -> database + "." + t.trim())
+                        .toArray(String[]::new);
 
-        // CDC 源必须设置并行度为 1，避免重复读取
-        // Oracle LogMiner 只能有一个读取器，多个并行度会导致数据重复
-        DataStream<String> cdcStream = env
-                .fromSource(oracleSource, WatermarkStrategy.noWatermarks(), "Oracle CDC Source")
-                .setParallelism(1);  // 强制设置为 1，避免数据重复
+                MySqlSource<String> mysqlSource = MySqlSource.<String>builder()
+                        .hostname(hostname)
+                        .port(port)
+                        .databaseList(database)
+                        .tableList(tableArray)
+                        .username(username)
+                        .password(password)
+                        .deserializer(new JsonDebeziumDeserializationSchema())
+                        .splitSize(splitSize)
+                        .build();
+
+                cdcStream = env
+                        .fromSource(mysqlSource, WatermarkStrategy.noWatermarks(),
+                                dbType + " CDC Source")
+                        .setParallelism(1);
+
+                LOG.info("=== {} CDC Source configured ===", dbType);
+                break;
+            }
+            case "OCEANBASE_ORACLE": {
+                // OceanBase Oracle 租户使用 OceanBase CDC Connector（通过 oblogproxy）
+                // 额外参数: --logProxyHost, --logProxyPort, --tenantName
+                String logProxyHost = params.getOrDefault("logProxyHost", "oblogproxy");
+                int logProxyPort = Integer.parseInt(params.getOrDefault("logProxyPort", "2983"));
+                String tenantName = params.getOrDefault("tenantName", "oratenant");
+
+                LOG.info("  OceanBase Oracle CDC via LogProxy: {}:{}", logProxyHost, logProxyPort);
+                LOG.info("  Tenant: {}", tenantName);
+
+                // OceanBase Oracle 模式: databaseName = schema（大写），tableName = 表名正则
+                // tableName 支持正则，多表用 | 分隔
+                String obTableName = tables.stream()
+                        .map(t -> t.trim().toUpperCase())
+                        .reduce((a, b) -> a + "|" + b)
+                        .orElse(".*");
+
+                // OceanBase CDC 要求 start_timestamp 不能为 0，使用当前时间戳（秒）
+                long startTimestampSec = System.currentTimeMillis() / 1000L;
+                LOG.info("  OceanBase CDC startTimestamp: {} (current time)", startTimestampSec);
+
+                // obcdc 需要 sys 租户的 root 凭据来读取内部元数据
+                Properties obcdcProps = new Properties();
+                obcdcProps.setProperty("cluster_user", "root");
+                obcdcProps.setProperty("cluster_password", params.getOrDefault("obSysPassword", "password"));
+
+                org.apache.flink.streaming.api.functions.source.SourceFunction<String> obSource =
+                    org.apache.flink.cdc.connectors.oceanbase.OceanBaseSource.<String>builder()
+                        .hostname(hostname)
+                        .port(port)
+                        .username(username)
+                        .password(password)
+                        .tenantName(tenantName)
+                        .databaseName(schema.toUpperCase())
+                        .tableName(obTableName)
+                        .compatibleMode("ORACLE")
+                        .jdbcDriver("com.oceanbase.jdbc.Driver")
+                        .connectTimeout(Duration.ofMinutes(3))
+                        .rsList(params.getOrDefault("rsList", hostname + ":2882:" + port))
+                        .logProxyHost(logProxyHost)
+                        .logProxyPort(logProxyPort)
+                        .logProxyClientId("flink-cdc-" + System.currentTimeMillis())
+                        .startupTimestamp(startTimestampSec)
+                        .obcdcProperties(obcdcProps)
+                        .deserializer(new JsonDebeziumDeserializationSchema())
+                        .build();
+
+                // OceanBaseSource 返回 SourceFunction（旧式 API），使用 addSource
+                cdcStream = env
+                        .addSource(obSource, "OceanBase Oracle CDC Source")
+                        .setParallelism(1);
+
+                LOG.info("=== OceanBase Oracle CDC Source configured (via oblogproxy) ===");
+                break;
+            }
+            default: {
+                // ORACLE（默认）- 使用 OracleSourceBuilder
+                // Debezium 配置
+                Properties debeziumProps = new Properties();
+                debeziumProps.setProperty("log.mining.strategy", "online_catalog");
+                debeziumProps.setProperty("log.mining.continuous.mine", "true");
+                debeziumProps.setProperty("decimal.handling.mode", "string");
+                debeziumProps.setProperty("time.precision.mode", "adaptive");
+                debeziumProps.setProperty("database.connection.timeout.ms", "30000");
+                debeziumProps.setProperty("database.query.timeout.ms", "600000");
+                debeziumProps.setProperty("database.jdbc.driver", "oracle.jdbc.OracleDriver");
+                debeziumProps.setProperty("database.tcpKeepAlive", "true");
+                debeziumProps.setProperty("database.autocommit", "false");
+                debeziumProps.setProperty("errors.max.retries", "-1");
+                debeziumProps.setProperty("errors.retry.delay.initial.ms", "1000");
+                debeziumProps.setProperty("errors.retry.delay.max.ms", "30000");
+                debeziumProps.setProperty("errors.tolerance", "all");
+                debeziumProps.setProperty("log.mining.restart.connection", "false");
+                debeziumProps.setProperty("log.mining.session.max.ms", "0");
+                // DDL 捕获配置
+                debeziumProps.setProperty("include.schema.changes", "true");
+                debeziumProps.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
+                // LogMiner 批处理优化
+                debeziumProps.setProperty("log.mining.batch.size.default", "50000");
+                debeziumProps.setProperty("log.mining.batch.size.min", "10000");
+                debeziumProps.setProperty("log.mining.batch.size.max", "100000");
+                debeziumProps.setProperty("log.mining.sleep.time.default.ms", "1000");
+                debeziumProps.setProperty("log.mining.sleep.time.min.ms", "200");
+                debeziumProps.setProperty("log.mining.sleep.time.max.ms", "5000");
+                debeziumProps.setProperty("log.mining.sleep.time.increment.ms", "200");
+                debeziumProps.setProperty("log.mining.transaction.retention.hours", "2");
+                debeziumProps.setProperty("database.connection.pool.size", "3");
+                // LogMiner 会话管理配置
+                debeziumProps.setProperty("log.mining.session.max.ms", "0");
+                debeziumProps.setProperty("log.mining.restart.connection", "true");
+                debeziumProps.setProperty("log.mining.archive.destination.name", "");
+                // 显式设置数据库连接信息
+                debeziumProps.setProperty("database.hostname", hostname);
+                debeziumProps.setProperty("database.port", String.valueOf(port));
+                debeziumProps.setProperty("database.user", username);
+                debeziumProps.setProperty("database.password", password);
+                debeziumProps.setProperty("database.dbname", database);
+                // JDBC URL 嵌入凭据（Oracle 11g SID 格式）
+                String jdbcUrl = "jdbc:oracle:thin:" + username + "/" + password + "@" + hostname + ":" + port + ":" + database;
+                debeziumProps.setProperty("database.url", jdbcUrl);
+                LOG.info("  JDBC URL (credentials embedded): jdbc:oracle:thin:{}/*****@{}:{}:{}", username, hostname, port, database);
+                LOG.info("  DDL Capture: ENABLED");
+
+                JdbcIncrementalSource<String> oracleSource = new OracleSourceBuilder<String>()
+                        .hostname(hostname)
+                        .port(port)
+                        .databaseList(database)
+                        .schemaList(schema)
+                        .tableList(tableListBuilder.toString())
+                        .username(username)
+                        .password(password)
+                        .deserializer(new JsonDebeziumDeserializationSchema())
+                        .includeSchemaChanges(true)
+                        .startupOptions(StartupOptions.latest())
+                        .debeziumProperties(debeziumProps)
+                        .splitSize(splitSize)
+                        .build();
+
+                LOG.info("=== Schema Change Capture ENABLED ===");
+
+                cdcStream = env
+                        .fromSource(oracleSource, WatermarkStrategy.noWatermarks(), "Oracle CDC Source")
+                        .setParallelism(1);
+                break;
+            }
+        }
         
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmssSSS"));
         

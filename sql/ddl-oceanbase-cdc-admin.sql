@@ -16,12 +16,13 @@ SET NAMES utf8mb4;
 -- 1. app_config — 应用运行时配置
 -- ============================================================
 CREATE TABLE IF NOT EXISTS app_config (
+    id           VARCHAR(100)   NOT NULL,
     config_key   VARCHAR(100)   NOT NULL,
     config_value VARCHAR(1000)  NOT NULL,
     description  VARCHAR(500),
     created_at   TIMESTAMP      DEFAULT CURRENT_TIMESTAMP,
     updated_at   TIMESTAMP      DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (config_key)
+    PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='应用运行时配置表';
 
 -- ============================================================

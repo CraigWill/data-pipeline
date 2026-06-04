@@ -9,7 +9,7 @@
   },
   "dependencies": {
     "@icon-park/vue-next": "^1.4.2",
-    "axios": "^1.9.0",
+    "axios": "^1.15.0",
     "chart.js": "^4.5.1",
     "core-js": "^3.37.0",
     "pinia": "^2.1.0",
@@ -22,6 +22,12 @@
     "@vue/cli-service": "~5.0.8",
     "@vue/compiler-sfc": "^3.4.0",
     "webpack": "^5.91.0"
+  },
+  "overrides": {
+    "postcss": "^8.5.10",
+    "serialize-javascript": "^7.0.5",
+    "uuid": "^11.1.1",
+    "webpack-dev-server": "^5.2.4"
   },
   "browserslist": [
     "> 1%",

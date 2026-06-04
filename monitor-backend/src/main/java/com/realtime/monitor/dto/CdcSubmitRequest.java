@@ -21,4 +21,5 @@ public class CdcSubmitRequest {
     private String startupMode = "latest";
     private String jobName;
     private String savepointPath;  // 从 savepoint 恢复时使用
+    private String dbType = "ORACLE";  // 数据库类型: ORACLE, MYSQL, OCEANBASE, OCEANBASE_ORACLE
 }

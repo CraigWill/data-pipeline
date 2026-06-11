@@ -112,6 +112,13 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Aliyun OSS SDK -->
+        <dependency>
+            <groupId>com.aliyun.oss</groupId>
+            <artifactId>aliyun-sdk-oss</artifactId>
+            <version>3.17.4</version>
+        </dependency>
+
         <!-- OWASP Java Encoder — ESAPI Encoder 的官方推荐替代品 -->
         <!-- 提供等价的 encodeForHTML/encodeForURL/encodeForJavaScript/encodeForCSS -->
         <!-- 零配置、高性能、无外部依赖 -->

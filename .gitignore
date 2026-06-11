@@ -39,6 +39,7 @@ Thumbs.db
 flink-checkpoints/
 flink-savepoints/
 .flink/
+bin
 
 # Output
 /data/

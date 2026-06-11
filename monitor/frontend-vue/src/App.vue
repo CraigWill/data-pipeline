@@ -8,6 +8,10 @@
       <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
         沪ICP备2026022144号
       </a>
+      <span class="footer-divider">|</span>
+      <a href="https://www.beian.gov.cn/portal/registerSystemInfo?recordcode=31010702010335" target="_blank" rel="noopener noreferrer">
+        <img src="/beian-logo.png" alt="公安备案" style="width:16px;height:17px;vertical-align:middle;margin-right:4px;" />沪公网安备31010702010335号
+      </a>
     </footer>
   </div>
 </template>
@@ -60,6 +64,11 @@ const isLoginPage = computed(() => route.path === '/login')
   color: #1677ff;
 }
 
+.footer-divider {
+  margin: 0 8px;
+  color: #d9d9d9;
+}
+
 /* 登录页背景为深色渐变，footer 改为白色半透明 */
 .login-footer {
   position: fixed;
@@ -81,5 +90,9 @@ const isLoginPage = computed(() => route.path === '/login')
 
 .login-footer a:hover {
   color: #fff;
+}
+
+.login-footer .footer-divider {
+  color: rgba(255, 255, 255, 0.4);
 }
 </style>

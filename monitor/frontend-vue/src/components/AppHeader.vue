@@ -15,6 +15,7 @@
         <RouterLink to="/jobs" class="nav-item">作业监控</RouterLink>
         <RouterLink to="/events" class="nav-item">CDC事件</RouterLink>
         <RouterLink to="/cluster" class="nav-item">集群状态</RouterLink>
+        <RouterLink to="/simulator" class="nav-item">模拟CDC事件</RouterLink>
       </nav>
 
       <!-- 用户区 -->
@@ -39,6 +40,7 @@
         <RouterLink to="/jobs" class="mobile-nav-item">作业监控</RouterLink>
         <RouterLink to="/events" class="mobile-nav-item">CDC事件</RouterLink>
         <RouterLink to="/cluster" class="mobile-nav-item">集群状态</RouterLink>
+        <RouterLink to="/simulator" class="mobile-nav-item">模拟CDC事件</RouterLink>
         <div class="mobile-nav-divider"></div>
         <div class="mobile-nav-user">
           <span>{{ username }}</span>

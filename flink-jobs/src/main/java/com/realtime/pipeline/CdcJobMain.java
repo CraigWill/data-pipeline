@@ -17,8 +17,8 @@ import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.serialization.Encoder;
 import org.apache.flink.cdc.connectors.base.options.StartupOptions;
 import org.apache.flink.cdc.connectors.base.source.jdbc.JdbcIncrementalSource;
-import org.apache.flink.cdc.connectors.oracle.source.OracleSourceBuilder;
 import org.apache.flink.cdc.connectors.mysql.source.MySqlSource;
+import org.apache.flink.cdc.connectors.oracle.source.OracleSourceBuilder;
 import org.apache.flink.cdc.debezium.JsonDebeziumDeserializationSchema;
 import org.apache.flink.configuration.CheckpointingOptions;
 import org.apache.flink.configuration.Configuration;
@@ -242,7 +242,10 @@ public class CdcJobMain {
                 long startTimestampSec = System.currentTimeMillis() / 1000L;
                 LOG.info("  OceanBase CDC startTimestamp: {} (current time)", startTimestampSec);
 
-                // obcdc 需要 sys 租户的 root 凭据来读取内部元数据
+                // obcdc 需要 sys 租户凭据来读取集群元数据并拉取 clog。
+                // 注意：实测表明 cluster_user 实际由 oblogproxy(obbinlog) 的 conf.json
+                //       (容器环境变量 OB_SYS_USERNAME) 决定，此处 obcdcProperties 不生效。
+                //       要切换最小权限只读账号(cdc_reader)请改 obbinlog 容器的 OB_SYS_USERNAME。
                 Properties obcdcProps = new Properties();
                 obcdcProps.setProperty("cluster_user", "root");
                 obcdcProps.setProperty("cluster_password", params.getOrDefault("obSysPassword", "password"));
@@ -392,13 +395,15 @@ public class CdcJobMain {
         LOG.info("=== DDL Event Sink configured ===");
 
         for (String tableName : targetTables) {
+            // OceanBase Oracle 模式只记录变更（INSERT/UPDATE/DELETE），跳过快照 READ
+            final boolean skipRead = "OCEANBASE_ORACLE".equals(dbType);
             DataStream<String> tableStream = dmlStream
                     .filter(jsonStr -> {
                         try { return extractTableName(jsonStr).equalsIgnoreCase(tableName); }
                         catch (Exception e) { return false; }
                     })
                     .name("Filter " + tableName)
-                    .map(jsonStr -> convertToCSV(jsonStr))
+                    .map(jsonStr -> convertToCSV(jsonStr, skipRead))
                     .filter(csv -> csv != null)
                     .setParallelism(1)  // 每个表的写入使用单并行度，避免重复
                     .name("CSV - " + tableName);
@@ -624,13 +629,16 @@ public class CdcJobMain {
         return "UNKNOWN";
     }
 
-    private static String convertToCSV(String jsonStr) {
+    private static String convertToCSV(String jsonStr, boolean skipRead) {
         try {
             String operation = "UNKNOWN";
             if (jsonStr.contains("\"op\":\"c\"")) operation = "INSERT";
             else if (jsonStr.contains("\"op\":\"u\"")) operation = "UPDATE";
             else if (jsonStr.contains("\"op\":\"d\"")) operation = "DELETE";
             else if (jsonStr.contains("\"op\":\"r\"")) operation = "READ";
+
+            // OceanBase Oracle 模式：跳过快照 READ 操作，只记录 INSERT/UPDATE/DELETE 变更
+            if ("READ".equals(operation) && skipRead) return null;
 
             String dataJson = "DELETE".equals(operation)
                     ? extractField(jsonStr, "before") : extractField(jsonStr, "after");

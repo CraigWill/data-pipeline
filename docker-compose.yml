@@ -274,7 +274,9 @@ services:
     extra_hosts:
       - "centos-ob:172.22.0.1"
     environment:
-      - OB_SYS_USERNAME=root
+      # CDC 的 sys 租户用户由此决定（写入 oblogproxy conf.json，libobcdc 读元数据/拉 clog 使用）
+      # 默认 root；切换最小权限只读账号时在 .env 设 OB_SYS_USERNAME=cdc_reader 并重建本容器
+      - OB_SYS_USERNAME=${OB_SYS_USERNAME:-root}
       - OB_SYS_PASSWORD=${OB_SYS_PASSWORD:-password}
     ports:
       - "2983:2983"
@@ -320,6 +322,13 @@ services:
       - AES_ENCRYPTION_KEY=${AES_ENCRYPTION_KEY}
       # 管理员初始密码
       - ADMIN_INITIAL_PASSWORD=${ADMIN_INITIAL_PASSWORD}
+      # OSS 对象存储配置
+      - OSS_ENABLED=${OSS_ENABLED:-false}
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-https://oss-cn-shanghai.aliyuncs.com}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
+      - OSS_BUCKET_NAME=${OSS_BUCKET_NAME:-}
+      - OSS_PREFIX=${OSS_PREFIX:-data-pipeline/}
       # 生产环境 CORS 配置（允许的前端域名）
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8888,http://localhost:3000,https://datapipeline.aimachine-tech.cn,http://machine.s7.tunnelfrp.com,https://machine.s7.tunnelfrp.com}
     volumes:

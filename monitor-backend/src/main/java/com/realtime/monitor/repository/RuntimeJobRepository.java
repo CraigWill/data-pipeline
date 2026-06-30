@@ -122,6 +122,14 @@ public class RuntimeJobRepository {
         log.info("更新作业 savepoint: {} -> {}", id, savepointPath);
     }
 
+    /** 清除作业的 savepoint 记录（用于自愈：丢弃过期位点） */
+    public void clearSavepoint(String id) {
+        jdbcTemplate.update(
+            "UPDATE " + TABLE + " SET last_savepoint_path=NULL, last_savepoint_time=NULL WHERE id=?",
+            id);
+        log.info("已清除作业 savepoint: {}", id);
+    }
+
     public void updateFlinkJobId(String id, String flinkJobId) {
         jdbcTemplate.update(
             "UPDATE " + TABLE + " SET flink_job_id=?, status='RUNNING', start_time=? WHERE id=?",

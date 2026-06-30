@@ -224,7 +224,7 @@ public class CdcTaskService {
         return new ArrayList<>(uniqueTables.values());
     }
 
-    private String buildJdbcUrl(DataSourceConfig config) {
+    public String buildJdbcUrl(DataSourceConfig config) {
         String host = config.getHost();
         String type = config.getType() != null ? config.getType().toUpperCase() : "ORACLE";
 

@@ -62,6 +62,7 @@ public class OssStorageService {
         String fullKey = ossConfig.getPrefix() + ossKey;
         try (FileInputStream fis = new FileInputStream(localFile)) {
             ObjectMetadata metadata = new ObjectMetadata();
+     
             metadata.setContentLength(localFile.length());
             ossClient.putObject(ossConfig.getBucketName(), fullKey, fis, metadata);
             log.debug("文件已同步到 OSS: {} -> {}", localFile.getName(), fullKey);

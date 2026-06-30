@@ -16,6 +16,15 @@ TASK_MANAGER_HEAP_SIZE=${TASK_MANAGER_HEAP_SIZE:-1024m}
 TASK_MANAGER_NUMBER_OF_TASK_SLOTS=${TASK_MANAGER_NUMBER_OF_TASK_SLOTS:-4}
 TASK_MANAGER_RPC_PORT=${TASK_MANAGER_RPC_PORT:-6122}
 TASK_MANAGER_DATA_PORT=${TASK_MANAGER_DATA_PORT:-6121}
+
+# TaskManager 对外地址：必须是各容器唯一的可路由地址。
+# 多副本（docker-compose --scale / k8s）下若使用共享服务名，JobManager 会通过
+# 轮询 DNS 回连到错误的容器，导致 TM 注册抖动、作业反复 RESTARTING。
+# 优先使用显式传入的 TASK_MANAGER_HOST，否则取容器自身 IP。
+TASK_MANAGER_HOST=${TASK_MANAGER_HOST:-$(hostname -i 2>/dev/null | awk '{print $1}')}
+if [ -z "$TASK_MANAGER_HOST" ]; then
+    TASK_MANAGER_HOST=$(hostname)
+fi
 TASK_MANAGER_MEMORY_PROCESS_SIZE=${TASK_MANAGER_MEMORY_PROCESS_SIZE:-1728m}
 TASK_MANAGER_NETWORK_MEMORY_MIN=${TASK_MANAGER_NETWORK_MEMORY_MIN:-64m}
 TASK_MANAGER_NETWORK_MEMORY_MAX=${TASK_MANAGER_NETWORK_MEMORY_MAX:-256m}
@@ -28,6 +37,7 @@ echo "  Process Memory: $TASK_MANAGER_MEMORY_PROCESS_SIZE"
 echo "  Task Slots: $TASK_MANAGER_NUMBER_OF_TASK_SLOTS"
 echo "  RPC Port: $TASK_MANAGER_RPC_PORT"
 echo "  Data Port: $TASK_MANAGER_DATA_PORT"
+echo "  Advertised Host: $TASK_MANAGER_HOST"
 
 # 验证JobManager地址
 if [ -z "$JOB_MANAGER_RPC_ADDRESS" ]; then
@@ -55,6 +65,7 @@ jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
 # TaskManager配置
 taskmanager.memory.process.size: ${TASK_MANAGER_MEMORY_PROCESS_SIZE}
 taskmanager.numberOfTaskSlots: ${TASK_MANAGER_NUMBER_OF_TASK_SLOTS}
+taskmanager.host: ${TASK_MANAGER_HOST}
 taskmanager.rpc.port: ${TASK_MANAGER_RPC_PORT}
 taskmanager.data.port: ${TASK_MANAGER_DATA_PORT}
 taskmanager.bind-host: 0.0.0.0
@@ -136,6 +147,7 @@ jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}
 jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
 taskmanager.memory.process.size: ${TASK_MANAGER_MEMORY_PROCESS_SIZE}
 taskmanager.numberOfTaskSlots: ${TASK_MANAGER_NUMBER_OF_TASK_SLOTS}
+taskmanager.host: ${TASK_MANAGER_HOST}
 taskmanager.rpc.port: ${TASK_MANAGER_RPC_PORT}
 taskmanager.data.port: ${TASK_MANAGER_DATA_PORT}
 taskmanager.bind-host: 0.0.0.0

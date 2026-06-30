@@ -30,15 +30,23 @@ public class RuntimeJobService {
     private final FlinkService flinkService;
     private final CdcTaskService cdcTaskService;
     private final EmbeddedCdcService embeddedCdcService;
+    private final com.realtime.monitor.oss.OssStorageService ossStorageService;
+
+    /** 作业连续 RESTARTING 计数器（自愈用） */
+    private final java.util.concurrent.ConcurrentHashMap<String, Integer> restartCounter = new java.util.concurrent.ConcurrentHashMap<>();
+    /** 连续重启达到此阈值触发自愈（每次同步约 30s，6 次约 3 分钟） */
+    private static final int RESTART_THRESHOLD = 6;
 
     public RuntimeJobService(RuntimeJobRepository runtimeJobRepository, 
                             FlinkService flinkService,
                             @Lazy CdcTaskService cdcTaskService,
-                            @Lazy EmbeddedCdcService embeddedCdcService) {
+                            @Lazy EmbeddedCdcService embeddedCdcService,
+                            com.realtime.monitor.oss.OssStorageService ossStorageService) {
         this.runtimeJobRepository = runtimeJobRepository;
         this.flinkService = flinkService;
         this.cdcTaskService = cdcTaskService;
         this.embeddedCdcService = embeddedCdcService;
+        this.ossStorageService = ossStorageService;
     }
 
     @PostConstruct
@@ -259,6 +267,8 @@ public class RuntimeJobService {
                 if (location != null) {
                     runtimeJobRepository.updateSavepoint(job.getId(), location);
                     log.info("定期 savepoint 完成: job={} path={}", job.getId(), location);
+                    // 同步 savepoint 目录到 OSS
+                    syncSavepointToOss(location, job.getId());
                 }
             } catch (Exception e) {
                 log.warn("定期 savepoint 失败: job={} err={}", job.getId(), e.getMessage());
@@ -310,6 +320,20 @@ public class RuntimeJobService {
                 if (!newStatus.equals(job.getStatus())) {
                     log.info("作业 {} 状态变更: {} -> {}", job.getId(), job.getStatus(), newStatus);
                     runtimeJobRepository.updateStatus(job.getId(), newStatus, null);
+                }
+
+                // 自愈：检测作业是否卡在 RESTARTING（OceanBase CDC 位点过期会导致反复重启）
+                if ("RESTARTING".equalsIgnoreCase(flinkState) || "FAILING".equalsIgnoreCase(flinkState)) {
+                    int count = restartCounter.merge(job.getId(), 1, Integer::sum);
+                    log.warn("作业 {} 处于 {} 状态，连续计数: {}/{}", job.getId(), flinkState, count, RESTART_THRESHOLD);
+                    if (count >= RESTART_THRESHOLD) {
+                        log.warn("作业 {} 持续重启超过阈值，触发自愈：取消并用全新位点重提（丢弃过期 savepoint）", job.getId());
+                        autoHealStuckJob(job);
+                        restartCounter.remove(job.getId());
+                    }
+                } else {
+                    // 状态恢复正常，清除计数
+                    restartCounter.remove(job.getId());
                 }
             }
         } catch (Exception e) {
@@ -472,5 +496,82 @@ public class RuntimeJobService {
         
         result.put("errors", errors);
         return result;
+    }
+
+    /**
+     * 自愈卡死的作业：取消当前 Flink 作业，清除过期 savepoint，用全新位点重新提交。
+     *
+     * <p>适用场景：OceanBase CDC 从过期 savepoint 恢复时，因 clog 已被回收
+     * 导致 {@code OB_ERR_OUT_OF_LOWER_BOUND (-4233)} 反复重启。
+     * 此时丢弃 savepoint、用当前时间戳作为起始位点是唯一可行的恢复方式。
+     */
+    private void autoHealStuckJob(RuntimeJob job) {
+        try {
+            // 1. 取消当前卡死的 Flink 作业
+            if (job.getFlinkJobId() != null && !job.getFlinkJobId().isEmpty()) {
+                try {
+                    flinkService.cancelJob(job.getFlinkJobId());
+                    log.info("自愈：已取消卡死作业 {} (FlinkJobId={})", job.getId(), job.getFlinkJobId());
+                } catch (Exception e) {
+                    log.warn("自愈：取消作业失败（可能已不存在）: {}", e.getMessage());
+                }
+            }
+
+            // 2. 清除数据库中的过期 savepoint 记录，避免下次又从它恢复
+            runtimeJobRepository.clearSavepoint(job.getId());
+
+            Thread.sleep(3000); // 等待 slot 释放
+
+            // 3. 加载任务配置，不带 savepoint 全新提交（使用当前时间作为 CDC 起始位点）
+            TaskConfig taskConfig = cdcTaskService.loadTaskConfig(job.getTaskId());
+            taskConfig.setSavepointPath(null);
+            Map<String, Object> result = embeddedCdcService.submitTask(taskConfig);
+
+            if (result.get("success") == Boolean.TRUE && result.containsKey("job_id")) {
+                String newFlinkJobId = (String) result.get("job_id");
+                runtimeJobRepository.updateFlinkJobId(job.getId(), newFlinkJobId);
+                runtimeJobRepository.updateStatus(job.getId(), "RUNNING", null);
+                log.info("自愈成功：作业 {} 已用全新位点重提，新 FlinkJobId={}", job.getId(), newFlinkJobId);
+            } else {
+                String error = result.containsKey("error") ? (String) result.get("error") : "未知错误";
+                log.error("自愈失败：作业 {} 重提失败: {}", job.getId(), error);
+            }
+        } catch (Exception e) {
+            log.error("自愈作业 {} 时发生异常: {}", job.getId(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 同步 savepoint 目录到 OSS。
+     * savepoint 路径格式如: file:///opt/flink/savepoints/savepoint-xxxx-yyyy
+     */
+    private void syncSavepointToOss(String savepointPath, String jobId) {
+        if (!ossStorageService.isEnabled()) return;
+        try {
+            // 去掉 file:// 前缀
+            String localPath = savepointPath.replaceFirst("^file://", "");
+            java.io.File dir = new java.io.File(localPath);
+            if (!dir.exists() || !dir.isDirectory()) {
+                // savepoint 可能是单个文件
+                java.io.File file = new java.io.File(localPath);
+                if (file.exists()) {
+                    String ossKey = "savepoints/" + jobId + "/" + file.getName();
+                    ossStorageService.syncToOss(file, ossKey);
+                }
+                return;
+            }
+            // 遍历 savepoint 目录上传所有文件
+            java.io.File[] files = dir.listFiles();
+            if (files == null) return;
+            for (java.io.File file : files) {
+                if (file.isFile()) {
+                    String ossKey = "savepoints/" + jobId + "/" + dir.getName() + "/" + file.getName();
+                    ossStorageService.syncToOss(file, ossKey);
+                }
+            }
+            log.debug("Savepoint 已同步到 OSS: job={} path={}", jobId, savepointPath);
+        } catch (Exception e) {
+            log.warn("Savepoint OSS 同步失败（不影响本地）: {}", e.getMessage());
+        }
     }
 }

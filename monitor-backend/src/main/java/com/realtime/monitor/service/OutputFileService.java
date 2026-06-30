@@ -25,7 +25,6 @@ import org.springframework.stereotype.Service;
 import com.realtime.monitor.config.AppConfig;
 
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -39,11 +38,16 @@ import lombok.extern.slf4j.Slf4j;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class OutputFileService {
     
     private final AppConfig appConfig;
+    private final com.realtime.monitor.oss.OssStorageService ossStorageService;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    public OutputFileService(AppConfig appConfig, com.realtime.monitor.oss.OssStorageService ossStorageService) {
+        this.appConfig = appConfig;
+        this.ossStorageService = ossStorageService;
+    }
 
     /** 允许的文件后缀白名单 */
     private static final Set<String> ALLOWED_EXTENSIONS = Set.of(".csv");
@@ -316,5 +320,40 @@ public class OutputFileService {
      */
     public boolean isOutputDirExists() {
         return Files.exists(getOutputDir());
+    }
+
+    /**
+     * 读取 CDC 文件内容。优先从 OSS 读取，降级到本地文件。
+     *
+     * @param dateDir  日期目录名（如 "2026-06-22--16"）
+     * @param fileName 文件名（如 "IDS_CDC_TEST_xxx.csv"）
+     * @return 文件内容字节数组，不存在返回 null
+     */
+    public byte[] readFileContent(String dateDir, String fileName) throws IOException {
+        // 验证参数安全性
+        if (dateDir == null || fileName == null) return null;
+        if (dateDir.contains("..") || fileName.contains("..")) return null;
+        if (!fileName.endsWith(".csv")) return null;
+
+        // 1. 优先从 OSS 读取
+        String ossKey = "cdc/" + dateDir + "/" + fileName;
+        byte[] ossData = ossStorageService.readFromOss(ossKey);
+        if (ossData != null) {
+            log.debug("从 OSS 读取文件: {}", ossKey);
+            return ossData;
+        }
+
+        // 2. 降级到本地文件
+        Path localFile = getOutputDir().resolve(dateDir).resolve(fileName);
+        if (!localFile.startsWith(getOutputDir())) {
+            log.warn("路径遍历尝试被阻止: {}", localFile);
+            return null;
+        }
+        if (Files.exists(localFile) && isAllowedFile(localFile)) {
+            log.debug("从本地读取文件: {}", localFile);
+            return Files.readAllBytes(localFile);
+        }
+
+        return null;
     }
 }

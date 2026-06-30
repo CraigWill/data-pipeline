@@ -49,7 +49,23 @@ export const datasourceAPI = {
   create: (data) => api.post('/datasources', data),
   update: (id, data) => api.put(`/datasources/${id}`, data),
   delete: (id) => api.delete(`/datasources/${id}`),
-  test: (data) => api.post('/datasources/test', data)
+  test: (data) => api.post('/datasources/test', data),
+  schemas: (id) => api.get(`/datasources/${id}/schemas`),
+  tables: (id, schema) => api.get(`/datasources/${id}/schemas/${schema}/tables`)
+}
+
+// 模拟 CDC 事件 API
+export const cdcSimulatorAPI = {
+  columns: (dsId, schema, table) =>
+    api.get(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/columns`),
+  queryData: (dsId, schema, table, page, size) =>
+    api.get(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/data`, { params: { page, size } }),
+  insert: (dsId, schema, table, rows) =>
+    api.post(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/insert`, { rows }),
+  update: (dsId, schema, table, rows, keyColumns) =>
+    api.post(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/update`, { rows, keyColumns }),
+  delete: (dsId, schema, table, rows, keyColumns) =>
+    api.post(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/delete`, { rows, keyColumns })
 }
 
 // CDC 任务 API

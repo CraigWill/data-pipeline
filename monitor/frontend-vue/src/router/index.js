@@ -50,6 +50,12 @@ const router = createRouter({
       name: 'events',
       component: () => import('../views/CdcEventsView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/simulator',
+      name: 'simulator',
+      component: () => import('../views/CdcSimulatorView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

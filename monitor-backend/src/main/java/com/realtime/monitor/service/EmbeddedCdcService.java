@@ -220,6 +220,8 @@ public class EmbeddedCdcService {
                 programArgs.add("--rsList");
                 // rsList 格式: ip:rpc_port:sql_port（不能用 hostname，libobcdc 不认）
                 programArgs.add(request.getHostname() + ":2882:" + request.getPort());
+                // 注意：CDC 的 sys 用户由 obbinlog 容器的 OB_SYS_USERNAME 决定（写入 oblogproxy
+                //       conf.json），不经此处的作业参数。切换 cdc_reader 请改 obbinlog 容器环境变量。
             }
 
             // 3. 通过 REST API 提交作业

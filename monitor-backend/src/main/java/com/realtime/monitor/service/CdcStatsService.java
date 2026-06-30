@@ -59,6 +59,10 @@ public class CdcStatsService {
     
     // 已处理的文件及其行数: filePath -> lineCount
     private final ConcurrentHashMap<String, Long> processedFiles = new ConcurrentHashMap<>();
+
+    // OSS 同步服务
+    @org.springframework.beans.factory.annotation.Autowired
+    private com.realtime.monitor.oss.OssStorageService ossStorageService;
     
     // 事件速率
     private volatile double eventsPerSecond = 0;
@@ -237,6 +241,8 @@ public class CdcStatsService {
                         processedFiles.put(filePath, currentSize);
                         updateStats(csvFile, hour, ops);
                         log.debug("新文件统计: {} - 总行数={}", csvFile.getName(), total);
+                        // 同步新文件到 OSS
+                        syncCdcFileToOss(csvFile);
                     }
                 } else if (currentSize > lastSize) {
                     // 文件增长：只统计新增部分（简化处理，按行数估算）
@@ -244,6 +250,8 @@ public class CdcStatsService {
                     if (estimatedNewLines > 0) {
                         processedFiles.put(filePath, currentSize);
                         updateStatsIncremental(csvFile, hour, estimatedNewLines);
+                        // 同步更新的文件到 OSS
+                        syncCdcFileToOss(csvFile);
                         log.debug("增量统计: {} - 估算新增 {} 行", csvFile.getName(), estimatedNewLines);
                     }
                 }
@@ -644,5 +652,21 @@ public class CdcStatsService {
      */
     public int getEmitterCount() {
         return emitters.size();
+    }
+
+    /**
+     * 将 CDC 文件同步到 OSS。
+     * 路径结构: data-pipeline/cdc/{date}/{filename}
+     */
+    private void syncCdcFileToOss(File csvFile) {
+        if (ossStorageService == null || !ossStorageService.isEnabled()) return;
+        try {
+            // 构建 OSS key: cdc/2026-06-22--16/IDS_xxx.csv
+            String parentName = csvFile.getParentFile() != null ? csvFile.getParentFile().getName() : "unknown";
+            String ossKey = "cdc/" + parentName + "/" + csvFile.getName();
+            ossStorageService.syncToOss(csvFile, ossKey);
+        } catch (Exception e) {
+            log.warn("CDC 文件 OSS 同步失败: {}", e.getMessage());
+        }
     }
 }

@@ -1,0 +1,550 @@
+package com.realtime.monitor.service;
+
+import java.sql.Connection;
+import java.sql.DatabaseMetaData;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.regex.Pattern;
+
+import org.springframework.stereotype.Service;
+
+import com.realtime.monitor.dto.DataSourceConfig;
+
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+
+/**
+ * 模拟 CDC 事件服务：查询表数据，并对目标表执行批量 INSERT/UPDATE/DELETE，
+ * 用于触发数据源的 CDC 变更事件。
+ *
+ * 安全：表名/列名/Schema 名通过白名单正则校验（仅允许字母数字下划线），
+ * 所有数据值通过 PreparedStatement 绑定，避免 SQL 注入。
+ */
+@Slf4j
+@Service
+@RequiredArgsConstructor
+public class CdcSimulatorService {
+
+    private final DataSourceService dataSourceService;
+    private final CdcTaskService cdcTaskService;
+
+    /** 合法标识符：字母开头，仅字母数字下划线，最长 128 字符 */
+    private static final Pattern IDENTIFIER = Pattern.compile("^[A-Za-z][A-Za-z0-9_]{0,127}$");
+
+    private static final int MAX_BATCH_ROWS = 1000;
+    private static final int MAX_PAGE_SIZE = 500;
+
+    // ==================== 公开方法 ====================
+
+    /**
+     * 获取表的列结构（列名、类型、是否可空、是否主键）
+     */
+    public List<Map<String, Object>> getColumns(String dsId, String schema, String table) throws Exception {
+        validateIdentifier(schema, "schema");
+        validateIdentifier(table, "table");
+        DataSourceConfig config = dataSourceService.loadDataSource(dsId);
+        String type = dbType(config);
+        boolean upper = isOracleLike(type);
+        String s = upper ? schema.toUpperCase() : schema;
+        String t = upper ? table.toUpperCase() : table;
+
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        List<Map<String, Object>> columns = new ArrayList<>();
+
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            DatabaseMetaData meta = conn.getMetaData();
+
+            // 主键集合
+            java.util.Set<String> pkCols = new java.util.HashSet<>();
+            try (ResultSet pk = meta.getPrimaryKeys(null, s, t)) {
+                while (pk.next()) {
+                    pkCols.add(pk.getString("COLUMN_NAME"));
+                }
+            } catch (SQLException ignore) {
+                // 某些驱动不支持，忽略
+            }
+
+            try (ResultSet rs = meta.getColumns(null, s, t, "%")) {
+                while (rs.next()) {
+                    String colName = rs.getString("COLUMN_NAME");
+                    Map<String, Object> col = new LinkedHashMap<>();
+                    col.put("name", colName);
+                    col.put("typeName", rs.getString("TYPE_NAME"));
+                    col.put("dataType", rs.getInt("DATA_TYPE"));
+                    col.put("size", rs.getInt("COLUMN_SIZE"));
+                    col.put("nullable", rs.getInt("NULLABLE") != DatabaseMetaData.columnNoNulls);
+                    col.put("primaryKey", pkCols.contains(colName));
+                    columns.add(col);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("获取列结构失败 [{}].{}.{}", dsId, schema, table, e);
+            throw new Exception("获取列结构失败，请检查数据库连接");
+        }
+
+        if (columns.isEmpty()) {
+            throw new Exception("未找到表 " + schema + "." + table + " 的列信息");
+        }
+        return columns;
+    }
+
+    /**
+     * 分页查询表数据
+     */
+    public Map<String, Object> queryData(String dsId, String schema, String table, int page, int size) throws Exception {
+        validateIdentifier(schema, "schema");
+        validateIdentifier(table, "table");
+        if (page < 1) page = 1;
+        if (size < 1) size = 50;
+        if (size > MAX_PAGE_SIZE) size = MAX_PAGE_SIZE;
+
+        DataSourceConfig config = dataSourceService.loadDataSource(dsId);
+        String type = dbType(config);
+        String qualified = qualifiedName(type, schema, table);
+
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        List<String> columns = new ArrayList<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        long total = 0;
+
+        String dataSql = buildPagedQuery(type, qualified, page, size);
+        String countSql = "SELECT COUNT(*) FROM " + qualified;
+
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            try (PreparedStatement stmt = conn.prepareStatement(countSql);
+                 ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) total = rs.getLong(1);
+            }
+
+            try (PreparedStatement stmt = conn.prepareStatement(dataSql);
+                 ResultSet rs = stmt.executeQuery()) {
+                ResultSetMetaData md = rs.getMetaData();
+                int colCount = md.getColumnCount();
+                for (int i = 1; i <= colCount; i++) columns.add(md.getColumnLabel(i));
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int i = 1; i <= colCount; i++) {
+                        Object v = rs.getObject(i);
+                        row.put(md.getColumnLabel(i), v == null ? null : stringifyValue(v));
+                    }
+                    rows.add(row);
+                }
+            }
+        } catch (SQLException e) {
+            log.error("查询表数据失败 [{}].{}.{}", dsId, schema, table, e);
+            throw new Exception("查询表数据失败：" + e.getMessage());
+        }
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("columns", columns);
+        result.put("rows", rows);
+        result.put("total", total);
+        result.put("page", page);
+        result.put("size", size);
+        return result;
+    }
+
+    /**
+     * 批量 INSERT
+     * @param rows 每行是 列名->值 的 Map
+     */
+    public int batchInsert(String dsId, String schema, String table, List<Map<String, Object>> rows) throws Exception {
+        validateIdentifier(schema, "schema");
+        validateIdentifier(table, "table");
+        if (rows == null || rows.isEmpty()) throw new Exception("插入数据为空");
+        if (rows.size() > MAX_BATCH_ROWS) throw new Exception("单次批量操作行数不能超过 " + MAX_BATCH_ROWS);
+
+        // 以第一行的列定义列顺序，并校验列名
+        List<String> cols = new ArrayList<>(rows.get(0).keySet());
+        if (cols.isEmpty()) throw new Exception("插入数据列为空");
+        for (String c : cols) validateIdentifier(c, "column");
+
+        DataSourceConfig config = dataSourceService.loadDataSource(dsId);
+        String type = dbType(config);
+        String qualified = qualifiedName(type, schema, table);
+
+        StringBuilder sql = new StringBuilder("INSERT INTO ").append(qualified).append(" (");
+        for (int i = 0; i < cols.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append(quoteIdentifier(type, cols.get(i)));
+        }
+        sql.append(") VALUES (");
+        for (int i = 0; i < cols.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append("?");
+        }
+        sql.append(")");
+
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+                for (Map<String, Object> row : rows) {
+                    for (int i = 0; i < cols.size(); i++) {
+                        bindValue(stmt, i + 1, row.get(cols.get(i)));
+                    }
+                    stmt.addBatch();
+                }
+                int[] result = stmt.executeBatch();
+                conn.commit();
+                return countAffected(result);
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
+        } catch (SQLException e) {
+            log.error("批量插入失败 [{}].{}.{}", dsId, schema, table, e);
+            throw new Exception("批量插入失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 批量 UPDATE，按主键(或指定 keyColumns)匹配
+     * @param rows 每行包含待更新的列值
+     * @param keyColumns 作为 WHERE 条件的键列
+     */
+    public int batchUpdate(String dsId, String schema, String table,
+                           List<Map<String, Object>> rows, List<String> keyColumns) throws Exception {
+        validateIdentifier(schema, "schema");
+        validateIdentifier(table, "table");
+        if (rows == null || rows.isEmpty()) throw new Exception("更新数据为空");
+        if (rows.size() > MAX_BATCH_ROWS) throw new Exception("单次批量操作行数不能超过 " + MAX_BATCH_ROWS);
+        if (keyColumns == null || keyColumns.isEmpty()) throw new Exception("未指定主键列，无法更新");
+        for (String k : keyColumns) validateIdentifier(k, "keyColumn");
+
+        // 待更新列 = 第一行所有列 - 键列
+        List<String> allCols = new ArrayList<>(rows.get(0).keySet());
+        List<String> setCols = new ArrayList<>();
+        for (String c : allCols) {
+            validateIdentifier(c, "column");
+            if (!keyColumns.contains(c)) setCols.add(c);
+        }
+        if (setCols.isEmpty()) throw new Exception("没有可更新的非主键列");
+
+        DataSourceConfig config = dataSourceService.loadDataSource(dsId);
+        String type = dbType(config);
+        String qualified = qualifiedName(type, schema, table);
+
+        StringBuilder sql = new StringBuilder("UPDATE ").append(qualified).append(" SET ");
+        for (int i = 0; i < setCols.size(); i++) {
+            if (i > 0) sql.append(", ");
+            sql.append(quoteIdentifier(type, setCols.get(i))).append(" = ?");
+        }
+        sql.append(" WHERE ");
+        for (int i = 0; i < keyColumns.size(); i++) {
+            if (i > 0) sql.append(" AND ");
+            sql.append(quoteIdentifier(type, keyColumns.get(i))).append(" = ?");
+        }
+
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+                for (Map<String, Object> row : rows) {
+                    int idx = 1;
+                    for (String c : setCols) bindValue(stmt, idx++, row.get(c));
+                    for (String k : keyColumns) bindValue(stmt, idx++, row.get(k));
+                    stmt.addBatch();
+                }
+                int[] result = stmt.executeBatch();
+                conn.commit();
+                return countAffected(result);
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
+        } catch (SQLException e) {
+            log.error("批量更新失败 [{}].{}.{}", dsId, schema, table, e);
+            throw new Exception("批量更新失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 批量 DELETE，按主键(或指定 keyColumns)匹配
+     * @param rows 每行包含键列的值
+     * @param keyColumns 作为 WHERE 条件的键列
+     */
+    public int batchDelete(String dsId, String schema, String table,
+                           List<Map<String, Object>> rows, List<String> keyColumns) throws Exception {
+        validateIdentifier(schema, "schema");
+        validateIdentifier(table, "table");
+        if (rows == null || rows.isEmpty()) throw new Exception("删除数据为空");
+        if (rows.size() > MAX_BATCH_ROWS) throw new Exception("单次批量操作行数不能超过 " + MAX_BATCH_ROWS);
+        if (keyColumns == null || keyColumns.isEmpty()) throw new Exception("未指定主键列，无法删除");
+        for (String k : keyColumns) validateIdentifier(k, "keyColumn");
+
+        DataSourceConfig config = dataSourceService.loadDataSource(dsId);
+        String type = dbType(config);
+        String qualified = qualifiedName(type, schema, table);
+
+        StringBuilder sql = new StringBuilder("DELETE FROM ").append(qualified).append(" WHERE ");
+        for (int i = 0; i < keyColumns.size(); i++) {
+            if (i > 0) sql.append(" AND ");
+            sql.append(quoteIdentifier(type, keyColumns.get(i))).append(" = ?");
+        }
+
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            conn.setAutoCommit(false);
+            try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+                for (Map<String, Object> row : rows) {
+                    int idx = 1;
+                    for (String k : keyColumns) bindValue(stmt, idx++, row.get(k));
+                    stmt.addBatch();
+                }
+                int[] result = stmt.executeBatch();
+                conn.commit();
+                return countAffected(result);
+            } catch (SQLException e) {
+                conn.rollback();
+                throw e;
+            }
+        } catch (SQLException e) {
+            log.error("批量删除失败 [{}].{}.{}", dsId, schema, table, e);
+            throw new Exception("批量删除失败：" + e.getMessage());
+        }
+    }
+
+    // ==================== 私有辅助 ====================
+
+    private String dbType(DataSourceConfig config) {
+        return config.getType() != null ? config.getType().toUpperCase() : "ORACLE";
+    }
+
+    private boolean isOracleLike(String type) {
+        return "ORACLE".equals(type) || "OCEANBASE_ORACLE".equals(type);
+    }
+
+    /** 校验标识符合法性，防止 SQL 注入 */
+    private void validateIdentifier(String name, String role) throws Exception {
+        if (name == null || !IDENTIFIER.matcher(name).matches()) {
+            throw new Exception("非法的" + role + "名称: " + name);
+        }
+    }
+
+    /** 给标识符加引号（Oracle 用双引号，MySQL/OceanBase 用反引号，Postgres 用双引号） */
+    private String quoteIdentifier(String type, String identifier) {
+        switch (type) {
+            case "MYSQL":
+            case "OCEANBASE":
+                return "`" + identifier + "`";
+            case "ORACLE":
+            case "OCEANBASE_ORACLE":
+            case "POSTGRES":
+            default:
+                return "\"" + identifier + "\"";
+        }
+    }
+
+    /** 构造 schema.table 限定名 */
+    private String qualifiedName(String type, String schema, String table) {
+        boolean upper = isOracleLike(type);
+        String s = upper ? schema.toUpperCase() : schema;
+        String t = upper ? table.toUpperCase() : table;
+        return quoteIdentifier(type, s) + "." + quoteIdentifier(type, t);
+    }
+
+    /** 构造分页查询 SQL */
+    private String buildPagedQuery(String type, String qualified, int page, int size) {
+        int offset = (page - 1) * size;
+        switch (type) {
+            case "MYSQL":
+            case "OCEANBASE":
+                return "SELECT * FROM " + qualified + " LIMIT " + size + " OFFSET " + offset;
+            case "POSTGRES":
+                return "SELECT * FROM " + qualified + " LIMIT " + size + " OFFSET " + offset;
+            case "ORACLE":
+            case "OCEANBASE_ORACLE":
+            default:
+                // Oracle 12c+ / OceanBase Oracle 模式支持 OFFSET ... FETCH
+                return "SELECT * FROM " + qualified
+                        + " OFFSET " + offset + " ROWS FETCH NEXT " + size + " ROWS ONLY";
+        }
+    }
+
+    /** 将数据库返回值转为字符串用于前端展示 */
+    private String stringifyValue(Object v) {
+        if (v == null) return null;
+        if (v instanceof byte[]) return "[binary]";
+        return v.toString();
+    }
+
+    /**
+     * 绑定参数到 PreparedStatement。
+     * 时间类字符串尝试转 Timestamp（遵循 OceanBase 不传 null 给 setObject 的约束）。
+     */
+    private void bindValue(PreparedStatement stmt, int index, Object value) throws SQLException {
+        if (value == null || (value instanceof String && ((String) value).isEmpty())) {
+            stmt.setNull(index, java.sql.Types.VARCHAR);
+            return;
+        }
+        if (value instanceof String) {
+            String s = ((String) value).trim();
+            Timestamp ts = tryParseTimestamp(s);
+            if (ts != null) {
+                stmt.setTimestamp(index, ts);
+            } else {
+                stmt.setString(index, s);
+            }
+            return;
+        }
+        if (value instanceof Number) {
+            stmt.setObject(index, value);
+            return;
+        }
+        if (value instanceof Boolean) {
+            stmt.setBoolean(index, (Boolean) value);
+            return;
+        }
+        stmt.setString(index, value.toString());
+    }
+
+    /** 尝试解析多种日期格式，支持Oracle和标准格式 */
+    private Timestamp tryParseTimestamp(String s) {
+        if (s == null) return null;
+        
+        s = s.trim().toUpperCase(); // Oracle月份缩写通常是大写
+
+        // 兼容 ISO 8601 的 'T' 分隔符: yyyy-MM-ddTHH:mm:ss[.fff] → 空格分隔
+        if (s.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?")) {
+            s = s.replace('T', ' ');
+        }
+
+        // 1. 标准格式: yyyy-MM-dd HH:mm:ss[.fff]
+        //    必须兼容小数秒：Timestamp.toString() 会输出 "2026-06-29 14:30:00.0"，
+        //    浏览数据回写更新时若不识别小数秒会被当作字符串绑定，
+        //    导致 OceanBase Oracle 模式按 NLS_DATE_FORMAT 隐式转换报 ORA-01843。
+        if (s.matches("\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}(\\.\\d+)?")) {
+            try { return Timestamp.valueOf(s); } catch (Exception ignore) { return null; }
+        }
+        
+        // 2. 标准日期格式: yyyy-MM-dd
+        if (s.matches("\\d{4}-\\d{2}-\\d{2}")) {
+            try { return Timestamp.valueOf(s + " 00:00:00"); } catch (Exception ignore) { return null; }
+        }
+        
+        // 3. Oracle格式: dd-MMM-yyyy HH:mm:ss[.fff] (如: 29-JUN-2026 14:30:00)
+        if (s.matches("\\d{2}-[A-Z]{3}-\\d{4} \\d{2}:\\d{2}:\\d{2}(\\.\\d+)?")) {
+            try {
+                return parseOracleTimestamp(s);
+            } catch (Exception ignore) { return null; }
+        }
+        
+        // 4. Oracle日期格式: dd-MMM-yyyy
+        if (s.matches("\\d{2}-[A-Z]{3}-\\d{4}")) {
+            try {
+                return parseOracleTimestamp(s + " 00:00:00");
+            } catch (Exception ignore) { return null; }
+        }
+        
+        // 5. 斜杠格式: yyyy/MM/dd HH:mm:ss[.fff]
+        if (s.matches("\\d{4}/\\d{2}/\\d{2} \\d{2}:\\d{2}:\\d{2}(\\.\\d+)?")) {
+            try { 
+                String normalized = s.replace('/', '-');
+                return Timestamp.valueOf(normalized); 
+            } catch (Exception ignore) { return null; }
+        }
+        
+        // 6. 斜杠日期格式: yyyy/MM/dd
+        if (s.matches("\\d{4}/\\d{2}/\\d{2}")) {
+            try { 
+                String normalized = s.replace('/', '-') + " 00:00:00";
+                return Timestamp.valueOf(normalized); 
+            } catch (Exception ignore) { return null; }
+        }
+        
+        return null;
+    }
+    
+    /** 解析Oracle格式的时间戳: dd-MMM-yyyy HH:mm:ss */
+    private Timestamp parseOracleTimestamp(String s) {
+        String[] parts = s.split("[- :]");
+        if (parts.length < 6) return null;
+        
+        int day = Integer.parseInt(parts[0]);
+        String monthStr = parts[1].toUpperCase();
+        int year = Integer.parseInt(parts[2]);
+        int hour = Integer.parseInt(parts[3]);
+        int minute = Integer.parseInt(parts[4]);
+        int second = (int) Double.parseDouble(parts[5]); // 兼容小数秒 "00.0"
+        
+        // Oracle月份缩写映射
+        java.util.Map<String, Integer> monthMap = java.util.Map.ofEntries(
+            java.util.Map.entry("JAN", 1),
+            java.util.Map.entry("FEB", 2),
+            java.util.Map.entry("MAR", 3),
+            java.util.Map.entry("APR", 4),
+            java.util.Map.entry("MAY", 5),
+            java.util.Map.entry("JUN", 6),
+            java.util.Map.entry("JUL", 7),
+            java.util.Map.entry("AUG", 8),
+            java.util.Map.entry("SEP", 9),
+            java.util.Map.entry("OCT", 10),
+            java.util.Map.entry("NOV", 11),
+            java.util.Map.entry("DEC", 12)
+        );
+        
+        if (!monthMap.containsKey(monthStr)) {
+            return null;
+        }
+        
+        int month = monthMap.get(monthStr);
+        
+        // 创建Calendar实例设置日期时间
+        java.util.Calendar cal = java.util.Calendar.getInstance();
+        cal.set(java.util.Calendar.YEAR, year);
+        cal.set(java.util.Calendar.MONTH, month - 1); // Calendar月份是0-based
+        cal.set(java.util.Calendar.DAY_OF_MONTH, day);
+        cal.set(java.util.Calendar.HOUR_OF_DAY, hour);
+        cal.set(java.util.Calendar.MINUTE, minute);
+        cal.set(java.util.Calendar.SECOND, second);
+        cal.set(java.util.Calendar.MILLISECOND, 0);
+        
+        return new Timestamp(cal.getTimeInMillis());
+    }
+
+    private int countAffected(int[] batchResult) {
+        int total = 0;
+        for (int r : batchResult) {
+            if (r >= 0) total += r;
+            else total += 1; // SUCCESS_NO_INFO
+        }
+        return total;
+    }
+    
+    /**
+     * 查询Oracle数据库的日期格式设置
+     */
+    private String getOracleDateFormat(DataSourceConfig config) {
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT value FROM nls_session_parameters WHERE parameter = 'NLS_DATE_FORMAT'")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getString(1);
+                    }
+                }
+            }
+            
+            // 如果上面查询失败，尝试查询另一个视图
+            try (PreparedStatement stmt = conn.prepareStatement("SELECT value FROM nls_database_parameters WHERE parameter = 'NLS_DATE_FORMAT'")) {
+                try (ResultSet rs = stmt.executeQuery()) {
+                    if (rs.next()) {
+                        return rs.getString(1);
+                    }
+                }
+            }
+        } catch (SQLException e) {
+            log.warn("查询Oracle日期格式失败: {}", e.getMessage());
+        }
+        return null;
+    }
+}

@@ -38,7 +38,7 @@ public class TaskRepository {
         config.setDatasourceId(rs.getString("datasource_id"));
         config.setSchema(rs.getString("schema_name"));
 
-        String tablesJson = rs.getString("tables");
+        String tablesJson = rs.getString("table_list");
         try {
             config.setTables(objectMapper.readValue(tablesJson, new TypeReference<List<String>>() {}));
         } catch (Exception e) {
@@ -65,7 +65,7 @@ public class TaskRepository {
             if (existsById(config.getId())) {
                 jdbcTemplate.update(
                     "UPDATE " + TABLE +
-                    " SET name=?, datasource_id=?, schema_name=?, tables=?," +
+                    " SET name=?, datasource_id=?, schema_name=?, table_list=?," +
                     "     output_path=?, parallelism=?, split_size=?, updated_at=?" +
                     " WHERE id=?",
                     config.getName(), nn(config.getDatasourceId()), config.getSchema(), tablesJson,
@@ -74,7 +74,7 @@ public class TaskRepository {
             } else {
                 jdbcTemplate.update(
                     "INSERT INTO " + TABLE +
-                    " (id, name, datasource_id, schema_name, tables, output_path," +
+                    " (id, name, datasource_id, schema_name, table_list, output_path," +
                     "  parallelism, split_size, created_at, updated_at)" +
                     " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     config.getId(), config.getName(), nn(config.getDatasourceId()), config.getSchema(),

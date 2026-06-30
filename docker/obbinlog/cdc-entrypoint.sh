@@ -40,6 +40,10 @@ if [ -n "${OB_SYS_USERNAME}" ] && [ -n "${OB_SYS_PASSWORD}" ]; then
     fi
 fi
 
+# Oracle 模式租户必须关闭 auth_user（否则用 MySQL 协议认证 Oracle 租户会失败 "Failed to auth"）
+sed -i 's/"auth_user"[[:space:]]*:[[:space:]]*true/"auth_user": false/' ./conf/conf.json
+echo "auth_user set to false (required for Oracle-mode tenant CDC)"
+
 # 创建运行目录
 mkdir -p ./run ./log
 

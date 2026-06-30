@@ -9,7 +9,10 @@ zookeeper.sasl.disable: true
 
 # TaskManager配置
 taskmanager.bind-host: 0.0.0.0
-taskmanager.host: taskmanager
+# 注意：不要在此写死 taskmanager.host。
+# 多副本（docker-compose --scale）时，所有 TM 会上报同一个服务名地址，
+# 导致 JobManager 通过轮询 DNS 回连到错误的容器，TM 注册抖动、作业反复 RESTARTING。
+# taskmanager.host 由 entrypoint.sh 动态设置为各容器自身 IP。
 taskmanager.rpc.port: 6122
 taskmanager.data.port: 6121
 taskmanager.memory.process.size: 1728m

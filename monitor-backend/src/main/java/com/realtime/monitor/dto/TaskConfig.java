@@ -1,9 +1,11 @@
 package com.realtime.monitor.dto;
 
+import java.util.List;
+
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+
 import lombok.Data;
-import java.util.List;
 
 /**
  * CDC 任务配置
@@ -37,6 +39,29 @@ public class TaskConfig {
     
     private String created;
     private String savepointPath;  // 恢复时使用的 savepoint 路径（非持久化，仅运行时传递）
+
+    // ── 采集方式：log（默认）/ polling（JDBC 轮询增量）──
+    @JsonProperty("sourceMode")
+    @JsonAlias("source_mode")
+    private String sourceMode = "log";
+    @JsonProperty("pollWatermarkColumn")
+    @JsonAlias("poll_watermark_column")
+    private String pollWatermarkColumn = "ID";
+    @JsonProperty("pollWatermarkType")
+    @JsonAlias("poll_watermark_type")
+    private String pollWatermarkType = "numeric";
+    @JsonProperty("pollIntervalMs")
+    @JsonAlias("poll_interval_ms")
+    private long pollIntervalMs = 5000;
+    @JsonProperty("pollStartValue")
+    @JsonAlias("poll_start_value")
+    private String pollStartValue;
+    @JsonProperty("pollOp")
+    @JsonAlias("poll_op")
+    private String pollOp = "c";
+    @JsonProperty("pollMaxBatch")
+    @JsonAlias("poll_max_batch")
+    private int pollMaxBatch = 5000;
     
     @Data
     public static class DatabaseConfig {

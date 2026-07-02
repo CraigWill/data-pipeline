@@ -108,6 +108,16 @@
 
         <!-- ========== 批量插入 ========== -->
         <div v-show="activeTab === 'insert'" class="tab-panel">
+          <div class="auto-insert-bar">
+            <svg class="ai-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+            <span class="ai-label">自动生成模拟数据</span>
+            <input v-model.number="autoInsertCount" type="number" min="1" max="10000" class="ai-count" />
+            <span class="ai-unit">行</span>
+            <button class="btn btn-primary btn-mini" :disabled="autoInserting || !autoInsertCount || !selectedTable" @click="doAutoInsert">
+              {{ autoInserting ? '生成中...' : '自动插入' }}
+            </button>
+            <span class="ai-hint">按列类型自动造值，数值主键自增，写入即触发 CDC</span>
+          </div>
           <div class="panel-toolbar">
             <button class="btn btn-mini" @click="addInsertRow">+ 新增一行</button>
             <button class="btn btn-mini" @click="duplicateLastInsertRow" :disabled="!insertRows.length">复制末行</button>
@@ -261,6 +271,8 @@ const manualKeys = ref([])      // 手动选择的键列
 
 const loading = ref(false)
 const submitting = ref(false)
+const autoInsertCount = ref(100)   // 自动插入的行数
+const autoInserting = ref(false)
 const alert = ref({ show: false, type: '', message: '' })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
@@ -400,6 +412,33 @@ async function doInsert() {
     showAlert('error', '插入失败: ' + errMsg(e))
   } finally {
     submitting.value = false
+  }
+}
+
+// ---- 自动插入模拟数据 ----
+async function doAutoInsert() {
+  if (!selectedDs.value || !selectedSchema.value || !selectedTable.value) {
+    showAlert('error', '请先选择数据源 / Schema / 表')
+    return
+  }
+  if (!autoInsertCount.value || autoInsertCount.value < 1) {
+    showAlert('error', '请输入要插入的行数')
+    return
+  }
+  autoInserting.value = true
+  try {
+    const res = await cdcSimulatorAPI.autoInsert(
+      selectedDs.value, selectedSchema.value, selectedTable.value, autoInsertCount.value)
+    if (res.success) {
+      showAlert('success', res.message || '自动插入成功')
+      await loadData(page.value)
+    } else {
+      showAlert('error', res.error || '自动插入失败')
+    }
+  } catch (e) {
+    showAlert('error', '自动插入失败: ' + errMsg(e))
+  } finally {
+    autoInserting.value = false
   }
 }
 
@@ -640,6 +679,39 @@ function showAlert(type, message) {
 }
 
 .muted { font-size: 12px; color: #5E6C84; }
+
+/* 自动插入模拟数据条 */
+.auto-insert-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  background: #F7F9FC;
+  border: 1px solid #DFE1E6;
+  border-left: 3px solid #0052CC;
+  border-radius: 8px;
+}
+.auto-insert-bar .ai-icon { width: 18px; height: 18px; color: #0052CC; flex-shrink: 0; }
+.auto-insert-bar .ai-label { font-size: 13px; font-weight: 600; color: #172B4D; }
+.auto-insert-bar .ai-count {
+  width: 96px;
+  padding: 7px 10px;
+  font-size: 14px;
+  font-weight: 500;
+  color: #172B4D;
+  background: #fff;
+  border: 2px solid #DFE1E6;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.auto-insert-bar .ai-count:hover { border-color: #B3BAC5; }
+.auto-insert-bar .ai-count:focus { border-color: #4C9AFF; box-shadow: 0 0 0 3px rgba(76, 154, 255, 0.15); }
+.auto-insert-bar .ai-unit { font-size: 13px; color: #5E6C84; }
+.auto-insert-bar .ai-hint { font-size: 12px; color: #7A869A; margin-left: auto; }
+
 .hint {
   font-size: 12px;
   color: #5E6C84;

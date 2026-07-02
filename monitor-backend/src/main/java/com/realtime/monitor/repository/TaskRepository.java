@@ -50,6 +50,21 @@ public class TaskRepository {
         config.setParallelism(rs.getInt("parallelism"));
         config.setSplitSize(rs.getInt("split_size"));
 
+        // 采集方式（旧数据可能为 null，给默认值）
+        String sourceMode = rs.getString("source_mode");
+        config.setSourceMode(sourceMode != null ? sourceMode : "log");
+        String wmCol = rs.getString("poll_watermark_column");
+        if (wmCol != null) config.setPollWatermarkColumn(wmCol);
+        String wmType = rs.getString("poll_watermark_type");
+        if (wmType != null) config.setPollWatermarkType(wmType);
+        long interval = rs.getLong("poll_interval_ms");
+        if (!rs.wasNull() && interval > 0) config.setPollIntervalMs(interval);
+        config.setPollStartValue(rs.getString("poll_start_value"));
+        String pollOp = rs.getString("poll_op");
+        if (pollOp != null) config.setPollOp(pollOp);
+        int maxBatch = rs.getInt("poll_max_batch");
+        if (!rs.wasNull() && maxBatch > 0) config.setPollMaxBatch(maxBatch);
+
         Timestamp createdAt = rs.getTimestamp("created_at");
         if (createdAt != null) config.setCreated(createdAt.toInstant().toString());
         return config;
@@ -66,19 +81,27 @@ public class TaskRepository {
                 jdbcTemplate.update(
                     "UPDATE " + TABLE +
                     " SET name=?, datasource_id=?, schema_name=?, table_list=?," +
-                    "     output_path=?, parallelism=?, split_size=?, updated_at=?" +
+                    "     output_path=?, parallelism=?, split_size=?," +
+                    "     source_mode=?, poll_watermark_column=?, poll_watermark_type=?," +
+                    "     poll_interval_ms=?, poll_start_value=?, poll_op=?, poll_max_batch=?," +
+                    "     updated_at=?" +
                     " WHERE id=?",
                     config.getName(), nn(config.getDatasourceId()), config.getSchema(), tablesJson,
-                    nn(config.getOutputPath()), config.getParallelism(), config.getSplitSize(), now,
-                    config.getId());
+                    nn(config.getOutputPath()), config.getParallelism(), config.getSplitSize(),
+                    nn(config.getSourceMode()), nn(config.getPollWatermarkColumn()), nn(config.getPollWatermarkType()),
+                    config.getPollIntervalMs(), nn(config.getPollStartValue()), nn(config.getPollOp()), config.getPollMaxBatch(),
+                    now, config.getId());
             } else {
                 jdbcTemplate.update(
                     "INSERT INTO " + TABLE +
                     " (id, name, datasource_id, schema_name, table_list, output_path," +
-                    "  parallelism, split_size, created_at, updated_at)" +
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  parallelism, split_size, source_mode, poll_watermark_column, poll_watermark_type," +
+                    "  poll_interval_ms, poll_start_value, poll_op, poll_max_batch, created_at, updated_at)" +
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     config.getId(), config.getName(), nn(config.getDatasourceId()), config.getSchema(),
                     tablesJson, nn(config.getOutputPath()), config.getParallelism(), config.getSplitSize(),
+                    nn(config.getSourceMode()), nn(config.getPollWatermarkColumn()), nn(config.getPollWatermarkType()),
+                    config.getPollIntervalMs(), nn(config.getPollStartValue()), nn(config.getPollOp()), config.getPollMaxBatch(),
                     now, now);
             }
             log.info("任务配置已保存: {}", config.getId());

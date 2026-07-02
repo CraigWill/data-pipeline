@@ -207,6 +207,109 @@ public class CdcSimulatorService {
     }
 
     /**
+     * 自动生成并插入指定数量的模拟数据。
+     * 根据列的 JDBC 类型自动造值：数值主键自增（从当前 MAX+1 开始，避免主键冲突），
+     * 字符串造 mock 文本，时间列取当前时间。复用 batchInsert 落库并触发 CDC。
+     * @param count 生成行数
+     */
+    public int autoInsert(String dsId, String schema, String table, int count) throws Exception {
+        if (count <= 0) throw new Exception("插入数量必须大于 0");
+        if (count > MAX_BATCH_ROWS) throw new Exception("单次自动插入不能超过 " + MAX_BATCH_ROWS + " 行");
+
+        List<Map<String, Object>> columns = getColumns(dsId, schema, table);
+        DataSourceConfig config = dataSourceService.loadDataSource(dsId);
+        String type = dbType(config);
+
+        // 为数值型主键计算自增基准（MAX+1），避免主键冲突
+        long pkBase = 1L;
+        for (Map<String, Object> col : columns) {
+            if (Boolean.TRUE.equals(col.get("primaryKey")) && isNumericType((Integer) col.get("dataType"))) {
+                pkBase = getMaxLong(config, type, schema, table, (String) col.get("name")) + 1L;
+                break;
+            }
+        }
+
+        String nowTs = java.time.LocalDateTime.now()
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        List<Map<String, Object>> rows = new ArrayList<>(count);
+        for (int i = 0; i < count; i++) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            for (Map<String, Object> col : columns) {
+                String name = (String) col.get("name");
+                int dataType = col.get("dataType") != null ? (Integer) col.get("dataType") : java.sql.Types.VARCHAR;
+                boolean pk = Boolean.TRUE.equals(col.get("primaryKey"));
+                int size = col.get("size") != null ? (Integer) col.get("size") : 50;
+                row.put(name, generateValue(name, dataType, pk, size, pkBase + i, i, nowTs));
+            }
+            rows.add(row);
+        }
+        return batchInsert(dsId, schema, table, rows);
+    }
+
+    /** 按列类型生成模拟值 */
+    private Object generateValue(String colName, int dataType, boolean pk, int size,
+                                 long pkValue, int idx, String nowTs) {
+        if (isNumericType(dataType)) {
+            if (pk) return pkValue;
+            return java.util.concurrent.ThreadLocalRandom.current().nextLong(0, 1_000_000L);
+        }
+        switch (dataType) {
+            case java.sql.Types.FLOAT:
+            case java.sql.Types.REAL:
+            case java.sql.Types.DOUBLE:
+                return Math.round(java.util.concurrent.ThreadLocalRandom.current().nextDouble(0, 100_000) * 100.0) / 100.0;
+            case java.sql.Types.DATE:
+            case java.sql.Types.TIME:
+            case java.sql.Types.TIMESTAMP:
+            case java.sql.Types.TIMESTAMP_WITH_TIMEZONE:
+                return nowTs;
+            case java.sql.Types.BOOLEAN:
+            case java.sql.Types.BIT:
+                return idx % 2 == 0;
+            default: {
+                // 字符类：mock_<列名>_<序号>，按列宽截断
+                String v = "mock_" + colName.toLowerCase() + "_" + (pkValue);
+                int max = size > 0 ? size : 50;
+                if (v.length() > max) v = v.substring(0, max);
+                return v;
+            }
+        }
+    }
+
+    private boolean isNumericType(Integer dataType) {
+        if (dataType == null) return false;
+        switch (dataType) {
+            case java.sql.Types.TINYINT:
+            case java.sql.Types.SMALLINT:
+            case java.sql.Types.INTEGER:
+            case java.sql.Types.BIGINT:
+            case java.sql.Types.NUMERIC:
+            case java.sql.Types.DECIMAL:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /** 查询数值列的当前最大值（用于主键自增基准）；失败或空表返回一个安全随机基准。 */
+    private long getMaxLong(DataSourceConfig config, String type, String schema, String table, String col) {
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        String sql = "SELECT MAX(" + quoteIdentifier(type, col) + ") FROM " + qualifiedName(type, schema, table);
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword());
+             PreparedStatement stmt = conn.prepareStatement(sql);
+             ResultSet rs = stmt.executeQuery()) {
+            if (rs.next()) {
+                java.math.BigDecimal v = rs.getBigDecimal(1);
+                if (v != null) return v.longValue();
+            }
+            return 0L;
+        } catch (SQLException e) {
+            log.warn("获取主键最大值失败 [{}].{}.{}，改用随机基准: {}", schema, table, col, e.getMessage());
+            return java.util.concurrent.ThreadLocalRandom.current().nextLong(1, 1_000_000L);
+        }
+    }
+
+    /**
      * 批量 UPDATE，按主键(或指定 keyColumns)匹配
      * @param rows 每行包含待更新的列值
      * @param keyColumns 作为 WHERE 条件的键列

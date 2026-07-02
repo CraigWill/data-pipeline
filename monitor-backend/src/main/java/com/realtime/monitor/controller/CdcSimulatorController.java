@@ -84,6 +84,28 @@ public class CdcSimulatorController {
     }
 
     /**
+     * 自动生成并插入指定数量的模拟数据
+     * body: { "count": 100 }
+     */
+    @PostMapping("/{dsId}/schemas/{schema}/tables/{table}/auto-insert")
+    public ApiResponse<Map<String, Object>> autoInsert(
+            @PathVariable String dsId,
+            @PathVariable String schema,
+            @PathVariable String table,
+            @RequestBody Map<String, Object> body) {
+        try {
+            Object countObj = body.get("count");
+            int count = countObj instanceof Number ? ((Number) countObj).intValue()
+                    : Integer.parseInt(String.valueOf(countObj));
+            int affected = cdcSimulatorService.autoInsert(dsId, schema, table, count);
+            return ApiResponse.success(Map.of("affected", affected), "已自动插入 " + affected + " 行模拟数据");
+        } catch (Exception e) {
+            log.error("自动插入失败：{}/{}/{}", dsId, schema, table, e);
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
      * 批量更新
      * body: { "rows": [ {col: val, ...}, ... ], "keyColumns": ["ID"] }
      */

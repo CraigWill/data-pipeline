@@ -62,6 +62,8 @@ export const cdcSimulatorAPI = {
     api.get(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/data`, { params: { page, size } }),
   insert: (dsId, schema, table, rows) =>
     api.post(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/insert`, { rows }),
+  autoInsert: (dsId, schema, table, count) =>
+    api.post(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/auto-insert`, { count }),
   update: (dsId, schema, table, rows, keyColumns) =>
     api.post(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/update`, { rows, keyColumns }),
   delete: (dsId, schema, table, rows, keyColumns) =>

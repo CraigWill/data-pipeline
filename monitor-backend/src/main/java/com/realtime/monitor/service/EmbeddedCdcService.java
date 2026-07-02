@@ -204,6 +204,27 @@ public class EmbeddedCdcService {
             String dbType = request.getDbType() != null ? request.getDbType() : "ORACLE";
             programArgs.add(dbType);
 
+            // 采集方式开关：log（默认）/ polling（JDBC 轮询，适配缺 liboblog 的场景，如 OB 企业版 3.2.x）
+            String sourceMode = request.getSourceMode() != null ? request.getSourceMode() : "log";
+            programArgs.add("--sourceMode");
+            programArgs.add(sourceMode);
+            if ("polling".equalsIgnoreCase(sourceMode)) {
+                programArgs.add("--pollWatermarkColumn");
+                programArgs.add(request.getPollWatermarkColumn() != null ? request.getPollWatermarkColumn() : "ID");
+                programArgs.add("--pollWatermarkType");
+                programArgs.add(request.getPollWatermarkType() != null ? request.getPollWatermarkType() : "numeric");
+                programArgs.add("--pollIntervalMs");
+                programArgs.add(String.valueOf(request.getPollIntervalMs() > 0 ? request.getPollIntervalMs() : 5000));
+                if (request.getPollStartValue() != null && !request.getPollStartValue().isEmpty()) {
+                    programArgs.add("--pollStartValue");
+                    programArgs.add(request.getPollStartValue());
+                }
+                programArgs.add("--pollOp");
+                programArgs.add(request.getPollOp() != null ? request.getPollOp() : "c");
+                programArgs.add("--pollMaxBatch");
+                programArgs.add(String.valueOf(request.getPollMaxBatch() > 0 ? request.getPollMaxBatch() : 5000));
+            }
+
             // OceanBase Oracle 模式需要额外的 oblogproxy 参数
             if ("OCEANBASE_ORACLE".equalsIgnoreCase(dbType)) {
                 programArgs.add("--logProxyHost");
@@ -323,6 +344,14 @@ public class EmbeddedCdcService {
         if (taskConfig.getName() != null && !taskConfig.getName().isEmpty()) {
             request.setJobName(taskConfig.getName());
         }
+        // 传递采集方式与轮询参数
+        request.setSourceMode(taskConfig.getSourceMode());
+        request.setPollWatermarkColumn(taskConfig.getPollWatermarkColumn());
+        request.setPollWatermarkType(taskConfig.getPollWatermarkType());
+        request.setPollIntervalMs(taskConfig.getPollIntervalMs());
+        request.setPollStartValue(taskConfig.getPollStartValue());
+        request.setPollOp(taskConfig.getPollOp());
+        request.setPollMaxBatch(taskConfig.getPollMaxBatch());
         // 传递 savepoint 路径（恢复时使用）
         if (taskConfig.getSavepointPath() != null && !taskConfig.getSavepointPath().isEmpty()) {
             request.setSavepointPath(taskConfig.getSavepointPath());

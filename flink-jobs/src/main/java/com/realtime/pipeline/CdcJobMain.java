@@ -193,6 +193,49 @@ public class CdcJobMain {
         // 根据数据库类型构建不同的 CDC Source
         DataStream<String> cdcStream;
 
+        // 采集方式开关：log（默认，日志级 CDC，经 oblogproxy/liboblog）
+        //            或 polling（JDBC 轮询增量，不依赖 logproxy，适配缺少匹配 liboblog 的场景，如 OB 企业版 3.2.x）
+        String sourceMode = params.getOrDefault("sourceMode", "log").toLowerCase();
+        LOG.info("  Source Mode: {}", sourceMode);
+
+        if ("polling".equals(sourceMode)) {
+            // ── 轮询模式：用水位列增量拉取，产出兼容下游的 Debezium 风格 JSON ──
+            boolean oracleMode = "OCEANBASE_ORACLE".equals(dbType) || "ORACLE".equals(dbType);
+            String pollUrl;
+            switch (dbType) {
+                case "MYSQL":
+                case "OCEANBASE":
+                    pollUrl = "jdbc:mysql://" + hostname + ":" + port + "/" + database
+                            + "?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true";
+                    break;
+                case "OCEANBASE_ORACLE":
+                    pollUrl = "jdbc:oceanbase://" + hostname + ":" + port + "/" + database + "?compatibleMode=ORACLE";
+                    break;
+                default: // ORACLE
+                    pollUrl = "jdbc:oracle:thin:@" + hostname + ":" + port + ":" + database;
+                    break;
+            }
+            String watermarkColumn = params.getOrDefault("pollWatermarkColumn", "ID");
+            String watermarkType = params.getOrDefault("pollWatermarkType", "numeric"); // numeric | timestamp
+            long pollIntervalMs = Long.parseLong(params.getOrDefault("pollIntervalMs", "5000"));
+            String startValue = params.get("pollStartValue"); // 可空
+            String opLabel = params.getOrDefault("pollOp", "c");
+            int maxBatch = Integer.parseInt(params.getOrDefault("pollMaxBatch", "5000"));
+
+            LOG.info("  Polling: watermarkColumn={}, type={}, intervalMs={}, startValue={}, maxBatch={}",
+                    watermarkColumn, watermarkType, pollIntervalMs, startValue, maxBatch);
+
+            PollingCdcSource pollingSource = new PollingCdcSource(
+                    pollUrl, username, password, schema, tables,
+                    watermarkColumn, watermarkType, pollIntervalMs, startValue, opLabel, oracleMode, maxBatch);
+
+            cdcStream = env
+                    .addSource(pollingSource, "Polling CDC Source (" + dbType + ")")
+                    .setParallelism(1);
+
+            LOG.info("=== Polling CDC Source configured (JDBC, no logproxy) ===");
+        } else {
+
         switch (dbType) {
             case "MYSQL":
             case "OCEANBASE": {
@@ -242,10 +285,7 @@ public class CdcJobMain {
                 long startTimestampSec = System.currentTimeMillis() / 1000L;
                 LOG.info("  OceanBase CDC startTimestamp: {} (current time)", startTimestampSec);
 
-                // obcdc 需要 sys 租户凭据来读取集群元数据并拉取 clog。
-                // 注意：实测表明 cluster_user 实际由 oblogproxy(obbinlog) 的 conf.json
-                //       (容器环境变量 OB_SYS_USERNAME) 决定，此处 obcdcProperties 不生效。
-                //       要切换最小权限只读账号(cdc_reader)请改 obbinlog 容器的 OB_SYS_USERNAME。
+                // obcdc 需要 sys 租户的 root 凭据来读取内部元数据
                 Properties obcdcProps = new Properties();
                 obcdcProps.setProperty("cluster_user", "root");
                 obcdcProps.setProperty("cluster_password", params.getOrDefault("obSysPassword", "password"));
@@ -350,6 +390,7 @@ public class CdcJobMain {
                 break;
             }
         }
+        } // end else (log mode)
         
         String timestamp = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmssSSS"));
         

@@ -80,11 +80,20 @@ public class AppConfigRepository {
     }
 
     private void insertDefaults() {
-        upsert("savepoint.target.directory", "file:///opt/flink/savepoints", "Flink Savepoint 存储目录");
-        upsert("checkpoint.directory",       "file:///opt/flink/checkpoints", "Flink Checkpoint 存储目录");
+        // Savepoint/Checkpoint 目录跟随环境变量（FLINK_SAVEPOINT_DIR / FLINK_CHECKPOINT_DIR），
+        // 以便通过环境变量一处切换本地 file:// 与阿里云 oss:// 存储。
+        String savepointDir = envOrDefault("FLINK_SAVEPOINT_DIR", "file:///opt/flink/savepoints");
+        String checkpointDir = envOrDefault("FLINK_CHECKPOINT_DIR", "file:///opt/flink/checkpoints");
+        upsert("savepoint.target.directory", savepointDir, "Flink Savepoint 存储目录");
+        upsert("checkpoint.directory",       checkpointDir, "Flink Checkpoint 存储目录");
         upsert("flink.output.path",          "/opt/flink/output/cdc",         "CDC 数据输出路径");
         upsert("flink.job.jar.path",         "/opt/flink/usrlib/flink-jobs-1.0.0-SNAPSHOT.jar", "Flink CDC 作业 JAR 路径");
-        log.info("APP_CONFIG 默认配置已初始化");
+        log.info("APP_CONFIG 默认配置已初始化 (savepointDir={}, checkpointDir={})", savepointDir, checkpointDir);
+    }
+
+    private static String envOrDefault(String key, String defaultValue) {
+        String v = System.getenv(key);
+        return (v != null && !v.isEmpty()) ? v : defaultValue;
     }
 
     // ── 读取 ──────────────────────────────────────────────────────

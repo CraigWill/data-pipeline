@@ -62,6 +62,11 @@ public class TaskConfig {
     @JsonProperty("pollMaxBatch")
     @JsonAlias("poll_max_batch")
     private int pollMaxBatch = 5000;
+
+    // 选定的 OSS 连接（用于该任务输出/位点同步）；空 = 用全局默认 OSS
+    @JsonProperty("ossConnectionId")
+    @JsonAlias("oss_connection_id")
+    private String ossConnectionId;
     
     @Data
     public static class DatabaseConfig {

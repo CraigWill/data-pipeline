@@ -63,6 +63,14 @@ public class CdcStatsService {
     // OSS 同步服务
     @org.springframework.beans.factory.annotation.Autowired
     private com.realtime.monitor.oss.OssStorageService ossStorageService;
+
+    // 任务配置（用于按 表 → 任务 → OSS 连接 路由同步）
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.realtime.monitor.repository.TaskRepository taskRepository;
+
+    // 表名(大写) → ossConnectionId 缓存（60s TTL）
+    private volatile Map<String, String> tableOssCache = new HashMap<>();
+    private volatile long tableOssLoadedAt = 0L;
     
     // 事件速率
     private volatile double eventsPerSecond = 0;
@@ -659,14 +667,51 @@ public class CdcStatsService {
      * 路径结构: data-pipeline/cdc/{date}/{filename}
      */
     private void syncCdcFileToOss(File csvFile) {
-        if (ossStorageService == null || !ossStorageService.isEnabled()) return;
+        if (ossStorageService == null) return;
+        // 该文件所属表选择的 OSS 连接（无则用全局默认）
+        String ossConnId = resolveOssForFile(csvFile);
+        // 既无专属 OSS 也未启用全局 OSS → 跳过
+        if (ossConnId == null && !ossStorageService.isEnabled()) return;
         try {
             // 构建 OSS key: cdc/2026-06-22--16/IDS_xxx.csv
             String parentName = csvFile.getParentFile() != null ? csvFile.getParentFile().getName() : "unknown";
             String ossKey = "cdc/" + parentName + "/" + csvFile.getName();
-            ossStorageService.syncToOss(csvFile, ossKey);
+            ossStorageService.syncToOss(csvFile, ossKey, ossConnId);
         } catch (Exception e) {
             log.warn("CDC 文件 OSS 同步失败: {}", e.getMessage());
         }
+    }
+
+    /** 由 CSV 文件名（IDS_&lt;表名&gt;_...）解析该表所属任务选择的 OSS 连接；无则返回 null（走全局默认）。 */
+    private String resolveOssForFile(File csvFile) {
+        if (taskRepository == null) return null;
+        String fn = csvFile.getName().toUpperCase();
+        if (!fn.startsWith("IDS_")) return null; // 仅 CDC 数据文件参与路由
+        Map<String, String> map = getTableOssMap();
+        for (Map.Entry<String, String> e : map.entrySet()) {
+            if (fn.startsWith("IDS_" + e.getKey() + "_")) return e.getValue();
+        }
+        return null;
+    }
+
+    /** 构建/缓存 表名(大写) → ossConnectionId 映射（仅含配置了 OSS 的任务），60s TTL。 */
+    private Map<String, String> getTableOssMap() {
+        long now = System.currentTimeMillis();
+        if (now - tableOssLoadedAt < 60000 && !tableOssCache.isEmpty()) return tableOssCache;
+        Map<String, String> map = new HashMap<>();
+        try {
+            for (com.realtime.monitor.dto.TaskConfig t : taskRepository.findAll()) {
+                String oss = t.getOssConnectionId();
+                if (oss == null || oss.isBlank() || t.getTables() == null) continue;
+                for (String tb : t.getTables()) {
+                    if (tb != null && !tb.isBlank()) map.put(tb.trim().toUpperCase(), oss);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("构建 table→OSS 映射失败: {}", e.getMessage());
+        }
+        tableOssCache = map;
+        tableOssLoadedAt = now;
+        return map;
     }
 }

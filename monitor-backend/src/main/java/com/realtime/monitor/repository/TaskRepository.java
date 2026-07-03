@@ -65,6 +65,8 @@ public class TaskRepository {
         int maxBatch = rs.getInt("poll_max_batch");
         if (!rs.wasNull() && maxBatch > 0) config.setPollMaxBatch(maxBatch);
 
+        config.setOssConnectionId(rs.getString("oss_connection_id"));
+
         Timestamp createdAt = rs.getTimestamp("created_at");
         if (createdAt != null) config.setCreated(createdAt.toInstant().toString());
         return config;
@@ -84,25 +86,25 @@ public class TaskRepository {
                     "     output_path=?, parallelism=?, split_size=?," +
                     "     source_mode=?, poll_watermark_column=?, poll_watermark_type=?," +
                     "     poll_interval_ms=?, poll_start_value=?, poll_op=?, poll_max_batch=?," +
-                    "     updated_at=?" +
+                    "     oss_connection_id=?, updated_at=?" +
                     " WHERE id=?",
                     config.getName(), nn(config.getDatasourceId()), config.getSchema(), tablesJson,
                     nn(config.getOutputPath()), config.getParallelism(), config.getSplitSize(),
                     nn(config.getSourceMode()), nn(config.getPollWatermarkColumn()), nn(config.getPollWatermarkType()),
                     config.getPollIntervalMs(), nn(config.getPollStartValue()), nn(config.getPollOp()), config.getPollMaxBatch(),
-                    now, config.getId());
+                    nn(config.getOssConnectionId()), now, config.getId());
             } else {
                 jdbcTemplate.update(
                     "INSERT INTO " + TABLE +
                     " (id, name, datasource_id, schema_name, table_list, output_path," +
                     "  parallelism, split_size, source_mode, poll_watermark_column, poll_watermark_type," +
-                    "  poll_interval_ms, poll_start_value, poll_op, poll_max_batch, created_at, updated_at)" +
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  poll_interval_ms, poll_start_value, poll_op, poll_max_batch, oss_connection_id, created_at, updated_at)" +
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     config.getId(), config.getName(), nn(config.getDatasourceId()), config.getSchema(),
                     tablesJson, nn(config.getOutputPath()), config.getParallelism(), config.getSplitSize(),
                     nn(config.getSourceMode()), nn(config.getPollWatermarkColumn()), nn(config.getPollWatermarkType()),
                     config.getPollIntervalMs(), nn(config.getPollStartValue()), nn(config.getPollOp()), config.getPollMaxBatch(),
-                    now, now);
+                    nn(config.getOssConnectionId()), now, now);
             }
             log.info("任务配置已保存: {}", config.getId());
         } catch (JsonProcessingException e) {

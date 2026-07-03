@@ -94,6 +94,20 @@ classloader.resolve-order: child-first
 classloader.parent-first-patterns.additional: oracle.jdbc
 EOF
 
+# OSS 文件系统配置（将 checkpoint/savepoint 存储到阿里云 OSS 时启用）
+# 仅当提供了 OSS 凭证时才注入 fs.oss.* 配置；否则保持本地文件系统不变
+if [ -n "$OSS_ACCESS_KEY_ID" ] && [ -n "$OSS_ACCESS_KEY_SECRET" ]; then
+    OSS_FS_ENDPOINT=$(echo "${OSS_ENDPOINT}" | sed -E 's#^https?://##')
+    echo "  Configuring OSS filesystem (fs.oss.endpoint=${OSS_FS_ENDPOINT})"
+    cat >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
+
+# OSS 文件系统（用于 checkpoint/savepoint 直写 OSS）
+fs.oss.endpoint: ${OSS_FS_ENDPOINT}
+fs.oss.accessKeyId: ${OSS_ACCESS_KEY_ID}
+fs.oss.accessKeySecret: ${OSS_ACCESS_KEY_SECRET}
+EOF
+fi
+
 # 配置高可用（如果启用）
 if [ "$HA_MODE" != "NONE" ] && [ "$HA_MODE" != "kubernetes" ]; then
     echo "Configuring High Availability (ZooKeeper mode)..."

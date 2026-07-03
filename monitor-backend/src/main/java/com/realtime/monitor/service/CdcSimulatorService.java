@@ -310,6 +310,88 @@ public class CdcSimulatorService {
     }
 
     /**
+     * 获取表定义（DDL）。
+     * Oracle / OceanBase Oracle：优先 DBMS_METADATA.GET_DDL；MySQL/OB MySQL：SHOW CREATE TABLE；
+     * 失败则用列元数据拼装近似 DDL。
+     */
+    public String getTableDdl(String dsId, String schema, String table) throws Exception {
+        validateIdentifier(schema, "schema");
+        validateIdentifier(table, "table");
+        DataSourceConfig config = dataSourceService.loadDataSource(dsId);
+        String type = dbType(config);
+        String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+        boolean oracle = isOracleLike(type);
+
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            if (oracle) {
+                try (PreparedStatement st = conn.prepareStatement("SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM DUAL")) {
+                    st.setString(1, table.toUpperCase());
+                    st.setString(2, schema.toUpperCase());
+                    try (ResultSet rs = st.executeQuery()) {
+                        if (rs.next()) {
+                            String ddl = rs.getString(1);
+                            if (ddl != null && !ddl.trim().isEmpty()) return ddl.trim() + ";\n";
+                        }
+                    }
+                } catch (SQLException e) {
+                    log.warn("DBMS_METADATA.GET_DDL 失败，改用列元数据拼装: {}", e.getMessage());
+                }
+            } else {
+                try (java.sql.Statement st = conn.createStatement();
+                     ResultSet rs = st.executeQuery("SHOW CREATE TABLE " + qualifiedName(type, schema, table))) {
+                    if (rs.next()) {
+                        String ddl = rs.getString(2); // 第二列为 Create Table 语句
+                        if (ddl != null && !ddl.trim().isEmpty()) return ddl.trim() + ";\n";
+                    }
+                } catch (SQLException e) {
+                    log.warn("SHOW CREATE TABLE 失败，改用列元数据拼装: {}", e.getMessage());
+                }
+            }
+        } catch (SQLException e) {
+            log.error("获取表定义失败 [{}].{}.{}", dsId, schema, table, e);
+            throw new Exception("获取表定义失败：" + e.getMessage());
+        }
+
+        // 兜底：用列元数据拼近似 DDL
+        return buildApproxDdl(type, schema, table, getColumns(dsId, schema, table));
+    }
+
+    /** 用列元数据拼一个近似 CREATE TABLE（无默认值/存储子句，仅结构参考）。 */
+    private String buildApproxDdl(String type, String schema, String table, List<Map<String, Object>> cols) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("-- 近似结构（由列元数据生成，非数据库原始 DDL）\n");
+        sb.append("CREATE TABLE ").append(qualifiedName(type, schema, table)).append(" (\n");
+        List<String> pks = new ArrayList<>();
+        for (int i = 0; i < cols.size(); i++) {
+            Map<String, Object> c = cols.get(i);
+            String name = (String) c.get("name");
+            String typeName = String.valueOf(c.get("typeName"));
+            int size = c.get("size") != null ? (Integer) c.get("size") : 0;
+            boolean nullable = Boolean.TRUE.equals(c.get("nullable"));
+            if (Boolean.TRUE.equals(c.get("primaryKey"))) pks.add(name);
+
+            sb.append("  ").append(quoteIdentifier(type, name)).append(" ").append(typeName);
+            String up = typeName == null ? "" : typeName.toUpperCase();
+            if (size > 0 && (up.contains("CHAR") || up.contains("VARCHAR"))) {
+                sb.append("(").append(size).append(")");
+            }
+            if (!nullable) sb.append(" NOT NULL");
+            if (i < cols.size() - 1 || !pks.isEmpty()) sb.append(",");
+            sb.append("\n");
+        }
+        if (!pks.isEmpty()) {
+            sb.append("  PRIMARY KEY (");
+            for (int i = 0; i < pks.size(); i++) {
+                if (i > 0) sb.append(", ");
+                sb.append(quoteIdentifier(type, pks.get(i)));
+            }
+            sb.append(")\n");
+        }
+        sb.append(");\n");
+        return sb.toString();
+    }
+
+    /**
      * 批量 UPDATE，按主键(或指定 keyColumns)匹配
      * @param rows 每行包含待更新的列值
      * @param keyColumns 作为 WHERE 条件的键列

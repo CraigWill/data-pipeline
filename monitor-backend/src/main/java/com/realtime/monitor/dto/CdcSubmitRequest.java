@@ -33,4 +33,7 @@ public class CdcSubmitRequest {
     private String pollStartValue;                // 可空：数值起点或起始 epoch 毫秒
     private String pollOp = "c";                  // CSV 操作标签
     private int pollMaxBatch = 5000;
+
+    // 选定的 OSS 连接（用于该任务输出/位点同步）；空 = 用全局默认 OSS
+    private String ossConnectionId;
 }

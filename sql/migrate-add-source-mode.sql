@@ -27,3 +27,12 @@ COMMIT;
 -- 回滚：
 -- ALTER TABLE CDC_ADMIN.CDC_TASKS DROP (SOURCE_MODE, POLL_WATERMARK_COLUMN, POLL_WATERMARK_TYPE,
 --     POLL_INTERVAL_MS, POLL_START_VALUE, POLL_OP, POLL_MAX_BATCH);
+
+-- ============================================================
+-- 追加：任务选择 OSS 连接（用于按任务路由输出同步）
+-- ============================================================
+ALTER TABLE CDC_ADMIN.CDC_TASKS ADD (OSS_CONNECTION_ID VARCHAR2(100));
+COMMENT ON COLUMN CDC_ADMIN.CDC_TASKS.OSS_CONNECTION_ID IS '选定的 OSS 连接ID；空=用全局默认 OSS';
+COMMIT;
+
+-- 回滚：ALTER TABLE CDC_ADMIN.CDC_TASKS DROP (OSS_CONNECTION_ID);

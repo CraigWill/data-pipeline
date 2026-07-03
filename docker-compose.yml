@@ -67,9 +67,15 @@ services:
       
       # Checkpoint 配置
       - CHECKPOINT_INTERVAL=300000
-      - CHECKPOINT_DIR=file:///opt/flink/checkpoints
-      - SAVEPOINT_DIR=file:///opt/flink/savepoints
+      - CHECKPOINT_DIR=${FLINK_CHECKPOINT_DIR:-file:///opt/flink/checkpoints}
+      - SAVEPOINT_DIR=${FLINK_SAVEPOINT_DIR:-file:///opt/flink/savepoints}
       - STATE_BACKEND=hashmap
+
+      # OSS 文件系统凭证（entrypoint 在凭证存在时注入 fs.oss.*，
+      # 仅当 CHECKPOINT_DIR/SAVEPOINT_DIR 指向 oss:// 时才真正写入 OSS）
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-https://oss-cn-shanghai.aliyuncs.com}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
       
       # 高可用配置（启用）
       - HA_MODE=${HA_MODE:-zookeeper}
@@ -146,9 +152,15 @@ services:
       
       # Checkpoint 配置
       - CHECKPOINT_INTERVAL=300000
-      - CHECKPOINT_DIR=file:///opt/flink/checkpoints
-      - SAVEPOINT_DIR=file:///opt/flink/savepoints
+      - CHECKPOINT_DIR=${FLINK_CHECKPOINT_DIR:-file:///opt/flink/checkpoints}
+      - SAVEPOINT_DIR=${FLINK_SAVEPOINT_DIR:-file:///opt/flink/savepoints}
       - STATE_BACKEND=hashmap
+
+      # OSS 文件系统凭证（entrypoint 在凭证存在时注入 fs.oss.*，
+      # 仅当 CHECKPOINT_DIR/SAVEPOINT_DIR 指向 oss:// 时才真正写入 OSS）
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-https://oss-cn-shanghai.aliyuncs.com}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
       
       # 高可用配置（与主 JobManager 相同）
       - HA_MODE=${HA_MODE:-zookeeper}
@@ -224,6 +236,12 @@ services:
       - HA_ZOOKEEPER_QUORUM=${HA_ZOOKEEPER_QUORUM:-zookeeper:2181}
       - HA_ZOOKEEPER_PATH_ROOT=${HA_ZOOKEEPER_PATH_ROOT:-/flink}
       - HA_CLUSTER_ID=${HA_CLUSTER_ID:-/realtime-pipeline}
+
+      # OSS 文件系统凭证（entrypoint 在凭证存在时注入 fs.oss.*，
+      # TaskManager 需要凭证以写入 checkpoint 数据分片到 oss://）
+      - OSS_ENDPOINT=${OSS_ENDPOINT:-https://oss-cn-shanghai.aliyuncs.com}
+      - OSS_ACCESS_KEY_ID=${OSS_ACCESS_KEY_ID:-}
+      - OSS_ACCESS_KEY_SECRET=${OSS_ACCESS_KEY_SECRET:-}
       
       # 数据库配置由 monitor-backend 在提交 CDC Job 时通过 programArgs 动态传入
       - OUTPUT_PATH=${OUTPUT_PATH:-./output/cdc}
@@ -304,6 +322,10 @@ services:
       - FLINK_REST_URLS=http://jobmanager:8081,http://jobmanager-standby:8081
       - OUTPUT_PATH=/app/output/cdc
       - CONFIG_DIR=/app/config
+      # Flink Checkpoint/Savepoint 存储目录（提交作业与触发 savepoint 时使用）
+      # 与 Flink 容器保持一致：默认 file://，切换到 OSS 时改为 oss://<bucket>/<prefix>/...
+      - FLINK_CHECKPOINT_DIR=${FLINK_CHECKPOINT_DIR:-file:///opt/flink/checkpoints}
+      - FLINK_SAVEPOINT_DIR=${FLINK_SAVEPOINT_DIR:-file:///opt/flink/savepoints}
       - ORACLE_CONTAINER=
       # ── CDC 管理库（OceanBase，MySQL 兼容协议）──────────────────
       - CDC_ADMIN_TYPE=${CDC_ADMIN_TYPE:-OCEANBASE_ORACLE}

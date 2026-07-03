@@ -407,8 +407,12 @@ async function testConnection() {
   saving.value = false
   
   try {
-    await api.post(`/datasources/${config.id}/test`)
-    testResult.value = { type: 'success', message: '连接成功，数据库可正常访问' }
+    const res = await api.post(`/datasources/${config.id}/test`)
+    if (res && res.success) {
+      testResult.value = { type: 'success', message: '连接成功，数据库可正常访问' }
+    } else {
+      testResult.value = { type: 'error', message: '连接失败: ' + (res?.error || res?.message || '数据库无法访问') }
+    }
     loadDataSources()
   } catch (error) {
     testResult.value = { type: 'error', message: '连接失败: ' + (error.response?.data?.error || error.message) }
@@ -447,8 +451,12 @@ async function saveDataSource() {
 async function testDataSource(ds) {
   ds._testing = true
   try {
-    await api.post(`/datasources/${ds.id}/test`)
-    showAlert('success', `"${ds.name}" 连接成功`)
+    const res = await api.post(`/datasources/${ds.id}/test`)
+    if (res && res.success) {
+      showAlert('success', `"${ds.name}" 连接成功`)
+    } else {
+      showAlert('error', `"${ds.name}" 连接失败: ` + (res?.error || res?.message || '数据库无法访问'))
+    }
     loadDataSources()
   } catch (error) {
     showAlert('error', `"${ds.name}" 连接失败: ` + error.message)

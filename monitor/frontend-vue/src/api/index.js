@@ -54,10 +54,21 @@ export const datasourceAPI = {
   tables: (id, schema) => api.get(`/datasources/${id}/schemas/${schema}/tables`)
 }
 
+// OSS 连接配置 API
+export const ossConnectionAPI = {
+  list: () => api.get('/oss-connections'),
+  create: (data) => api.post('/oss-connections', data),
+  update: (id, data) => api.put(`/oss-connections/${id}`, data),
+  delete: (id) => api.delete(`/oss-connections/${id}`),
+  test: (id) => api.post(`/oss-connections/${id}/test`)
+}
+
 // 模拟 CDC 事件 API
 export const cdcSimulatorAPI = {
   columns: (dsId, schema, table) =>
     api.get(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/columns`),
+  tableDdl: (dsId, schema, table) =>
+    api.get(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/ddl`),
   queryData: (dsId, schema, table, page, size) =>
     api.get(`/cdc-simulator/${dsId}/schemas/${schema}/tables/${table}/data`, { params: { page, size } }),
   insert: (dsId, schema, table, rows) =>

@@ -32,8 +32,8 @@ akka.client.timeout: 60s
 
 # Checkpoint配置
 state.backend: hashmap
-state.checkpoints.dir: file:///opt/flink/checkpoints
-state.savepoints.dir: file:///opt/flink/savepoints
+# state.checkpoints.dir / state.savepoints.dir 由 entrypoint 依据环境变量
+# CHECKPOINT_DIR / SAVEPOINT_DIR 动态注入（支持 file:// 与 oss:// 切换），此处不再硬编码
 execution.checkpointing.interval: 60000
 execution.checkpointing.mode: EXACTLY_ONCE
 execution.checkpointing.timeout: 600000

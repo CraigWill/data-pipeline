@@ -71,16 +71,27 @@
         <div v-else-if="tables.length === 0" class="empty-state">
           <p>未找到表</p>
         </div>
-        <div v-else class="table-list">
-          <div v-for="table in tables" :key="table.name" class="table-item">
-            <input type="checkbox" :id="`table-${table.name}`" :value="table.name" 
-                   v-model="selectedTables">
-            <label :for="`table-${table.name}`" class="table-info">
-              <div class="table-name">{{ table.name }}</div>
-              <div class="table-stats">{{ table.rows.toLocaleString() }} 行 | {{ table.columns }} 列</div>
-            </label>
+        <template v-else>
+          <div class="table-filter">
+            <svg class="tf-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+            <input v-model="tableFilter" type="text" class="tf-input" placeholder="输入表名过滤（支持模糊匹配）" />
+            <button v-if="tableFilter" class="tf-clear" title="清空" @click="tableFilter = ''">×</button>
+            <span class="tf-count">匹配 <b>{{ filteredTables.length }}</b> / {{ tables.length }} · 已选 <b>{{ selectedTables.length }}</b></span>
           </div>
-        </div>
+          <div v-if="filteredTables.length === 0" class="empty-state">
+            <p>没有匹配 “{{ tableFilter }}” 的表</p>
+          </div>
+          <div v-else class="table-list">
+            <div v-for="table in filteredTables" :key="table.name" class="table-item">
+              <input type="checkbox" :id="`table-${table.name}`" :value="table.name"
+                     v-model="selectedTables">
+              <label :for="`table-${table.name}`" class="table-info">
+                <div class="table-name">{{ table.name }}</div>
+                <div class="table-stats">{{ table.rows.toLocaleString() }} 行 | {{ table.columns }} 列</div>
+              </label>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- 步骤 4: 配置任务 -->
@@ -115,14 +126,26 @@
               <label>输出路径</label>
               <input v-model="taskConfig.outputPath" type="text" placeholder="./output/cdc">
             </div>
+            <div class="form-group">
+              <label>OSS 目标 <span class="label-hint">可选</span></label>
+              <div class="custom-select-wrapper">
+                <select v-model="taskConfig.ossConnectionId" class="custom-select">
+                  <option value="">默认（全局 OSS / 不额外同步）</option>
+                  <option v-for="o in ossConnections" :key="o.id" :value="o.id">{{ o.name }} · {{ o.bucketName }}</option>
+                </select>
+              </div>
+              <small class="field-tip">选择后，该任务的 CDC 输出文件会同步到所选 OSS；不选则用全局默认。可在「OSS配置」页管理。</small>
+            </div>
             <div class="form-row">
               <div class="form-group">
-                <label>并行度</label>
+                <label>并行度 <span class="label-hint">Flink 子任务数</span></label>
                 <input v-model.number="taskConfig.parallelism" type="number" min="1" max="16">
+                <small class="field-tip">Flink 并行子任务数（非线程）。CDC 源固定为 1，主要影响中间处理算子，受可用 task slot 限制。</small>
               </div>
-              <div class="form-group">
-                <label>分片大小</label>
+              <div class="form-group" v-if="taskConfig.sourceMode !== 'polling'">
+                <label>分片大小 <span class="label-hint">行数</span></label>
                 <input v-model.number="taskConfig.splitSize" type="number" min="1024">
+                <small class="field-tip">快照分片的每片行数。仅 MySQL / Oracle 源生效；OB Oracle 日志模式忽略。</small>
               </div>
             </div>
           </div>
@@ -196,10 +219,19 @@
               <div class="form-group">
                 <label>轮询间隔 (ms)</label>
                 <input v-model.number="taskConfig.pollIntervalMs" type="number" min="500" step="500">
+                <small class="field-tip">两次轮询的间隔，越小越接近实时（会增加库压力）。</small>
               </div>
+              <div class="form-group">
+                <label>每批行数 <span class="label-hint">替代分片大小</span></label>
+                <input v-model.number="taskConfig.pollMaxBatch" type="number" min="100" step="100">
+                <small class="field-tip">单次轮询最多拉取的行数。</small>
+              </div>
+            </div>
+            <div class="form-row">
               <div class="form-group">
                 <label>起始水位值 <span class="label-hint">可空</span></label>
                 <input v-model="taskConfig.pollStartValue" type="text" placeholder="空 = 从当前开始">
+                <small class="field-tip">空 = 从当前开始（只采新增变更）；填数值/时间则从该位点开始。</small>
               </div>
             </div>
           </div>
@@ -221,7 +253,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api'
 
@@ -245,6 +277,14 @@ const selectedDatasource = ref('')
 const selectedSchema = ref('')
 const selectedTables = ref([])
 
+// 表过滤
+const tableFilter = ref('')
+const filteredTables = computed(() => {
+  const kw = tableFilter.value.trim().toLowerCase()
+  if (!kw) return tables.value
+  return tables.value.filter(t => t.name.toLowerCase().includes(kw))
+})
+
 // 轮询水位列（从所选表的真实列中选择）
 const watermarkColumns = ref([])
 const loadingWatermarkCols = ref(false)
@@ -264,11 +304,25 @@ const taskConfig = ref({
   pollWatermarkColumn: 'ID',
   pollWatermarkType: 'numeric',
   pollIntervalMs: 5000,
-  pollStartValue: ''
+  pollStartValue: '',
+  pollMaxBatch: 5000,
+  ossConnectionId: ''
 })
+
+// 可选的 OSS 连接列表
+const ossConnections = ref([])
+async function loadOssConnections() {
+  try {
+    const res = await api.get('/oss-connections')
+    ossConnections.value = res.data || []
+  } catch (e) {
+    ossConnections.value = []
+  }
+}
 
 onMounted(() => {
   loadDataSources()
+  loadOssConnections()
 })
 
 watch(selectedDatasource, (newVal) => {
@@ -360,6 +414,7 @@ async function loadTables() {
   if (!selectedDatasource.value || !selectedSchema.value) return
 
   loadingTables.value = true
+  tableFilter.value = ''
   try {
     const result = await api.get(
       `/datasources/${selectedDatasource.value}/schemas/${selectedSchema.value}/tables`
@@ -428,7 +483,9 @@ async function saveTask() {
     poll_watermark_column: taskConfig.value.pollWatermarkColumn,
     poll_watermark_type: taskConfig.value.pollWatermarkType,
     poll_interval_ms: taskConfig.value.pollIntervalMs,
-    poll_start_value: taskConfig.value.pollStartValue || null
+    poll_start_value: taskConfig.value.pollStartValue || null,
+    poll_max_batch: taskConfig.value.pollMaxBatch,
+    oss_connection_id: taskConfig.value.ossConnectionId || null
   }
 
   try {
@@ -543,6 +600,54 @@ function showAlert(type, message) {
   display: flex;
   justify-content: space-between;
 }
+
+/* 表过滤器 */
+.table-filter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.table-filter .tf-icon {
+  position: absolute;
+  left: 12px;
+  width: 16px;
+  height: 16px;
+  color: #7A869A;
+  pointer-events: none;
+}
+.table-filter .tf-input {
+  flex: 1;
+  padding: 10px 36px 10px 36px;
+  font-size: 14px;
+  color: #172B4D;
+  background: #FAFBFC;
+  border: 2px solid #DFE1E6;
+  border-radius: 8px;
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+.table-filter .tf-input::placeholder { color: #A5ADBA; }
+.table-filter .tf-input:hover { border-color: #B3BAC5; background: #F4F5F7; }
+.table-filter .tf-input:focus { border-color: #4C9AFF; background: #fff; box-shadow: 0 0 0 3px rgba(76, 154, 255, 0.15); }
+.table-filter .tf-clear {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  line-height: 20px;
+  text-align: center;
+  border: none;
+  border-radius: 50%;
+  background: #DFE1E6;
+  color: #5E6C84;
+  cursor: pointer;
+  font-size: 15px;
+  transition: background 0.2s ease;
+}
+.table-filter .tf-clear:hover { background: #C1C7D0; color: #172B4D; }
+.table-filter .tf-count { font-size: 12px; color: #5E6C84; white-space: nowrap; }
+.table-filter .tf-count b { color: #0052CC; }
 
 .table-list {
   max-height: 360px;
@@ -791,6 +896,7 @@ function showAlert(type, message) {
 .hint { display: block; font-size: 12px; color: #5E6C84; margin-top: 6px; line-height: 1.5; }
 .hint-warn { color: #974F0C; }
 .label-hint { font-size: 11px; font-weight: 500; color: #97A0AF; }
+.field-tip { display: block; margin-top: 6px; font-size: 11px; line-height: 1.5; color: #7A869A; }
 
 /* 面板过渡 */
 .fade-slide-enter-active, .fade-slide-leave-active { transition: opacity 0.2s ease, transform 0.2s ease; }

@@ -56,6 +56,12 @@ const router = createRouter({
       name: 'simulator',
       component: () => import('../views/CdcSimulatorView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/oss-connections',
+      name: 'oss-connections',
+      component: () => import('../views/OssConnectionView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

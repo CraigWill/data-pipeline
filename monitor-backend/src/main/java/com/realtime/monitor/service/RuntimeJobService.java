@@ -547,6 +547,11 @@ public class RuntimeJobService {
      */
     private void syncSavepointToOss(String savepointPath, String jobId) {
         if (!ossStorageService.isEnabled()) return;
+        // 若 savepoint 已直接写入 OSS（oss:// 前缀），则无需再做本地镜像同步
+        if (savepointPath != null && savepointPath.startsWith("oss://")) {
+            log.debug("Savepoint 已原生存储于 OSS，跳过镜像同步: {}", savepointPath);
+            return;
+        }
         try {
             // 去掉 file:// 前缀
             String localPath = savepointPath.replaceFirst("^file://", "");

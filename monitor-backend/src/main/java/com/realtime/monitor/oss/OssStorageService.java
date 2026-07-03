@@ -7,13 +7,18 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 
 import com.aliyun.oss.OSS;
+import com.aliyun.oss.OSSClientBuilder;
 import com.aliyun.oss.model.OSSObject;
 import com.aliyun.oss.model.ObjectMetadata;
+import com.realtime.monitor.dto.OssConnection;
+import com.realtime.monitor.service.OssConnectionService;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -34,11 +39,77 @@ public class OssStorageService {
 
     private final OSS ossClient;
     private final OssConfig ossConfig;
+    private final OssConnectionService ossConnectionService;
 
-    public OssStorageService(@Nullable OSS ossClient, OssConfig ossConfig) {
+    // 按 ossConnectionId 缓存的客户端与配置
+    private final Map<String, OSS> clientCache = new ConcurrentHashMap<>();
+    private final Map<String, OssConnection> connCache = new ConcurrentHashMap<>();
+
+    public OssStorageService(@Nullable OSS ossClient, OssConfig ossConfig,
+                             OssConnectionService ossConnectionService) {
         this.ossClient = ossClient;
         this.ossConfig = ossConfig;
+        this.ossConnectionService = ossConnectionService;
     }
+
+    /**
+     * 将本地文件同步到指定 OSS 连接；ossConnectionId 为空或解析失败时回退到全局默认 OSS。
+     */
+    public void syncToOss(File localFile, String ossKey, String ossConnectionId) {
+        if (ossConnectionId == null || ossConnectionId.isBlank()) {
+            syncToOss(localFile, ossKey);
+            return;
+        }
+        OssConnection conn = resolveConn(ossConnectionId);
+        OSS client = clientFor(ossConnectionId);
+        if (conn == null || client == null) {
+            log.warn("OSS 连接 {} 不可用，回退到全局默认 OSS", ossConnectionId);
+            syncToOss(localFile, ossKey);
+            return;
+        }
+        if (!localFile.exists()) {
+            log.warn("本地文件不存在，跳过 OSS 同步: {}", localFile.getAbsolutePath());
+            return;
+        }
+        String fullKey = nn(conn.getPrefix()) + ossKey;
+        try (FileInputStream fis = new FileInputStream(localFile)) {
+            ObjectMetadata metadata = new ObjectMetadata();
+            metadata.setContentLength(localFile.length());
+            client.putObject(conn.getBucketName(), fullKey, fis, metadata);
+            log.debug("文件已同步到 OSS[{}]: {} -> {}", ossConnectionId, localFile.getName(), fullKey);
+        } catch (Exception e) {
+            log.warn("OSS[{}] 同步失败（不影响本地存储）: {} -> {}, error: {}",
+                    ossConnectionId, localFile.getName(), fullKey, e.getMessage());
+        }
+    }
+
+    /** 解析 OSS 连接（带缓存）。 */
+    private OssConnection resolveConn(String id) {
+        return connCache.computeIfAbsent(id, k -> {
+            try {
+                return ossConnectionService.load(k); // secret 已解密
+            } catch (Exception e) {
+                log.warn("加载 OSS 连接失败: {}, {}", k, e.getMessage());
+                return null;
+            }
+        });
+    }
+
+    /** 构建/获取指定连接的 OSS 客户端（带缓存）。 */
+    private OSS clientFor(String id) {
+        return clientCache.computeIfAbsent(id, k -> {
+            OssConnection c = resolveConn(k);
+            if (c == null || c.getEndpoint() == null || c.getAccessKeyId() == null) return null;
+            try {
+                return new OSSClientBuilder().build(c.getEndpoint(), c.getAccessKeyId(), c.getAccessKeySecret());
+            } catch (Exception e) {
+                log.warn("构建 OSS 客户端失败: {}, {}", k, e.getMessage());
+                return null;
+            }
+        });
+    }
+
+    private static String nn(String v) { return v != null ? v : ""; }
 
     /**
      * 是否启用 OSS。

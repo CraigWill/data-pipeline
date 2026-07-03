@@ -84,6 +84,23 @@ public class CdcSimulatorController {
     }
 
     /**
+     * 获取表定义（DDL），用于下载
+     */
+    @GetMapping("/{dsId}/schemas/{schema}/tables/{table}/ddl")
+    public ApiResponse<Map<String, Object>> tableDdl(
+            @PathVariable String dsId,
+            @PathVariable String schema,
+            @PathVariable String table) {
+        try {
+            String ddl = cdcSimulatorService.getTableDdl(dsId, schema, table);
+            return ApiResponse.success(Map.of("ddl", ddl, "table", table, "schema", schema));
+        } catch (Exception e) {
+            log.error("获取表定义失败：{}/{}/{}", dsId, schema, table, e);
+            return ApiResponse.error(e.getMessage());
+        }
+    }
+
+    /**
      * 自动生成并插入指定数量的模拟数据
      * body: { "count": 100 }
      */

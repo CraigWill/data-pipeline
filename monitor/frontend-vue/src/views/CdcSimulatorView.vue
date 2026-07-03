@@ -51,7 +51,13 @@
       <div class="card" v-if="columns.length">
         <div class="card-title">
           <span>表结构</span>
-          <span class="muted">主键列: {{ keyColumns.length ? keyColumns.join(', ') : '未检测到（更新/删除需手动选择键列）' }}</span>
+          <div class="card-title-right">
+            <span class="muted">主键列: {{ keyColumns.length ? keyColumns.join(', ') : '未检测到（更新/删除需手动选择键列）' }}</span>
+            <button class="btn btn-mini btn-ghost" :disabled="ddlDownloading" @click="downloadTableDef">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7 10l5 5 5-5M5 21h14"/></svg>
+              {{ ddlDownloading ? '导出中...' : '下载表定义' }}
+            </button>
+          </div>
         </div>
         <div class="schema-chips">
           <span v-for="col in columns" :key="col.name" class="chip" :class="{ pk: col.primaryKey }">
@@ -273,6 +279,7 @@ const loading = ref(false)
 const submitting = ref(false)
 const autoInsertCount = ref(100)   // 自动插入的行数
 const autoInserting = ref(false)
+const ddlDownloading = ref(false)  // 表定义下载中
 const alert = ref({ show: false, type: '', message: '' })
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / size.value)))
@@ -412,6 +419,39 @@ async function doInsert() {
     showAlert('error', '插入失败: ' + errMsg(e))
   } finally {
     submitting.value = false
+  }
+}
+
+// ---- 下载表定义 ----
+async function downloadTableDef() {
+  if (!selectedDs.value || !selectedSchema.value || !selectedTable.value) {
+    showAlert('error', '请先选择数据源 / Schema / 表')
+    return
+  }
+  ddlDownloading.value = true
+  try {
+    const res = await cdcSimulatorAPI.tableDdl(selectedDs.value, selectedSchema.value, selectedTable.value)
+    if (res.success && res.data && res.data.ddl) {
+      // 后端对响应做了 HTML 转义（&#34; 等），下载前解码还原
+      const ta = document.createElement('textarea')
+      ta.innerHTML = res.data.ddl
+      const ddl = ta.value
+      const blob = new Blob([ddl], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${selectedSchema.value}.${selectedTable.value}.sql`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } else {
+      showAlert('error', res.error || '获取表定义失败')
+    }
+  } catch (e) {
+    showAlert('error', '下载失败: ' + errMsg(e))
+  } finally {
+    ddlDownloading.value = false
   }
 }
 
@@ -570,6 +610,22 @@ function showAlert(type, message) {
   color: #172B4D;
   margin-bottom: 12px;
 }
+.card-title-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.btn-ghost {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #fff;
+  border: 1px solid #DFE1E6;
+  color: #0052CC;
+}
+.btn-ghost:hover:not(:disabled) { background: #DEEBFF; border-color: #B3D4FF; }
+.btn-ghost svg { width: 15px; height: 15px; }
 
 .selector-row {
   display: flex;

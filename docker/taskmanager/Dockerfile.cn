@@ -55,6 +55,12 @@ RUN mkdir -p /opt/flink/checkpoints && \
     mkdir -p /opt/flink/usrlib && \
     chown -R ${FLINK_USER}:${FLINK_USER} /opt/flink
 
+# 启用 OSS 文件系统插件（用于将 checkpoint/savepoint 直接写入阿里云 OSS）
+# flink-oss-fs-hadoop 已随 Flink 发行版内置于 /opt/flink/opt/，只需拷贝到 plugins 目录即可加载
+RUN mkdir -p /opt/flink/plugins/oss-fs-hadoop && \
+    cp /opt/flink/opt/flink-oss-fs-hadoop-*.jar /opt/flink/plugins/oss-fs-hadoop/ && \
+    chown -R ${FLINK_USER}:${FLINK_USER} /opt/flink/plugins/oss-fs-hadoop
+
 # 下载 JDBC 驱动（使用阿里云 Maven 镜像加速，回退到 Maven Central）
 # - Oracle ojdbc8：连接 Oracle 业务库（CDC 数据源）
 # - OceanBase oceanbase-client：连接 OceanBase（原生协议，推荐）
@@ -77,7 +83,7 @@ RUN set -ex && \
         -o /opt/flink/lib/mysql-connector-j.jar || \
     curl -fSL "${CENTRAL}/com/mysql/mysql-connector-j/9.5.0/mysql-connector-j-9.5.0.jar" \
         -o /opt/flink/lib/mysql-connector-j.jar && \
-    \
+    \ 
     chown ${FLINK_USER}:${FLINK_USER} \
         /opt/flink/lib/ojdbc8.jar \
         /opt/flink/lib/oceanbase-client.jar \

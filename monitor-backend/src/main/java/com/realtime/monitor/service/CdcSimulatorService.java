@@ -115,7 +115,9 @@ public class CdcSimulatorService {
         List<Map<String, Object>> rows = new ArrayList<>();
         long total = 0;
 
-        String dataSql = buildPagedQuery(type, qualified, page, size);
+        // 分页 SQL 中的 LIMIT/OFFSET/FETCH 数值均使用 ? 占位符，
+        // 通过 bindPagingParams() 以 setInt 绑定，不做字符串拼接。
+        String dataSql = buildPagedQuery(type, qualified);
         String countSql = "SELECT COUNT(*) FROM " + qualified;
 
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
@@ -124,18 +126,20 @@ public class CdcSimulatorService {
                 if (rs.next()) total = rs.getLong(1);
             }
 
-            try (PreparedStatement stmt = conn.prepareStatement(dataSql);
-                 ResultSet rs = stmt.executeQuery()) {
-                ResultSetMetaData md = rs.getMetaData();
-                int colCount = md.getColumnCount();
-                for (int i = 1; i <= colCount; i++) columns.add(md.getColumnLabel(i));
-                while (rs.next()) {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= colCount; i++) {
-                        Object v = rs.getObject(i);
-                        row.put(md.getColumnLabel(i), v == null ? null : stringifyValue(v));
+            try (PreparedStatement stmt = conn.prepareStatement(dataSql)) {
+                bindPagingParams(stmt, type, page, size);
+                try (ResultSet rs = stmt.executeQuery()) {
+                    ResultSetMetaData md = rs.getMetaData();
+                    int colCount = md.getColumnCount();
+                    for (int i = 1; i <= colCount; i++) columns.add(md.getColumnLabel(i));
+                    while (rs.next()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        for (int i = 1; i <= colCount; i++) {
+                            Object v = rs.getObject(i);
+                            row.put(md.getColumnLabel(i), v == null ? null : stringifyValue(v));
+                        }
+                        rows.add(row);
                     }
-                    rows.add(row);
                 }
             }
         } catch (SQLException e) {
@@ -537,21 +541,44 @@ public class CdcSimulatorService {
         return quoteIdentifier(type, s) + "." + quoteIdentifier(type, t);
     }
 
-    /** 构造分页查询 SQL */
-    private String buildPagedQuery(String type, String qualified, int page, int size) {
-        int offset = (page - 1) * size;
+    /**
+     * 构造分页查询 SQL。LIMIT/OFFSET/FETCH 的数值均使用 ? 占位符，
+     * 不将 page/size/offset 拼接进 SQL 字符串，避免任何字符串拼接方式的注入风险；
+     * 实际数值通过 bindPagingParams() 以 PreparedStatement.setInt 绑定。
+     */
+    private String buildPagedQuery(String type, String qualified) {
         switch (type) {
             case "MYSQL":
             case "OCEANBASE":
-                return "SELECT * FROM " + qualified + " LIMIT " + size + " OFFSET " + offset;
             case "POSTGRES":
-                return "SELECT * FROM " + qualified + " LIMIT " + size + " OFFSET " + offset;
+                return "SELECT * FROM " + qualified + " LIMIT ? OFFSET ?";
             case "ORACLE":
             case "OCEANBASE_ORACLE":
             default:
                 // Oracle 12c+ / OceanBase Oracle 模式支持 OFFSET ... FETCH
-                return "SELECT * FROM " + qualified
-                        + " OFFSET " + offset + " ROWS FETCH NEXT " + size + " ROWS ONLY";
+                return "SELECT * FROM " + qualified + " OFFSET ? ROWS FETCH NEXT ? ROWS ONLY";
+        }
+    }
+
+    /**
+     * 绑定分页参数。MySQL/OceanBase/Postgres 的 LIMIT ? OFFSET ? 顺序为 (size, offset)；
+     * Oracle/OceanBase Oracle 的 OFFSET ? ROWS FETCH NEXT ? ROWS ONLY 顺序为 (offset, size)。
+     */
+    private void bindPagingParams(PreparedStatement stmt, String type, int page, int size) throws SQLException {
+        int offset = (page - 1) * size;
+        switch (type) {
+            case "MYSQL":
+            case "OCEANBASE":
+            case "POSTGRES":
+                stmt.setInt(1, size);
+                stmt.setInt(2, offset);
+                break;
+            case "ORACLE":
+            case "OCEANBASE_ORACLE":
+            default:
+                stmt.setInt(1, offset);
+                stmt.setInt(2, size);
+                break;
         }
     }
 

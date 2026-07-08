@@ -62,6 +62,18 @@ const router = createRouter({
       name: 'oss-connections',
       component: () => import('../views/OssConnectionView.vue'),
       meta: { requiresAuth: true }
+    },
+    {
+      path: '/intro',
+      name: 'intro',
+      component: () => import('../views/SystemIntroView.vue'),
+      meta: { requiresAuth: true }
+    },
+    {
+      path: '/components',
+      name: 'components',
+      component: () => import('../views/ComponentInventoryView.vue'),
+      meta: { requiresAuth: true }
     }
   ]
 })

@@ -10,7 +10,7 @@
     </div>
 
     <div class="actions mb-4">
-      <button class="btn btn-secondary" @click="loadJobs"><icon-refresh theme="outline" size="13" /> 刷新</button>
+      <button class="btn btn-secondary" data-tour="jobs-refresh-btn" @click="loadJobs"><icon-refresh theme="outline" size="13" /> 刷新</button>
     </div>
 
     <div v-if="loading" class="loading">
@@ -63,7 +63,7 @@
         </div>
 
         <div class="job-actions">
-          <button class="btn btn-secondary btn-sm" @click="viewJobDetail(job.jid)">查看详情</button>
+          <button class="btn btn-secondary btn-sm" data-tour="jobs-detail-btn" @click="viewJobDetail(job.jid)">查看详情</button>
           <button v-if="job.state === 'RUNNING'" 
                   class="btn btn-danger btn-sm" 
                   @click="cancelJob(job.jid)">

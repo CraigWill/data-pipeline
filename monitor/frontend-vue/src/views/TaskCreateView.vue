@@ -25,7 +25,7 @@
         <h3 class="mb-3">选择数据源</h3>
         <div class="form-group">
           <label>数据源 *</label>
-          <div class="custom-select-wrapper">
+          <div class="custom-select-wrapper" data-tour="task-select-ds">
             <select v-model="selectedDatasource" required class="custom-select">
               <option value="">请选择数据源</option>
               <option v-for="ds in datasources" :key="ds.id" :value="ds.id">
@@ -245,7 +245,7 @@
     <div class="wizard-actions">
       <button v-if="currentStep > 1" class="btn btn-secondary" @click="previousStep">上一步</button>
       <div></div>
-      <button class="btn btn-primary" @click="nextStep">
+      <button class="btn btn-primary" data-tour="task-next-btn" @click="nextStep">
         {{ currentStep === 4 ? '保存并提交' : '下一步' }}
       </button>
     </div>

@@ -5,7 +5,7 @@
         <h1>OSS 配置</h1>
         <p class="subtitle">管理多个 OSS 连接（阿里云对象存储），建任务时可选择用于同步/备份的 OSS</p>
       </div>
-      <button class="btn btn-primary" @click="openCreate">+ 新增 OSS 连接</button>
+      <button class="btn btn-primary" data-tour="oss-create-btn" @click="openCreate">+ 新增 OSS 连接</button>
     </div>
 
     <transition name="fade">
@@ -301,4 +301,29 @@ onMounted(load)
 .test-bar { padding: 10px 12px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
 .test-success { background: #E3FCEF; color: #006644; border: 1px solid #ABF5D1; }
 .test-error { background: #FFEBE6; color: #BF2600; border: 1px solid #FFBDAD; }
+
+@media (max-width: 767px) {
+  .oss-view { padding: 16px 12px; }
+
+  /* 页头堆叠，按钮占满宽度 */
+  .page-header { flex-direction: column; align-items: stretch; gap: 12px; }
+  .page-header h1 { font-size: 18px; }
+
+  /* 列表单列，避免固定最小宽度导致横向溢出 */
+  .oss-list { grid-template-columns: 1fr; gap: 12px; }
+
+  /* 卡片头部堆叠，操作按钮换行 */
+  .oss-card-head { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .oss-actions { flex-wrap: wrap; width: 100%; }
+
+  /* 元信息键值纵向堆叠、字体缩小、长值换行 */
+  .oss-meta > div { flex-direction: column; gap: 2px; font-size: 11px; }
+  .oss-meta .k { width: auto; }
+  .oss-meta .v { word-break: break-all; }
+
+  /* 弹窗底部铺满，表单单列 */
+  .oss-modal-mask { align-items: flex-end; }
+  .oss-dialog { width: 100%; max-width: 100%; border-radius: 12px 12px 0 0; max-height: 92vh; }
+  .form-row { grid-template-columns: 1fr; }
+}
 </style>

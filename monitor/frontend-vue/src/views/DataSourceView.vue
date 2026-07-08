@@ -5,7 +5,7 @@
         <h2><icon-data-base theme="outline" size="20" /> 数据源管理</h2>
         <p class="subtitle">管理数据库连接配置（支持 Oracle / OceanBase / MySQL / PostgreSQL）</p>
       </div>
-      <button class="btn btn-primary" @click="showCreateModal">
+      <button class="btn btn-primary" data-tour="ds-create-btn" @click="showCreateModal">
         <icon-add-one theme="outline" size="14" /> 新建数据源
       </button>
     </div>
@@ -36,7 +36,7 @@
     </div>
 
     <!-- 数据源列表 -->
-    <div v-else class="datasource-list">
+    <div v-else class="datasource-list" data-tour="ds-list">
       <div v-for="ds in datasources" :key="ds.id" class="datasource-card">
         <div class="ds-icon-wrap">
           <icon-data-base theme="filled" size="22" fill="#0052CC" />
@@ -127,7 +127,7 @@
                 <!-- 数据库类型 -->
                 <div class="form-field">
                   <label class="field-label">数据库类型 <span class="required">*</span></label>
-                  <div class="db-type-group">
+                  <div class="db-type-group" data-tour="ds-type-group">
                     <button
                       v-for="t in dbTypes" :key="t.value" type="button"
                       :class="['db-type-btn', { active: form.type === t.value }]"
@@ -232,13 +232,13 @@
 
           <!-- 对话框底部 -->
           <div class="dialog-footer">
-            <button type="button" class="btn btn-ghost" @click="testConnection" :disabled="testing">
+            <button type="button" class="btn btn-ghost" data-tour="ds-test-btn" @click="testConnection" :disabled="testing">
               <icon-wifi theme="outline" size="14" />
               {{ testing ? '测试中...' : '测试连接' }}
             </button>
             <div class="footer-right">
               <button type="button" class="btn btn-secondary" @click="closeModal">取消</button>
-              <button type="button" class="btn btn-primary" @click="saveDataSource" :disabled="saving">
+              <button type="button" class="btn btn-primary" data-tour="ds-save-btn" @click="saveDataSource" :disabled="saving">
                 {{ saving ? '保存中...' : (isEditing ? '保存更改' : '创建') }}
               </button>
             </div>

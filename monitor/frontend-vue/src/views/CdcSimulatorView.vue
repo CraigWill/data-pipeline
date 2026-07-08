@@ -897,6 +897,16 @@ function showAlert(type, message) {
 
 @media (max-width: 767px) {
   .field { min-width: 100%; }
-  .pagination { margin-left: 0; }
+  .pagination { margin-left: 0; flex-wrap: wrap; }
+
+  /* 数据表格：字体缩小、内边距收窄，长内容换行 */
+  .data-table { font-size: 11px; }
+  .data-table th { padding: 6px 8px; }
+  .data-table td {
+    padding: 6px 8px;
+    white-space: normal;
+    word-break: break-word;
+  }
+  .data-table.editable td { padding: 4px; }
 }
 </style>

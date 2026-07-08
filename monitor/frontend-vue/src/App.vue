@@ -4,6 +4,7 @@
     <main :class="['main-content', { 'no-padding': isLoginPage }]">
       <RouterView />
     </main>
+    <OnboardingTour v-if="!isLoginPage" />
     <footer :class="isLoginPage ? 'login-footer' : 'app-footer'">
       <a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">
         沪ICP备2026022144号
@@ -20,6 +21,7 @@
 import { computed } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 import AppHeader from './components/AppHeader.vue'
+import OnboardingTour from './components/OnboardingTour.vue'
 
 const route = useRoute()
 

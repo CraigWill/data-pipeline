@@ -447,6 +447,19 @@ code {
     -webkit-overflow-scrolling: touch;
   }
 
+  /* 小屏表格：字体缩小、内边距收窄、表头允许换行 */
+  .table {
+    font-size: var(--font-size-sm);
+  }
+  .table th {
+    padding: 6px 8px;
+    white-space: normal;
+  }
+  .table td {
+    padding: 8px;
+    word-break: break-word;
+  }
+
   /* 卡片内边距收窄 */
   .card {
     padding: 14px 16px;

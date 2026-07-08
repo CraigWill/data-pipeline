@@ -1,7 +1,7 @@
 <template>
   <div class="home-view">
     <!-- 仪表盘 -->
-    <div class="dashboard">
+    <div class="dashboard" data-tour="home-dashboard">
       <DashboardCard
         title="运行中的作业"
         :value="dashboard.runningJobs"
@@ -28,10 +28,10 @@
     <div class="quick-actions card">
       <h2 class="section-title">快速操作</h2>
       <div class="action-buttons">
-        <button class="btn btn-primary" @click="$router.push('/datasources')">
+        <button class="btn btn-primary" data-tour="home-manage-ds" @click="$router.push('/datasources')">
           <icon-data-display theme="outline" size="14" /> 管理数据源
         </button>
-        <button class="btn btn-success" @click="$router.push('/tasks/create')">
+        <button class="btn btn-success" data-tour="home-create-task" @click="$router.push('/tasks/create')">
           <icon-add-one theme="outline" size="14" /> 创建 CDC 任务
         </button>
         <button class="btn btn-secondary" @click="$router.push('/tasks')">
@@ -70,20 +70,20 @@
         </thead>
         <tbody>
           <tr v-for="job in jobs.slice(0, 5)" :key="job.jid">
-            <td class="col-name">
+            <td class="col-name" data-label="作业名称">
               <span class="text-truncate" :title="job.name">{{ job.name || 'Unknown' }}</span>
             </td>
-            <td class="col-id">
+            <td class="col-id" data-label="作业 ID">
               <code class="job-id-short" :title="job.jid">{{ job.jid?.slice(0, 8) }}…</code>
             </td>
-            <td>
+            <td data-label="状态">
               <span :class="['badge', getStatusClass(job.state)]">
                 {{ job.state }}
               </span>
             </td>
-            <td class="col-time">{{ formatTimestamp(job['start-time']) }}</td>
-            <td>{{ formatDuration(job.duration) }}</td>
-            <td>
+            <td class="col-time" data-label="开始时间">{{ formatTimestamp(job['start-time']) }}</td>
+            <td data-label="持续时间">{{ formatDuration(job.duration) }}</td>
+            <td data-label="操作">
               <button 
                 class="btn btn-sm btn-primary" 
                 @click="viewJobDetail(job.jid)"
@@ -317,5 +317,64 @@ onUnmounted(() => {
   .stats-grid { grid-template-columns: 1fr 1fr; gap: 10px; }
   .chart-grid  { grid-template-columns: 1fr; }
   .info-grid   { grid-template-columns: 1fr; }
+
+  /* 最近的作业：手机端改为堆叠卡片，避免横向滚动条 */
+  .recent-jobs .table,
+  .recent-jobs .table tbody,
+  .recent-jobs .table tr,
+  .recent-jobs .table td {
+    display: block;
+    width: 100%;
+  }
+
+  /* 隐藏表头（用每行的 data-label 代替） */
+  .recent-jobs .table thead {
+    display: none;
+  }
+
+  /* 每个作业成为一张卡片 */
+  .recent-jobs .table tr {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    background: var(--color-surface);
+  }
+  .recent-jobs .table tr:last-child {
+    margin-bottom: 0;
+  }
+
+  /* 单元格：左标签右值，标签来自 data-label */
+  .recent-jobs .table td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 5px 0;
+    border: none;
+    font-size: var(--font-size-sm);
+    text-align: right;
+  }
+  .recent-jobs .table td::before {
+    content: attr(data-label);
+    flex-shrink: 0;
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    color: var(--color-text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-align: left;
+  }
+
+  /* 覆盖固定表格列宽与截断，允许名称完整换行显示 */
+  .recent-jobs .col-name {
+    width: 100%;
+    max-width: none;
+  }
+  .recent-jobs .text-truncate {
+    white-space: normal;
+    word-break: break-word;
+    text-align: right;
+  }
 }
 </style>

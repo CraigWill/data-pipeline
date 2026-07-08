@@ -300,6 +300,9 @@ services:
       - "2983:2983"
     networks:
       - flink-network
+      # OceanBase observer 注册的服务地址在 ob43-default 网络 (172.22.0.2)，
+      # obcdc/libobcdc bootstrap 后需直连该地址拉取 clog，否则 -2002 连接失败超时
+      - ob43-default
     restart: unless-stopped
     profiles:
       - oceanbase-cdc
@@ -441,6 +444,11 @@ networks:
   flink-network:
     driver: bridge
     name: flink-network
+  # OceanBase 集群所在网络（由 OB 部署的 compose 项目创建），obbinlog 需接入以直连
+  # observer 注册地址 172.22.0.2:2882。作为 external 引用，不由本项目创建/销毁。
+  ob43-default:
+    external: true
+    name: ob43-default
 
 # 数据卷配置
 volumes:

@@ -10,7 +10,7 @@
     </div>
 
     <div class="actions mb-4">
-      <button class="btn btn-secondary" @click="loadClusterInfo"><icon-refresh theme="outline" size="13" /> 刷新</button>
+      <button class="btn btn-secondary" data-tour="cluster-refresh-btn" @click="loadClusterInfo"><icon-refresh theme="outline" size="13" /> 刷新</button>
     </div>
 
     <div v-if="loading" class="loading">
@@ -28,7 +28,7 @@
       <!-- 集群概览 -->
       <div class="card mb-4">
         <h3 class="card-title">集群概览</h3>
-        <div class="overview-grid">
+        <div class="overview-grid" data-tour="cluster-overview">
           <div class="overview-item">
             <div class="overview-icon"><icon-monitor theme="outline" size="24" fill="#0052CC" /></div>
             <div class="overview-info">
@@ -647,5 +647,40 @@ function showAlert(type, message) {
   .cluster-grid { grid-template-columns: 1fr; }
   .metrics-grid { grid-template-columns: 1fr 1fr; }
   .tm-list { gap: 8px; }
+
+  /* 页头堆叠 */
+  .page-header { flex-direction: column; gap: 8px; align-items: flex-start; }
+
+  /* 概览卡片：两列 */
+  .overview-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .overview-item { padding: 12px; gap: 8px; }
+  .overview-value { font-size: 18px; }
+
+  /* 版本信息：单列 */
+  .info-grid { grid-template-columns: 1fr; }
+
+  /* 指标网格收窄为两列 */
+  .tm-metrics,
+  .tm-memory-grid,
+  .job-metrics { grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  /* TaskManager / 作业 ID 允许换行，避免溢出 */
+  .tm-id,
+  .tm-path,
+  .job-id { word-break: break-all; }
+
+  /* 配置项：键值纵向堆叠并换行，字体缩小 */
+  .config-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    font-size: 11px;
+  }
+  .config-key { word-break: break-all; }
+  .config-value {
+    margin-left: 0;
+    text-align: left;
+    word-break: break-all;
+  }
 }
 </style>

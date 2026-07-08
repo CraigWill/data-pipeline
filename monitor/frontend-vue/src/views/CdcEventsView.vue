@@ -28,7 +28,7 @@
     </div>
 
     <!-- 统计卡片 -->
-    <div class="stats-grid">
+    <div class="stats-grid" data-tour="events-stats">
       <div class="stat-card">
         <div class="stat-icon"><icon-edit-two theme="outline" size="22" fill="#0052CC" /></div>
         <div class="stat-content">
@@ -105,7 +105,7 @@
     </div>
 
     <!-- 文件列表 -->
-    <div class="files-container">
+    <div class="files-container" data-tour="events-files">
       <div class="files-header">
         <h3><icon-folder-open theme="outline" size="16" /> CDC 文件列表</h3>
         <div class="files-filters">
@@ -1291,10 +1291,43 @@ function testTrendChart() {
 
 @media (max-width: 767px) {
   .page-header { flex-direction: column; gap: 10px; align-items: flex-start; }
-  .filter-bar { flex-wrap: wrap; gap: 8px; }
-  .filter-bar select,
-  .filter-bar input { width: 100%; }
-  .event-table th:nth-child(3),
-  .event-table td:nth-child(3) { display: none; }
+
+  /* 统计卡片：小屏两列 */
+  .stats-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .stat-card { padding: 12px; gap: 8px; }
+  .stat-value { font-size: 18px; }
+
+  /* 图表头部 & 文件头部：纵向堆叠，控件换行 */
+  .chart-header,
+  .files-header { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .chart-controls { flex-wrap: wrap; }
+  .files-filters { flex-wrap: wrap; width: 100%; }
+  .files-filters select { flex: 1; min-width: 0; }
+
+  /* 文件列表表格：字体缩小 + 允许换行，容器横向滚动兜底 */
+  .files-container { padding: 14px 12px; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .files-table { font-size: 12px; }
+  .files-table th { padding: 6px 8px; font-size: 10px; }
+  .files-table td { padding: 8px; font-size: 12px; }
+  .file-name {
+    max-width: none;
+    white-space: normal;
+    word-break: break-all;
+    font-size: 10px;
+  }
+
+  /* 文件内容模态框：全屏铺满，表格可换行、字体缩小 */
+  .modal-overlay { padding: 0; align-items: flex-end; }
+  .modal-content { max-width: 100%; max-height: 94vh; border-radius: 8px 8px 0 0; }
+  .modal-info { flex-direction: column; gap: 4px; }
+  .content-table { font-size: 11px; }
+  .content-table th,
+  .content-table td { padding: 6px 8px; }
+  .field-cell {
+    max-width: 160px;
+    white-space: normal;
+    word-break: break-all;
+  }
+  .pagination { gap: 10px; flex-wrap: wrap; justify-content: center; }
 }
 </style>

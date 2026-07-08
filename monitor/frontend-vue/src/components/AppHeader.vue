@@ -9,14 +9,16 @@
 
       <!-- 桌面导航 -->
       <nav class="header-nav desktop-nav">
-        <RouterLink to="/" class="nav-item">首页</RouterLink>
-        <RouterLink to="/datasources" class="nav-item">数据源</RouterLink>
-        <RouterLink to="/tasks" class="nav-item">任务管理</RouterLink>
-        <RouterLink to="/jobs" class="nav-item">作业监控</RouterLink>
-        <RouterLink to="/events" class="nav-item">CDC事件</RouterLink>
-        <RouterLink to="/cluster" class="nav-item">集群状态</RouterLink>
-        <RouterLink to="/simulator" class="nav-item">模拟CDC事件</RouterLink>
-        <RouterLink to="/oss-connections" class="nav-item">OSS配置</RouterLink>
+        <RouterLink to="/" class="nav-item" data-tour="nav-home">首页</RouterLink>
+        <RouterLink to="/datasources" class="nav-item" data-tour="nav-datasources">数据源</RouterLink>
+        <RouterLink to="/tasks" class="nav-item" data-tour="nav-tasks">任务管理</RouterLink>
+        <RouterLink to="/jobs" class="nav-item" data-tour="nav-jobs">作业监控</RouterLink>
+        <RouterLink to="/events" class="nav-item" data-tour="nav-events">CDC事件</RouterLink>
+        <RouterLink to="/cluster" class="nav-item" data-tour="nav-cluster">集群状态</RouterLink>
+        <RouterLink to="/simulator" class="nav-item" data-tour="nav-simulator">模拟CDC事件</RouterLink>
+        <RouterLink to="/oss-connections" class="nav-item" data-tour="nav-oss">OSS配置</RouterLink>
+        <RouterLink to="/intro" class="nav-item" data-tour="nav-intro">系统介绍</RouterLink>
+        <RouterLink to="/components" class="nav-item" data-tour="nav-components">组件一览</RouterLink>
       </nav>
 
       <!-- 用户区 -->
@@ -35,14 +37,16 @@
     <!-- 手机端下拉菜单 -->
     <transition name="mobile-menu">
       <div v-if="menuOpen" class="mobile-nav" @click="menuOpen = false">
-        <RouterLink to="/" class="mobile-nav-item">首页</RouterLink>
-        <RouterLink to="/datasources" class="mobile-nav-item">数据源</RouterLink>
-        <RouterLink to="/tasks" class="mobile-nav-item">任务管理</RouterLink>
-        <RouterLink to="/jobs" class="mobile-nav-item">作业监控</RouterLink>
-        <RouterLink to="/events" class="mobile-nav-item">CDC事件</RouterLink>
-        <RouterLink to="/cluster" class="mobile-nav-item">集群状态</RouterLink>
-        <RouterLink to="/simulator" class="mobile-nav-item">模拟CDC事件</RouterLink>
-        <RouterLink to="/oss-connections" class="mobile-nav-item">OSS配置</RouterLink>
+        <RouterLink to="/" class="mobile-nav-item" data-tour="nav-home">首页</RouterLink>
+        <RouterLink to="/datasources" class="mobile-nav-item" data-tour="nav-datasources">数据源</RouterLink>
+        <RouterLink to="/tasks" class="mobile-nav-item" data-tour="nav-tasks">任务管理</RouterLink>
+        <RouterLink to="/jobs" class="mobile-nav-item" data-tour="nav-jobs">作业监控</RouterLink>
+        <RouterLink to="/events" class="mobile-nav-item" data-tour="nav-events">CDC事件</RouterLink>
+        <RouterLink to="/cluster" class="mobile-nav-item" data-tour="nav-cluster">集群状态</RouterLink>
+        <RouterLink to="/simulator" class="mobile-nav-item" data-tour="nav-simulator">模拟CDC事件</RouterLink>
+        <RouterLink to="/oss-connections" class="mobile-nav-item" data-tour="nav-oss">OSS配置</RouterLink>
+        <RouterLink to="/intro" class="mobile-nav-item" data-tour="nav-intro">系统介绍</RouterLink>
+        <RouterLink to="/components" class="mobile-nav-item" data-tour="nav-components">组件一览</RouterLink>
         <div class="mobile-nav-divider"></div>
         <div class="mobile-nav-user">
           <span>{{ username }}</span>

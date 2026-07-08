@@ -157,7 +157,7 @@
               </svg>
             </button>
           </div>
-          <button class="btn btn-primary" @click="$router.push('/tasks/create')">
+          <button class="btn btn-primary" data-tour="task-create-btn" @click="$router.push('/tasks/create')">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="margin-right: 6px;">
               <path d="M8 3V13M3 8H13" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
             </svg>
@@ -1281,5 +1281,21 @@ onMounted(() => {
   .task-card { flex-wrap: wrap; }
   .task-actions { width: 100%; justify-content: flex-end; margin-top: 8px; }
   .task-meta { flex-wrap: wrap; gap: 6px; }
+
+  /* 视图页头标题缩小 */
+  .page-header h2 { font-size: 20px; }
+
+  /* 列表视图：缩小最小宽度、字体与内边距，长文本换行 */
+  .tasks-table { min-width: 640px; font-size: 13px; }
+  .tasks-table th { padding: 10px 12px; font-size: 11px; }
+  .tasks-table td { padding: 12px; font-size: 13px; }
+  .task-name-text { word-break: break-word; }
+  .task-description-text { font-size: 12px; word-break: break-word; }
+  .cell-value-secondary { font-size: 12px; }
+
+  /* 卡片名称/描述允许换行，不再省略号截断 */
+  .task-name { white-space: normal; word-break: break-word; }
+  .task-description { white-space: normal; }
+  .info-value { white-space: normal; word-break: break-word; }
 }
 </style>

@@ -34,14 +34,28 @@ RUN set -ex && \
 RUN groupadd -r -g ${FLINK_GID} ${FLINK_USER} && \
     useradd -r -u ${FLINK_UID} -g ${FLINK_GID} -m -d /home/${FLINK_USER} -s /bin/bash ${FLINK_USER}
 
-# 下载并安装 Flink（添加重试机制）
+# 安装 Flink：优先使用构建上下文 cache/ 中预下载的 tarball（由 deploy.sh 准备），
+# 避免每次构建都从 archive.apache.org 慢速下载；cache/ 缺失时回退在线下载。
+COPY cache/ /tmp/flink-cache/
 RUN set -ex && \
-    for i in 1 2 3; do \
-        wget -q https://archive.apache.org/dist/flink/flink-${FLINK_VERSION}/flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz && break || sleep 10; \
-    done && \
-    tar -xzf flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz && \
+    TARBALL="flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz" && \
+    if [ -f "/tmp/flink-cache/${TARBALL}" ]; then \
+        echo "使用 cache/ 中的 Flink tarball: ${TARBALL}" && \
+        cp "/tmp/flink-cache/${TARBALL}" "./${TARBALL}"; \
+    else \
+        echo "cache/ 未找到 ${TARBALL}，回退在线下载" && \
+        for i in 1 2 3; do \
+            wget -q "https://archive.apache.org/dist/flink/flink-${FLINK_VERSION}/${TARBALL}" && break || sleep 10; \
+        done; \
+    fi && \
+    tar -xzf "${TARBALL}" && \
     mv flink-${FLINK_VERSION}/* /opt/flink/ && \
-    rm -rf flink-${FLINK_VERSION}-bin-scala_${SCALA_VERSION}.tgz flink-${FLINK_VERSION}
+    rm -rf "${TARBALL}" flink-${FLINK_VERSION} /tmp/flink-cache
+
+# 启用 OSS 文件系统插件（checkpoint/savepoint/CSV 直写阿里云 OSS 所需）
+# Flink 发行版已在 opt/ 目录内置该插件 jar，只需拷贝到 plugins/ 下即可加载
+RUN mkdir -p /opt/flink/plugins/oss-fs-hadoop && \
+    cp /opt/flink/opt/flink-oss-fs-hadoop-*.jar /opt/flink/plugins/oss-fs-hadoop/
 
 # 创建必要的目录
 RUN mkdir -p /opt/flink/checkpoints && \

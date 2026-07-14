@@ -46,6 +46,9 @@ bin
 /output/
 *.inprogress.*
 
+# 构建缓存（预下载的 Flink 二进制等，不纳入版本管理）
+cache/
+
 # Temporary files
 *.tmp
 *.bak
@@ -70,3 +73,6 @@ monitor/config/datasources/*.json
 .env.local
 !.env.example
 aliyunk8s
+
+# K8s secrets（含真实密钥，勿提交；参考 flink-secrets.yaml.example）
+k8s/flink-secrets.yaml

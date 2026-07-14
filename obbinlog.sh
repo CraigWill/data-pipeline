@@ -18,8 +18,8 @@ IMAGE="${OBBINLOG_IMAGE:-oceanbase/obbinlog-ce:4.2.5-test}"
 NETWORK="${OBBINLOG_NETWORK:-flink-network}"
 PORT="${OBBINLOG_PORT:-2983}"
 OB_HOST_ENTRY="${OBBINLOG_OB_HOST_ENTRY:-centos-ob:172.22.0.1}"  # extra_hosts 映射
-OB_SYS_USERNAME="${OB_SYS_USERNAME:-root}"
-OB_SYS_PASSWORD="${OB_SYS_PASSWORD:-password}"
+OB_SYS_USERNAME="${OB_SYS_USERNAME:-cdc_reader}"
+OB_SYS_PASSWORD="${OB_SYS_PASSWORD:-CdcReader#2026}"
 ENTRYPOINT_SCRIPT="${SCRIPT_DIR}/docker/obbinlog/cdc-entrypoint.sh"
 
 # ── 颜色输出 ────────────────────────────────────────────────

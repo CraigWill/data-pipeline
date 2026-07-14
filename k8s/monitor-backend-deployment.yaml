@@ -41,8 +41,50 @@ spec:
           value: "http://flink-jobmanager:8081"
         - name: FLINK_REST_URLS
           value: "http://flink-jobmanager:8081"
+        # OceanBase observer 注册地址（libobcdc rsList 用 IP，不能用 hostname）
+        - name: OB_RS_HOST
+          value: "172.22.0.2"
+        - name: OBLOGPROXY_HOST
+          value: "obbinlog"
+        - name: OBLOGPROXY_PORT
+          value: "2983"
+        # ── OSS 对象存储（作业输出/位点/CSV 均走 OSS，不再使用 PVC）──────
+        - name: OSS_ENABLED
+          value: "true"
+        - name: OSS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-endpoint
+        - name: OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-access-key-id
+        - name: OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-access-key-secret
+        - name: OSS_BUCKET_NAME
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-bucket
+        - name: OSS_PREFIX
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-prefix
+        # 提交 CDC 作业时下发给 Flink 的输出/状态目录（均为 OSS）
         - name: OUTPUT_PATH
-          value: "/app/output/cdc"
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)cdc"
+        - name: FLINK_OUTPUT_PATH
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)cdc"
+        - name: FLINK_CHECKPOINT_DIR
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)flink/checkpoints"
+        - name: FLINK_SAVEPOINT_DIR
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)flink/savepoints"
         - name: CONFIG_DIR
           value: "/app/config"
         # ── CDC 管理库配置（OceanBase，MySQL 兼容协议，存储元数据表）──
@@ -109,14 +151,10 @@ spec:
             memory: "2Gi"
             cpu: "1000m"
         volumeMounts:
-        - name: flink-output
-          mountPath: /app/output
         - name: config
           mountPath: /app/config
       volumes:
-      - name: flink-output
-        persistentVolumeClaim:
-          claimName: flink-output-pvc
+      # 输出改为 OSS，不再挂载 flink-output-pvc
       - name: config
         emptyDir: {}
 ---

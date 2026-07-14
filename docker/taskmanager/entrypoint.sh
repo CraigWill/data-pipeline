@@ -94,11 +94,17 @@ classloader.resolve-order: child-first
 classloader.parent-first-patterns.additional: oracle.jdbc
 EOF
 
-# OSS 文件系统配置（将 checkpoint/savepoint 存储到阿里云 OSS 时启用）
+# OSS 文件系统配置（将 checkpoint/savepoint/CSV 存储到阿里云 OSS 时启用）
 # 仅当提供了 OSS 凭证时才注入 fs.oss.* 配置；否则保持本地文件系统不变
+OSS_PROPS=""
 if [ -n "$OSS_ACCESS_KEY_ID" ] && [ -n "$OSS_ACCESS_KEY_SECRET" ]; then
     OSS_FS_ENDPOINT=$(echo "${OSS_ENDPOINT}" | sed -E 's#^https?://##')
     echo "  Configuring OSS filesystem (fs.oss.endpoint=${OSS_FS_ENDPOINT})"
+    # 供 k8s 只读 ConfigMap 分支通过 FLINK_PROPERTIES 注入
+    OSS_PROPS="
+fs.oss.endpoint: ${OSS_FS_ENDPOINT}
+fs.oss.accessKeyId: ${OSS_ACCESS_KEY_ID}
+fs.oss.accessKeySecret: ${OSS_ACCESS_KEY_SECRET}"
     cat >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
 
 # OSS 文件系统（用于 checkpoint/savepoint 直写 OSS）
@@ -155,8 +161,18 @@ fi
 
 # 在 Kubernetes 环境中，使用环境变量 FLINK_PROPERTIES 或直接使用现有配置
 if [ -f /opt/flink/conf/flink-conf.yaml ] && [ ! -w /opt/flink/conf/flink-conf.yaml ]; then
-    echo "Running in Kubernetes with read-only ConfigMap, using existing configuration..."
-    export FLINK_PROPERTIES="
+    # ConfigMap 挂载为只读；taskmanager.sh start-foreground 不处理 FLINK_PROPERTIES，
+    # 必须生成可写配置并用 FLINK_CONF_DIR 指向它，fs.oss.* 才能生效
+    # （FileSink 写 CSV 到 OSS、checkpoint 直写 OSS 都依赖它）。
+    echo "Running in Kubernetes with read-only ConfigMap, 生成可写配置目录..."
+    WRITABLE_CONF_DIR="/tmp/flink-conf-active"
+    mkdir -p "$WRITABLE_CONF_DIR"
+    cp /opt/flink/conf/flink-conf.yaml "$WRITABLE_CONF_DIR/flink-conf.yaml"
+    cp /opt/flink/conf/log4j-console.properties "$WRITABLE_CONF_DIR/" 2>/dev/null || true
+    cp /opt/flink/conf/log4j.properties "$WRITABLE_CONF_DIR/" 2>/dev/null || true
+    cat >> "$WRITABLE_CONF_DIR/flink-conf.yaml" << EOF
+
+# ── 运行期覆盖（entrypoint 注入）──
 jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}
 jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
 taskmanager.memory.process.size: ${TASK_MANAGER_MEMORY_PROCESS_SIZE}
@@ -169,9 +185,11 @@ taskmanager.memory.network.fraction: 0.1
 taskmanager.memory.network.min: 64mb
 taskmanager.memory.network.max: 256mb
 taskmanager.memory.managed.fraction: 0.3
-heartbeat.interval: 10000
-heartbeat.timeout: 180000
-"
+${OSS_PROPS}
+EOF
+    export FLINK_CONF_DIR="$WRITABLE_CONF_DIR"
+    echo "  FLINK_CONF_DIR=$FLINK_CONF_DIR"
+    [ -n "$OSS_PROPS" ] && echo "  已注入 fs.oss.* 配置到生效 flink-conf.yaml"
 else
     echo "Using dynamic configuration..."
     mv "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" /opt/flink/conf/flink-conf.yaml

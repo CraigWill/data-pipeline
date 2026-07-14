@@ -46,14 +46,15 @@ public class EmbeddedCdcService {
 
     /** 允许的输出路径前缀白名单 */
     private static final List<String> ALLOWED_OUTPUT_PREFIXES = List.of(
-            "./output/", "/opt/flink/output/", "output/"
+            "./output/", "/opt/flink/output/", "output/",
+            "oss://"   // 阿里云 OSS 对象存储（CSV 直写）
     );
 
     /** 允许的 savepoint/checkpoint 路径前缀白名单 */
     private static final List<String> ALLOWED_STATE_PREFIXES = List.of(
             "file:///opt/flink/savepoints", "file:///opt/flink/checkpoints",
             "/opt/flink/savepoints", "/opt/flink/checkpoints",
-            "hdfs://", "s3://"
+            "hdfs://", "s3://", "oss://"
     );
 
     /** 恶意路径字符模式 */
@@ -182,8 +183,7 @@ public class EmbeddedCdcService {
             programArgs.add("--database"); programArgs.add(request.getDatabase());
             programArgs.add("--schema"); programArgs.add(request.getSchema());
             programArgs.add("--tables"); programArgs.add(String.join(",", request.getTables()));
-            programArgs.add("--outputPath"); programArgs.add(
-                    validateOutputPath(request.getOutputPath() != null ? request.getOutputPath() : appConfig.getFlinkOutputPath()));
+            programArgs.add("--outputPath"); programArgs.add(resolveJobOutputPath(request.getOutputPath()));
             programArgs.add("--parallelism"); programArgs.add(String.valueOf(
                     request.getParallelism() > 0 ? request.getParallelism() : 2));
             programArgs.add("--splitSize"); programArgs.add(String.valueOf(
@@ -240,7 +240,20 @@ public class EmbeddedCdcService {
                 programArgs.add(tenantName);
                 programArgs.add("--rsList");
                 // rsList 格式: ip:rpc_port:sql_port（不能用 hostname，libobcdc 不认）
-                programArgs.add(request.getHostname() + ":2882:" + request.getPort());
+                // K8s 下优先用 OB_RS_HOST（OceanBase observer 真实 IP，如 172.22.0.2），
+                // 避免数据源填 host.docker.internal / 网关 IP 导致 clog 拉不到。
+                String rsHost = System.getenv().getOrDefault("OB_RS_HOST", "");
+                if (rsHost == null || rsHost.isBlank()) {
+                    rsHost = request.getHostname();
+                }
+                String rsList = rsHost + ":2882:" + request.getPort();
+                // 完整覆盖：OB_RS_LIST=ip:2882:2881
+                String rsListEnv = System.getenv("OB_RS_LIST");
+                if (rsListEnv != null && !rsListEnv.isBlank()) {
+                    rsList = rsListEnv.trim();
+                }
+                programArgs.add(rsList);
+                log.info("  OceanBase rsList={}", rsList);
                 // 注意：CDC 的 sys 用户由 obbinlog 容器的 OB_SYS_USERNAME 决定（写入 oblogproxy
                 //       conf.json），不经此处的作业参数。切换 cdc_reader 请改 obbinlog 容器环境变量。
             }
@@ -391,6 +404,40 @@ public class EmbeddedCdcService {
             throw new IllegalArgumentException("不安全的路径参数: " + name);
         }
         return value;
+    }
+
+    /**
+     * 解析作业输出路径。
+     * K8s 下集群默认 {@code FLINK_OUTPUT_PATH=oss://...} 时，覆盖任务配置里残留的本地相对路径
+     * （如 {@code ./output/cdc}），否则 FileSink 写到 TaskManager 本地，监控后台读 OSS 会一直为空。
+     */
+    private String resolveJobOutputPath(String requestOutputPath) {
+        String configured = appConfig.getFlinkOutputPath();
+        boolean clusterUsesObjectStore = configured != null && (
+                configured.startsWith("oss://")
+                        || configured.startsWith("s3://")
+                        || configured.startsWith("hdfs://"));
+        if (clusterUsesObjectStore) {
+            if (requestOutputPath == null || requestOutputPath.isBlank() || isLocalOutputPath(requestOutputPath)) {
+                if (requestOutputPath != null && !requestOutputPath.isBlank()
+                        && !requestOutputPath.equals(configured)) {
+                    log.info("覆盖任务本地输出路径: {} -> {}", requestOutputPath, configured);
+                }
+                return validateOutputPath(configured);
+            }
+        }
+        return validateOutputPath(
+                requestOutputPath != null && !requestOutputPath.isBlank()
+                        ? requestOutputPath
+                        : configured);
+    }
+
+    private static boolean isLocalOutputPath(String path) {
+        String n = path.replace("\\", "/");
+        return n.startsWith("./")
+                || n.startsWith("output/")
+                || n.startsWith("/opt/flink/output")
+                || n.startsWith("/app/output");
     }
 
     /**

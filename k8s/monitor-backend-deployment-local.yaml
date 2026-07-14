@@ -41,6 +41,11 @@ spec:
           value: "http://flink-jobmanager:8081"
         - name: FLINK_REST_URLS
           value: "http://flink-jobmanager:8081"
+        # OceanBase observer 真实 IP（rsList）；本地 KIND 默认 172.22.0.2
+        - name: OB_RS_HOST
+          value: "172.22.0.2"
+        - name: OBLOGPROXY_HOST
+          value: "obbinlog"
         - name: OUTPUT_PATH
           value: "/app/output/cdc"
         - name: CONFIG_DIR

@@ -23,6 +23,7 @@ import java.util.stream.Stream;
 import org.springframework.stereotype.Service;
 
 import com.realtime.monitor.config.AppConfig;
+import com.realtime.monitor.oss.OssStorageService;
 
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
@@ -59,6 +60,10 @@ public class OutputFileService {
     /** 已验证的输出基础目录 */
     private Path outputBaseDir;
 
+    /** OSS 直写模式 */
+    private volatile boolean ossMode = false;
+    private volatile String ossRelativePrefix = "cdc";
+
     @PostConstruct
     public void init() {
         this.outputBaseDir = resolveAndValidateOutputDir();
@@ -78,9 +83,23 @@ public class OutputFileService {
             configuredPath = "./output/cdc";
         }
 
+        // OSS 直写模式：本地目录仅作占位，实际读写走 OssStorageService
+        if (OssStorageService.isOssUri(configuredPath)) {
+            this.ossMode = true;
+            this.ossRelativePrefix = ossStorageService != null
+                    ? ossStorageService.resolveCdcRelativePrefix(configuredPath)
+                    : "cdc";
+            Path placeholder = Paths.get("./output/cdc").toAbsolutePath().normalize();
+            log.info("OutputFileService OSS 模式: relativePrefix={} ossEnabled={}",
+                    ossRelativePrefix,
+                    ossStorageService != null && ossStorageService.isEnabled());
+            return placeholder;
+        }
+
+        this.ossMode = false;
         Path base;
         try {
-            base = Paths.get("./output/cdc").toAbsolutePath().normalize();
+            base = Paths.get(configuredPath).toAbsolutePath().normalize();
         } catch (InvalidPathException e) {
             log.error("output.path 配置包含非法路径字符: {}", configuredPath);
             throw new IllegalStateException("output.path 配置非法: " + e.getMessage(), e);
@@ -89,7 +108,8 @@ public class OutputFileService {
         // 验证输出目录在允许的根目录内
         Path allowedRoot1 = Paths.get("./output").toAbsolutePath().normalize();
         Path allowedRoot2 = Paths.get("/opt/flink/output").toAbsolutePath().normalize();
-        if (!base.startsWith(allowedRoot1) && !base.startsWith(allowedRoot2)) {
+        Path allowedRoot3 = Paths.get("/app/output").toAbsolutePath().normalize();
+        if (!base.startsWith(allowedRoot1) && !base.startsWith(allowedRoot2) && !base.startsWith(allowedRoot3)) {
             log.error("output.path 不在允许目录内: {}", base);
             throw new IllegalStateException("output.path 配置不安全: " + base);
         }
@@ -179,12 +199,16 @@ public class OutputFileService {
      * 获取输出文件统计信息
      */
     public Map<String, Object> getOutputStats() throws IOException {
-        Path outputDir = getOutputDir();
-        
         Map<String, Object> stats = new HashMap<>();
         stats.put("total_files", 0);
         stats.put("total_size", 0L);
         stats.put("tables", new HashMap<String, Object>());
+        
+        if (ossMode) {
+            return getOutputStatsFromOss(stats);
+        }
+
+        Path outputDir = getOutputDir();
         
         if (!Files.exists(outputDir)) {
             stats.put("total_size_mb", 0.0);
@@ -259,6 +283,56 @@ public class OutputFileService {
         
         return stats;
     }
+
+    private Map<String, Object> getOutputStatsFromOss(Map<String, Object> stats) {
+        Map<String, Map<String, Object>> tables = new HashMap<>();
+        int totalFiles = 0;
+        long totalSize = 0L;
+        List<OssStorageService.OssObjectEntry> entries =
+                ossStorageService.listObjects(ossRelativePrefix, 1000);
+        for (OssStorageService.OssObjectEntry e : entries) {
+            String fileName = e.fileName();
+            String[] parts = fileName.split("_");
+            if (parts.length < 3 || !"IDS".equals(parts[0])) continue;
+            String tableName = parts[1];
+            tables.computeIfAbsent(tableName, k -> {
+                Map<String, Object> tableStats = new HashMap<>();
+                tableStats.put("file_count", 0);
+                tableStats.put("total_size", 0L);
+                tableStats.put("latest_file", null);
+                tableStats.put("latest_time", null);
+                return tableStats;
+            });
+            Map<String, Object> tableStats = tables.get(tableName);
+            long fileSize = e.size();
+            long fileMtime = e.lastModified() != null ? e.lastModified().getTime() : 0L;
+            tableStats.put("file_count", (int) tableStats.get("file_count") + 1);
+            tableStats.put("total_size", (long) tableStats.get("total_size") + fileSize);
+            totalFiles++;
+            totalSize += fileSize;
+            Long latestTime = (Long) tableStats.get("latest_time");
+            if (latestTime == null || fileMtime > latestTime) {
+                tableStats.put("latest_file", fileName);
+                tableStats.put("latest_time", fileMtime);
+            }
+        }
+        for (Map.Entry<String, Map<String, Object>> entry : tables.entrySet()) {
+            Map<String, Object> tableStats = entry.getValue();
+            long size = (long) tableStats.get("total_size");
+            tableStats.put("total_size_mb", Math.round(size / (1024.0 * 1024.0) * 100.0) / 100.0);
+            Long latestTime = (Long) tableStats.get("latest_time");
+            if (latestTime != null) {
+                LocalDateTime dateTime = LocalDateTime.ofInstant(
+                        Instant.ofEpochMilli(latestTime), ZoneId.systemDefault());
+                tableStats.put("latest_time_str", dateTime.format(DATE_FORMATTER));
+            }
+        }
+        stats.put("total_files", totalFiles);
+        stats.put("total_size", totalSize);
+        stats.put("total_size_mb", Math.round(totalSize / (1024.0 * 1024.0) * 100.0) / 100.0);
+        stats.put("tables", tables);
+        return stats;
+    }
     
     /**
      * 获取输出文件列表
@@ -266,15 +340,40 @@ public class OutputFileService {
     public List<Map<String, Object>> getOutputFiles(String tableName, int limit) throws IOException {
         // 验证表名参数
         String safeTableName = validateTableName(tableName);
+        int safeLimit = Math.min(Math.max(limit, 1), 500);
+
+        if (ossMode) {
+            String upperFilter = safeTableName != null ? ("IDS_" + safeTableName + "_").toUpperCase() : "IDS_";
+            return ossStorageService.listObjects(ossRelativePrefix, safeLimit * 2).stream()
+                    .filter(e -> e.fileName().toUpperCase().startsWith(upperFilter)
+                            || (safeTableName == null && e.fileName().toUpperCase().startsWith("IDS_")))
+                    .sorted((a, b) -> {
+                        long ta = a.lastModified() != null ? a.lastModified().getTime() : 0L;
+                        long tb = b.lastModified() != null ? b.lastModified().getTime() : 0L;
+                        return Long.compare(tb, ta);
+                    })
+                    .limit(safeLimit)
+                    .map(e -> {
+                        Map<String, Object> fileInfo = new HashMap<>();
+                        fileInfo.put("name", e.fileName());
+                        fileInfo.put("path", e.fileName());
+                        fileInfo.put("size", e.size());
+                        fileInfo.put("size_mb", Math.round(e.size() / (1024.0 * 1024.0) * 100.0) / 100.0);
+                        if (e.lastModified() != null) {
+                            LocalDateTime dateTime = LocalDateTime.ofInstant(
+                                    e.lastModified().toInstant(), ZoneId.systemDefault());
+                            fileInfo.put("modified", dateTime.format(DATE_FORMATTER));
+                        }
+                        return fileInfo;
+                    })
+                    .collect(Collectors.toList());
+        }
 
         Path outputDir = getOutputDir();
         
         if (!Files.exists(outputDir)) {
             return Collections.emptyList();
         }
-
-        // 限制返回数量，防止资源耗尽
-        int safeLimit = Math.min(Math.max(limit, 1), 500);
         
         String pattern = safeTableName != null ? "IDS_" + safeTableName + "_*.csv" : "IDS_*.csv";
         PathMatcher matcher = FileSystems.getDefault().getPathMatcher("glob:" + pattern);
@@ -319,6 +418,9 @@ public class OutputFileService {
      * 检查输出目录是否存在
      */
     public boolean isOutputDirExists() {
+        if (ossMode) {
+            return ossStorageService.isEnabled();
+        }
         return Files.exists(getOutputDir());
     }
 
@@ -335,12 +437,21 @@ public class OutputFileService {
         if (dateDir.contains("..") || fileName.contains("..")) return null;
         if (!fileName.endsWith(".csv")) return null;
 
-        // 1. 优先从 OSS 读取
-        String ossKey = "cdc/" + dateDir + "/" + fileName;
+        // 1. 优先从 OSS 读取（相对 key: {cdcPrefix}/{dateDir}/{fileName}）
+        String ossKey = ossRelativePrefix + "/" + dateDir + "/" + fileName;
         byte[] ossData = ossStorageService.readFromOss(ossKey);
         if (ossData != null) {
             log.debug("从 OSS 读取文件: {}", ossKey);
             return ossData;
+        }
+        // 兼容旧 key: cdc/{dateDir}/{fileName}
+        if (!"cdc".equals(ossRelativePrefix)) {
+            ossData = ossStorageService.readFromOss("cdc/" + dateDir + "/" + fileName);
+            if (ossData != null) return ossData;
+        }
+
+        if (ossMode) {
+            return null;
         }
 
         // 2. 降级到本地文件

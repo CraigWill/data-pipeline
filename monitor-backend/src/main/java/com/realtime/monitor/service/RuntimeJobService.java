@@ -229,6 +229,11 @@ public class RuntimeJobService {
         }
 
         // 4. Flink 中确实没有该作业，重新提交（优先从 savepoint 恢复）
+        //    多副本并发防护：原子认领，只有一个实例能赢，避免重复提交同一作业。
+        if (!runtimeJobRepository.tryClaimForResubmit(job.getId())) {
+            log.info("作业 {} 已被其他实例认领重提（或状态不允许），本实例跳过", job.getId());
+            return;
+        }
         log.info("作业 {} (任务: {}) 在 Flink 中未找到，正在重新提交...", job.getId(), expectedJobName);
         try {
             // 如果有 savepoint，注入到 taskConfig 中
@@ -507,6 +512,12 @@ public class RuntimeJobService {
      */
     private void autoHealStuckJob(RuntimeJob job) {
         try {
+            // 0. 多副本并发防护：原子认领，只有一个实例执行自愈重提，避免重复提交。
+            if (!runtimeJobRepository.tryClaimForResubmit(job.getId())) {
+                log.info("作业 {} 已被其他实例认领自愈，本实例跳过", job.getId());
+                return;
+            }
+
             // 1. 取消当前卡死的 Flink 作业
             if (job.getFlinkJobId() != null && !job.getFlinkJobId().isEmpty()) {
                 try {

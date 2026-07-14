@@ -1,0 +1,89 @@
+# obbinlog (OceanBase LogProxy) — 以 k8s 方式运行，替代 docker-compose 容器
+# ─────────────────────────────────────────────────────────────
+# 说明：
+# - 镜像 oceanbase/obbinlog-ce:4.2.5-test 内置 entrypoint，会依据
+#   OB_SYS_USERNAME/OB_SYS_PASSWORD 配置 conf.json 并启动 logproxy(2983)。
+# - obcdc(在本 Pod 内)bootstrap 后需直连 OceanBase observer 注册地址
+#   172.22.0.2:2882(ob43-default 网络)拉取 clog。为此 KIND 节点必须接入
+#   ob43-default 网络（deploy.sh 会自动处理），Pod 经节点 NAT 即可到达。
+# - centos-ob 通过 hostAliases 映射到 OB 实际地址，供需要时解析。
+# ─────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: obbinlog
+  namespace: flink
+  labels:
+    app: obbinlog
+    role: logproxy
+spec:
+  replicas: 1                 # LogProxy 单实例（与 docker-compose 一致）
+  strategy:
+    type: Recreate            # 避免多实例并发读同一 clog
+  selector:
+    matchLabels:
+      app: obbinlog
+  template:
+    metadata:
+      labels:
+        app: obbinlog
+        role: logproxy
+    spec:
+      hostAliases:
+        - ip: "172.22.0.2"    # OceanBase observer 在 ob43-default 的实际地址
+          hostnames:
+            - "centos-ob"
+      containers:
+        - name: obbinlog
+          # 完整可用镜像的由来（原 oceanbase/obbinlog-ce:4.2.5-test 本地存储缺层，无法导出到 KIND）：
+          #   1) docker export 运行中的 obbinlog 容器 → docker import 得 obbinlog-ce:k8s（完整 rootfs）
+          #   2) 基于它 COPY cdc-entrypoint.sh 并设 entrypoint → obbinlog-ce:k8s2（本镜像）
+          # 仅运行 logproxy 连接外部 centos-ob，与 docker-compose 行为一致。
+          image: obbinlog-ce:k8s2
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 2983
+              name: logproxy
+          env:
+            # CDC sys 租户凭据（libobcdc 读元数据/拉 clog 使用）
+            - name: OB_SYS_USERNAME
+              value: "root"
+            - name: OB_SYS_PASSWORD
+              value: "password"
+            - name: TZ
+              value: "Asia/Shanghai"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "300m"
+            limits:
+              memory: "2Gi"
+              cpu: "1500m"
+          readinessProbe:
+            tcpSocket:
+              port: 2983
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: 2983
+            initialDelaySeconds: 30
+            periodSeconds: 30
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: obbinlog
+  namespace: flink
+  labels:
+    app: obbinlog
+    role: logproxy
+spec:
+  type: ClusterIP
+  selector:
+    app: obbinlog            # 由 Pod 提供后端（不再用手动 Endpoints）
+  ports:
+    - name: logproxy
+      port: 2983
+      targetPort: 2983
+      protocol: TCP

@@ -1,0 +1,8 @@
+# 基于运行中 obbinlog 容器导出的完整 rootfs（obbinlog-ce:k8s），
+# 打入 cdc-entrypoint.sh（原为 bind-mount，export 不含），并设为正确 entrypoint。
+# 使 k8s Pod 与 docker-compose 行为一致：仅运行 logproxy 连接外部 centos-ob。
+FROM obbinlog-ce:k8s
+COPY docker/obbinlog/cdc-entrypoint.sh /cdc-entrypoint.sh
+RUN chmod +x /cdc-entrypoint.sh
+WORKDIR /home/ds/oblogproxy
+ENTRYPOINT ["bash", "/cdc-entrypoint.sh"]

@@ -57,19 +57,47 @@ spec:
           value: "4"
         - name: CHECKPOINT_INTERVAL
           value: "300000"
+        # ── OSS 对象存储凭证（checkpoint/savepoint/CSV 直写 OSS）──────────
+        # 必须定义在下方 *_DIR 之前，供 $(VAR) 展开使用
+        - name: OSS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-endpoint
+        - name: OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-access-key-id
+        - name: OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-access-key-secret
+        - name: OSS_BUCKET_NAME
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-bucket
+        - name: OSS_PREFIX
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-prefix
+        # ── 状态/输出目录：全部指向 OSS，不再使用 PVC ──────────────────
         - name: CHECKPOINT_DIR
-          value: "file:///opt/flink/checkpoints"
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)flink/checkpoints"
         - name: SAVEPOINT_DIR
-          value: "file:///opt/flink/savepoints"
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)flink/savepoints"
         - name: STATE_BACKEND
           value: "hashmap"
-        # Kubernetes HA 配置
+        # Kubernetes HA 配置（HA 存储同样落 OSS）
         - name: HA_MODE
           value: "kubernetes"
         - name: HA_STORAGE_DIR
-          value: "file:///opt/flink/ha"
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)flink/ha"
         - name: OUTPUT_PATH
-          value: "/opt/flink/output/cdc"
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)cdc"
         - name: TZ
           value: "Asia/Shanghai"
         - name: AUTO_SUBMIT_JOB
@@ -84,12 +112,6 @@ spec:
         volumeMounts:
         - name: flink-config-volume
           mountPath: /opt/flink/conf
-        - name: flink-checkpoints
-          mountPath: /opt/flink/checkpoints
-        - name: flink-savepoints
-          mountPath: /opt/flink/savepoints
-        - name: flink-ha
-          mountPath: /opt/flink/ha
         - name: flink-logs
           mountPath: /opt/flink/logs
       volumes:
@@ -101,14 +123,6 @@ spec:
             path: flink-conf.yaml
           - key: log4j-console.properties
             path: log4j-console.properties
-      - name: flink-checkpoints
-        persistentVolumeClaim:
-          claimName: flink-checkpoints-pvc
-      - name: flink-savepoints
-        persistentVolumeClaim:
-          claimName: flink-savepoints-pvc
-      - name: flink-ha
-        persistentVolumeClaim:
-          claimName: flink-ha-pvc
+      # checkpoint / savepoint / ha 已改为 OSS 存储，不再需要 PVC
       - name: flink-logs
         emptyDir: {}

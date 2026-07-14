@@ -26,6 +26,11 @@ docs
 *.md
 !README.md
 
+# CDC 输出数据（近 1GB，镜像构建不需要，排除以加快上下文传输）
+# 注意：不要排除 cache/（内含预下载的 Flink tarball，Dockerfile COPY 需要）
+output/
+data/
+
 # Logs
 *.log
 logs/

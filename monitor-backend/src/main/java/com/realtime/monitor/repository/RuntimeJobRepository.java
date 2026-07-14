@@ -137,6 +137,26 @@ public class RuntimeJobRepository {
         log.info("更新作业 Flink Job ID: {} -> {}", id, flinkJobId);
     }
 
+    /**
+     * 原子认领作业用于重新提交，防止多副本并发重复提交同一作业。
+     *
+     * <p>仅当作业当前处于可重提状态（RUNNING/LOST）时，才原子地将其置为 SUBMITTING，
+     * 依赖数据库行级锁保证多个实例中只有一个 UPDATE 影响 1 行（即认领成功）。
+     * 其余实例得到 0 行，应跳过重提。
+     *
+     * @return true 表示本实例成功认领，可以继续重提；false 表示已被其他实例认领或状态不允许。
+     */
+    public boolean tryClaimForResubmit(String id) {
+        int rows = jdbcTemplate.update(
+            "UPDATE " + TABLE + " SET status='SUBMITTING' WHERE id=? AND status IN ('RUNNING','LOST')",
+            id);
+        if (rows == 1) {
+            log.info("已认领作业用于重提: {}", id);
+            return true;
+        }
+        return false;
+    }
+
     public void updateStatus(String id, String status, String errorMessage) {
         String truncatedError = errorMessage;
         if (truncatedError != null && truncatedError.length() > 4000) {

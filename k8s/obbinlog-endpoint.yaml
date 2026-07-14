@@ -1,0 +1,45 @@
+# obbinlog (OceanBase LogProxy) 外部服务映射
+# ─────────────────────────────────────────────────────────────
+# 背景：Flink 运行在 KIND 集群内，而 obbinlog(LogProxy) 是宿主机上的
+#       docker-compose 容器，位于 flink-network(172.20.0.5)。
+#       KIND Pod 能直连该容器 IP，但无法解析 "obbinlog" 这个 docker 网络别名，
+#       导致 CDC 源报错: clogproxy client "failed to create connection"。
+#
+# 方案：创建无选择器的 Service + 手动 Endpoints，把集群内的 "obbinlog:2983"
+#       映射到 LogProxy 容器 IP，使 CDC 作业参数 --logProxyHost obbinlog 生效。
+#
+# 注意：若 obbinlog 容器重启导致 IP 变化，需要同步更新下方 Endpoints 的 ip。
+#       查询命令：
+#         docker inspect obbinlog \
+#           --format '{{range $n,$c := .NetworkSettings.Networks}}{{$n}}: {{$c.IPAddress}}{{println}}{{end}}'
+# ─────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: obbinlog
+  namespace: flink
+  labels:
+    app: obbinlog
+    role: external-logproxy
+spec:
+  ports:
+  - name: logproxy
+    port: 2983
+    targetPort: 2983
+    protocol: TCP
+---
+apiVersion: v1
+kind: Endpoints
+metadata:
+  name: obbinlog          # 必须与上面的 Service 同名
+  namespace: flink
+  labels:
+    app: obbinlog
+subsets:
+- addresses:
+  - ip: 172.20.0.2        # obbinlog 容器在 flink-network 上的 IP（deploy.sh 会自动探测覆盖）
+  ports:
+  - name: logproxy
+    port: 2983
+    protocol: TCP
+

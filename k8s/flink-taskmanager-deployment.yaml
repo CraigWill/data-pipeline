@@ -68,8 +68,34 @@ spec:
         # Kubernetes HA 配置
         - name: HA_MODE
           value: "kubernetes"
+        # ── OSS 对象存储凭证（checkpoint 及 FileSink 写 CSV 直写 OSS）──────
+        - name: OSS_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-endpoint
+        - name: OSS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-access-key-id
+        - name: OSS_ACCESS_KEY_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-access-key-secret
+        - name: OSS_BUCKET_NAME
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-bucket
+        - name: OSS_PREFIX
+          valueFrom:
+            secretKeyRef:
+              name: flink-secrets
+              key: oss-prefix
         - name: OUTPUT_PATH
-          value: "/opt/flink/output/cdc"
+          value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)cdc"
         - name: TZ
           value: "Asia/Shanghai"
         resources:
@@ -82,14 +108,8 @@ spec:
         volumeMounts:
         - name: flink-config-volume
           mountPath: /opt/flink/conf
-        - name: flink-checkpoints
-          mountPath: /opt/flink/checkpoints
-        - name: flink-savepoints
-          mountPath: /opt/flink/savepoints
         - name: flink-logs
           mountPath: /opt/flink/logs
-        - name: flink-output
-          mountPath: /opt/flink/output
       volumes:
       - name: flink-config-volume
         configMap:
@@ -99,14 +119,6 @@ spec:
             path: flink-conf.yaml
           - key: log4j-console.properties
             path: log4j-console.properties
-      - name: flink-checkpoints
-        persistentVolumeClaim:
-          claimName: flink-checkpoints-pvc
-      - name: flink-savepoints
-        persistentVolumeClaim:
-          claimName: flink-savepoints-pvc
+      # checkpoint / savepoint / output 已改为 OSS 存储，不再需要 PVC
       - name: flink-logs
         emptyDir: {}
-      - name: flink-output
-        persistentVolumeClaim:
-          claimName: flink-output-pvc

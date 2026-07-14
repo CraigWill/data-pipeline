@@ -42,7 +42,7 @@ ALTER SYSTEM ARCHIVELOG TENANT = oratenant;
 -- 步骤 4: 验证归档状态
 -- ============================================================
 -- 确认归档模式已开启（log_mode 应为 ARCHIVELOG）
-SELECT tenant_id, tenant_name, log_mode FROM oceanbase.DBA_OB_TENANTS WHERE tenant_name = 'oratenant';
+SELECT tenant_id, tenant_name, log_mode FROM oceanbase.DBA_OB_TENANTS WHERE tenant_name = 'oratenant';zuh
 
 -- 查看归档状态（status 应为 DOING）
 SELECT * FROM oceanbase.CDB_OB_ARCHIVELOG WHERE tenant_id = (

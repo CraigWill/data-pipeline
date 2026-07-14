@@ -7,6 +7,9 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
+import java.util.Date;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -15,7 +18,10 @@ import org.springframework.stereotype.Service;
 
 import com.aliyun.oss.OSS;
 import com.aliyun.oss.OSSClientBuilder;
+import com.aliyun.oss.model.ListObjectsRequest;
 import com.aliyun.oss.model.OSSObject;
+import com.aliyun.oss.model.OSSObjectSummary;
+import com.aliyun.oss.model.ObjectListing;
 import com.aliyun.oss.model.ObjectMetadata;
 import com.realtime.monitor.dto.OssConnection;
 import com.realtime.monitor.service.OssConnectionService;
@@ -238,4 +244,114 @@ public class OssStorageService {
             log.warn("OSS 删除失败: {}, error: {}", fullKey, e.getMessage());
         }
     }
+
+    /** 判断是否为 oss:// URI。 */
+    public static boolean isOssUri(String path) {
+        return path != null && path.regionMatches(true, 0, "oss://", 0, 6);
+    }
+
+    /**
+     * 从 OUTPUT_PATH（如 {@code oss://bucket/data-pipeline/cdc}）解析相对前缀
+     * （不含全局 {@link OssConfig#getPrefix()}，如 {@code cdc}）。
+     * 解析失败时回退为 {@code cdc}。
+     */
+    public String resolveCdcRelativePrefix(String outputPath) {
+        if (!isOssUri(outputPath)) {
+            return "cdc";
+        }
+        String withoutScheme = outputPath.substring(6); // strip oss://
+        int slash = withoutScheme.indexOf('/');
+        if (slash < 0 || slash == withoutScheme.length() - 1) {
+            return "cdc";
+        }
+        String keyAfterBucket = withoutScheme.substring(slash + 1);
+        while (keyAfterBucket.endsWith("/")) {
+            keyAfterBucket = keyAfterBucket.substring(0, keyAfterBucket.length() - 1);
+        }
+        String cfgPrefix = nn(ossConfig.getPrefix());
+        if (!cfgPrefix.isEmpty() && keyAfterBucket.startsWith(cfgPrefix)) {
+            String rel = keyAfterBucket.substring(cfgPrefix.length());
+            while (rel.startsWith("/")) {
+                rel = rel.substring(1);
+            }
+            return rel.isEmpty() ? "cdc" : rel;
+        }
+        // 取最后一段作为相对根（兼容非标准 prefix）
+        int last = keyAfterBucket.lastIndexOf('/');
+        return last >= 0 ? keyAfterBucket.substring(last + 1) : keyAfterBucket;
+    }
+
+    /**
+     * 列出相对前缀下的对象（自动拼接全局 prefix）。
+     *
+     * @param relativePrefix 如 {@code cdc/} 或 {@code cdc}
+     * @param maxKeys        最多返回条数（防止一次拉太多）
+     */
+    public List<OssObjectEntry> listObjects(String relativePrefix, int maxKeys) {
+        List<OssObjectEntry> result = new ArrayList<>();
+        if (!isEnabled()) return result;
+        String rel = relativePrefix == null ? "" : relativePrefix;
+        if (!rel.isEmpty() && !rel.endsWith("/")) {
+            rel = rel + "/";
+        }
+        String fullPrefix = ossConfig.getPrefix() + rel;
+        int limit = Math.min(Math.max(maxKeys, 1), 2000);
+        try {
+            String marker = null;
+            while (result.size() < limit) {
+                ListObjectsRequest req = new ListObjectsRequest(ossConfig.getBucketName())
+                        .withPrefix(fullPrefix)
+                        .withMaxKeys(Math.min(200, limit - result.size()))
+                        .withMarker(marker);
+                ObjectListing listing = ossClient.listObjects(req);
+                for (OSSObjectSummary s : listing.getObjectSummaries()) {
+                    String fullKey = s.getKey();
+                    if (fullKey.endsWith("/")) continue; // 目录占位
+                    String relativeKey = fullKey;
+                    String cfgPrefix = nn(ossConfig.getPrefix());
+                    if (!cfgPrefix.isEmpty() && fullKey.startsWith(cfgPrefix)) {
+                        relativeKey = fullKey.substring(cfgPrefix.length());
+                    }
+                    String fileName = relativeKey;
+                    int slash = relativeKey.lastIndexOf('/');
+                    if (slash >= 0) {
+                        fileName = relativeKey.substring(slash + 1);
+                    }
+                    // 跳过 Flink in-progress / 非 CSV
+                    if (fileName.startsWith(".") || fileName.contains(".inprogress")
+                            || !fileName.toLowerCase().endsWith(".csv")) {
+                        continue;
+                    }
+                    String dateDir = "";
+                    // 相对路径形如 cdc/2026-07-14--14/file.csv
+                    String[] parts = relativeKey.split("/");
+                    if (parts.length >= 2) {
+                        dateDir = parts[parts.length - 2];
+                    }
+                    result.add(new OssObjectEntry(
+                            relativeKey,
+                            dateDir,
+                            fileName,
+                            s.getSize(),
+                            s.getLastModified()));
+                    if (result.size() >= limit) break;
+                }
+                if (!listing.isTruncated() || result.size() >= limit) break;
+                marker = listing.getNextMarker();
+            }
+        } catch (Exception e) {
+            log.warn("OSS 列举失败 prefix={}: {}", fullPrefix, e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * OSS 对象摘要（相对 key，不含全局 prefix）。
+     */
+    public record OssObjectEntry(
+            String relativeKey,
+            String dateDir,
+            String fileName,
+            long size,
+            Date lastModified) {}
 }

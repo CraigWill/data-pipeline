@@ -217,6 +217,10 @@ public class CdcSimulatorService {
      * @param count 生成行数
      */
     public int autoInsert(String dsId, String schema, String table, int count) throws Exception {
+        // 验证标识符，防止SQL注入
+        validateIdentifier(schema, "schema");
+        validateIdentifier(table, "table");
+        
         if (count <= 0) throw new Exception("插入数量必须大于 0");
         if (count > MAX_BATCH_ROWS) throw new Exception("单次自动插入不能超过 " + MAX_BATCH_ROWS + " 行");
 
@@ -296,7 +300,10 @@ public class CdcSimulatorService {
     }
 
     /** 查询数值列的当前最大值（用于主键自增基准）；失败或空表返回一个安全随机基准。 */
-    private long getMaxLong(DataSourceConfig config, String type, String schema, String table, String col) {
+    private long getMaxLong(DataSourceConfig config, String type, String schema, String table, String col) throws Exception {
+        // 验证列名，防止SQL注入
+        validateIdentifier(col, "column");
+        
         String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
         String sql = "SELECT MAX(" + quoteIdentifier(type, col) + ") FROM " + qualifiedName(type, schema, table);
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword());
@@ -519,8 +526,16 @@ public class CdcSimulatorService {
         }
     }
 
-    /** 给标识符加引号（Oracle 用双引号，MySQL/OceanBase 用反引号，Postgres 用双引号） */
+    /**
+     * 给标识符加引号（Oracle 用双引号，MySQL/OceanBase 用反引号，Postgres 用双引号）。
+     * 所有拼入 SQL 的标识符必须经过本方法，内部强制白名单校验，
+     * 无论标识符来自请求参数还是数据库元数据，均无法注入。
+     */
     private String quoteIdentifier(String type, String identifier) {
+        if (identifier == null || !IDENTIFIER.matcher(identifier).matches()) {
+            throw new IllegalArgumentException("非法的标识符: " + identifier);
+        }
+        // 白名单已排除引号/反引号等字符，加引号即可安全拼入 SQL
         switch (type) {
             case "MYSQL":
             case "OCEANBASE":
@@ -533,7 +548,7 @@ public class CdcSimulatorService {
         }
     }
 
-    /** 构造 schema.table 限定名 */
+    /** 构造 schema.table 限定名（标识符白名单校验由 quoteIdentifier 强制执行） */
     private String qualifiedName(String type, String schema, String table) {
         boolean upper = isOracleLike(type);
         String s = upper ? schema.toUpperCase() : schema;

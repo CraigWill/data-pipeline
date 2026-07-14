@@ -1,8 +1,11 @@
 package com.realtime.monitor.service;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileReader;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -19,6 +22,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
+import com.realtime.monitor.oss.OssStorageService;
+
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -33,8 +38,14 @@ public class CdcStatsService {
     @Value("${output.path:./output/cdc}")
     private String outputPath;
 
-    /** 已验证的输出目录 */
+    /** 已验证的输出目录（本地模式） */
     private File validatedOutputDir;
+
+    /** 是否从 OSS 直读 CSV（K8s 下 Flink FileSink 写 oss://） */
+    private volatile boolean ossMode = false;
+
+    /** OSS 相对前缀，如 cdc（不含全局 OSS_PREFIX） */
+    private volatile String ossRelativePrefix = "cdc";
     
     // 当前日期
     private volatile LocalDate currentDate = LocalDate.now();
@@ -105,14 +116,15 @@ public class CdcStatsService {
     /**
      * 验证 outputPath 配置安全性，防止路径遍历。
      * outputPath 来自环境变量/配置文件，视为不可信数据。
+     * 支持本地目录与 {@code oss://bucket/prefix/cdc}。
      */
     private void validateAndInitOutputDir() {
         String path = this.outputPath;
         if (path == null || path.isBlank()) {
             path = "./output/cdc";
         }
-      
-        // 拒绝恶意字符
+
+        // 拒绝恶意字符（oss:// 中的冒号合法，单独处理）
         if (path.indexOf('\u0000') >= 0 || path.contains("..") || path.matches(".*[`$|;&!><].*")) {
             throw new IllegalStateException("output.path 配置包含非法字符");
         }
@@ -121,6 +133,20 @@ public class CdcStatsService {
                 throw new IllegalStateException("output.path 包含控制字符");
             }
         }
+
+        if (OssStorageService.isOssUri(path)) {
+            this.ossMode = true;
+            this.ossRelativePrefix = ossStorageService != null
+                    ? ossStorageService.resolveCdcRelativePrefix(path)
+                    : "cdc";
+            this.validatedOutputDir = null;
+            log.info("CdcStatsService OSS 模式: relativePrefix={} ossEnabled={}",
+                    ossRelativePrefix,
+                    ossStorageService != null && ossStorageService.isEnabled());
+            return;
+        }
+
+        this.ossMode = false;
         // 白名单目录验证
         java.nio.file.Path normalized = java.nio.file.Paths.get(path).toAbsolutePath().normalize();
         java.nio.file.Path allowed1 = java.nio.file.Paths.get("./output").toAbsolutePath().normalize();
@@ -134,9 +160,12 @@ public class CdcStatsService {
     }
 
     /**
-     * 获取已验证的输出目录
+     * 获取已验证的输出目录（仅本地模式）
      */
     private File getOutputDir() {
+        if (ossMode) {
+            throw new IllegalStateException("OSS 模式下无本地输出目录");
+        }
         if (validatedOutputDir == null) {
             validateAndInitOutputDir();
         }
@@ -151,13 +180,7 @@ public class CdcStatsService {
      */
     public void fullRecalculate() {
         log.info("开始全量重算CDC统计...");
-        LocalDate today = LocalDate.now();
-        String todayStr = today.toString();
-
-        File outputDir = getOutputDir();
-        if (!outputDir.exists()) {
-            return;
-        }
+        ensureOutputReady();
 
         // 全量重算：先清空今日统计，再重新扫描所有现存文件
         todayTotal.set(0);
@@ -167,6 +190,21 @@ public class CdcStatsService {
         for (AtomicLong h : hourlyStats) h.set(0);
         tableStats.clear();
         processedFiles.clear();
+
+        if (ossMode) {
+            int[] counts = scanOssFiles(true);
+            calculateRate();
+            log.info("全量重算完成(OSS): 处理 {} 个文件，总计 {} 行数据", counts[0], counts[1]);
+            return;
+        }
+
+        LocalDate today = LocalDate.now();
+        String todayStr = today.toString();
+
+        File outputDir = getOutputDir();
+        if (!outputDir.exists()) {
+            return;
+        }
 
         File[] dateDirs = outputDir.listFiles(File::isDirectory);
         if (dateDirs == null) return;
@@ -189,7 +227,7 @@ public class CdcStatsService {
                 long total = ops[3];
                 if (total <= 0) continue;
                 processedFiles.put(csvFile.getAbsolutePath(), csvFile.length());
-                updateStats(csvFile, hour, ops);
+                updateStats(csvFile.getName(), hour, ops);
                 fileCount++;
                 totalLines += total;
             }
@@ -201,6 +239,13 @@ public class CdcStatsService {
 
     @Scheduled(fixedRate = 10000)  // 改为10秒，减少频率
     public void scanAndUpdateStats() {
+        try {
+            ensureOutputReady();
+        } catch (Exception e) {
+            log.debug("输出目录未就绪，跳过扫描: {}", e.getMessage());
+            return;
+        }
+
         LocalDate today = LocalDate.now();
 
         // 日期变了则重置
@@ -212,6 +257,12 @@ public class CdcStatsService {
                     log.info("CDC 统计已重置，新日期: {}", today);
                 }
             }
+        }
+
+        if (ossMode) {
+            scanOssFiles(false);
+            calculateRate();
+            return;
         }
 
         String todayStr = today.toString();
@@ -247,9 +298,9 @@ public class CdcStatsService {
                     long total = ops[3];
                     if (total > 0) {
                         processedFiles.put(filePath, currentSize);
-                        updateStats(csvFile, hour, ops);
+                        updateStats(csvFile.getName(), hour, ops);
                         log.debug("新文件统计: {} - 总行数={}", csvFile.getName(), total);
-                        // 同步新文件到 OSS
+                        // 本地模式：同步新文件到 OSS
                         syncCdcFileToOss(csvFile);
                     }
                 } else if (currentSize > lastSize) {
@@ -257,8 +308,7 @@ public class CdcStatsService {
                     long estimatedNewLines = (currentSize - lastSize) / 100; // 假设每行约100字节
                     if (estimatedNewLines > 0) {
                         processedFiles.put(filePath, currentSize);
-                        updateStatsIncremental(csvFile, hour, estimatedNewLines);
-                        // 同步更新的文件到 OSS
+                        updateStatsIncremental(csvFile.getName(), hour, estimatedNewLines);
                         syncCdcFileToOss(csvFile);
                         log.debug("增量统计: {} - 估算新增 {} 行", csvFile.getName(), estimatedNewLines);
                     }
@@ -268,12 +318,76 @@ public class CdcStatsService {
 
         calculateRate();
     }
+
+    private void ensureOutputReady() {
+        if (ossMode || validatedOutputDir != null) {
+            return;
+        }
+        validateAndInitOutputDir();
+    }
+
+    /**
+     * 扫描 OSS 上今日 CSV。
+     * @param full 是否全量（忽略 processedFiles）；false 时只处理新增/变大的对象
+     * @return [fileCount, totalLines]（仅 full=true 时 totalLines 有意义）
+     */
+    private int[] scanOssFiles(boolean full) {
+        if (ossStorageService == null || !ossStorageService.isEnabled()) {
+            log.debug("OSS 未就绪，跳过 CDC 统计扫描");
+            return new int[]{0, 0};
+        }
+        String todayStr = LocalDate.now().toString();
+        List<OssStorageService.OssObjectEntry> entries =
+                ossStorageService.listObjects(ossRelativePrefix, 1000);
+        int fileCount = 0;
+        long totalLines = 0;
+
+        for (OssStorageService.OssObjectEntry entry : entries) {
+            String dirName = entry.dateDir();
+            if (dirName == null || !dirName.startsWith(todayStr)) continue;
+            if (!dirName.matches("\\d{4}-\\d{2}-\\d{2}--\\d{2}")) continue;
+
+            int hour = Integer.parseInt(dirName.substring(12, 14));
+            String key = entry.relativeKey();
+            long currentSize = entry.size();
+
+            Long lastSize = processedFiles.get(key);
+            if (!full && lastSize != null && currentSize <= lastSize) {
+                continue;
+            }
+            if (!full && lastSize != null && currentSize > lastSize) {
+                long estimatedNewLines = (currentSize - lastSize) / 100;
+                if (estimatedNewLines > 0) {
+                    processedFiles.put(key, currentSize);
+                    updateStatsIncremental(entry.fileName(), hour, estimatedNewLines);
+                    fileCount++;
+                    totalLines += estimatedNewLines;
+                }
+                continue;
+            }
+
+            byte[] data = ossStorageService.readFromOss(key);
+            if (data == null || data.length == 0) continue;
+            long[] ops = countOpLines(data);
+            long total = ops[3];
+            if (total <= 0) continue;
+
+            if (full || lastSize == null) {
+                processedFiles.put(key, currentSize);
+                updateStats(entry.fileName(), hour, ops);
+                fileCount++;
+                totalLines += total;
+                log.debug("OSS 文件统计: {} - 总行数={}", entry.fileName(), total);
+            }
+        }
+        return new int[]{fileCount, (int) Math.min(totalLines, Integer.MAX_VALUE)};
+    }
     
     /**
      * 更新统计（新文件），ops = [insert, update, delete, total]
      */
-    private void updateStats(File csvFile, int hour, long[] ops) {
-        String tableName = extractTableName(csvFile.getName());
+    private void updateStats(String fileName, int hour, long[] ops) {
+        String tableName = extractTableName(fileName);
         long total = ops[3];
 
         todayTotal.addAndGet(total);
@@ -289,14 +403,14 @@ public class CdcStatsService {
             return v;
         });
 
-        log.debug("新文件统计: {} - insert={} update={} delete={}", csvFile.getName(), ops[0], ops[1], ops[2]);
+        log.debug("新文件统计: {} - insert={} update={} delete={}", fileName, ops[0], ops[1], ops[2]);
     }
     
     /**
      * 增量更新统计
      */
-    private void updateStatsIncremental(File csvFile, int hour, long newLines) {
-        String tableName = extractTableName(csvFile.getName());
+    private void updateStatsIncremental(String fileName, int hour, long newLines) {
+        String tableName = extractTableName(fileName);
         
         todayTotal.addAndGet(newLines);
         todayInsert.addAndGet(newLines);
@@ -310,7 +424,7 @@ public class CdcStatsService {
             return v;
         });
         
-        log.debug("增量统计: {} - 新增 {} 行", csvFile.getName(), newLines);
+        log.debug("增量统计: {} - 新增 {} 行", fileName, newLines);
     }
     
     /**
@@ -318,27 +432,42 @@ public class CdcStatsService {
      * CSV 第2列为 op_type（INSERT/UPDATE/DELETE）
      */
     private long[] countOpLines(File file) {
-        long insert = 0, update = 0, delete = 0;
         try (BufferedReader reader = new BufferedReader(new FileReader(file), 65536)) {
-            String line;
-            while ((line = reader.readLine()) != null) {
-                if (line.isEmpty()) continue;
-                int first = line.indexOf(',');
-                if (first < 0) { insert++; continue; }
-                int second = line.indexOf(',', first + 1);
-                String op = (second < 0
-                    ? line.substring(first + 1)
-                    : line.substring(first + 1, second)).trim().toUpperCase();
-                if (op.equals("DELETE") || op.equals("D")) {
-                    delete++;
-                } else if (op.startsWith("UPDATE") || op.equals("U")) {
-                    update++;
-                } else {
-                    insert++;
-                }
-            }
+            return countOpLines(reader);
         } catch (Exception e) {
             log.error("统计文件行数失败: {}", file.getName(), e);
+            return new long[]{0, 0, 0, 0};
+        }
+    }
+
+    private long[] countOpLines(byte[] data) {
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(new ByteArrayInputStream(data), StandardCharsets.UTF_8), 65536)) {
+            return countOpLines(reader);
+        } catch (Exception e) {
+            log.error("统计 OSS 内容行数失败", e);
+            return new long[]{0, 0, 0, 0};
+        }
+    }
+
+    private long[] countOpLines(BufferedReader reader) throws java.io.IOException {
+        long insert = 0, update = 0, delete = 0;
+        String line;
+        while ((line = reader.readLine()) != null) {
+            if (line.isEmpty()) continue;
+            int first = line.indexOf(',');
+            if (first < 0) { insert++; continue; }
+            int second = line.indexOf(',', first + 1);
+            String op = (second < 0
+                ? line.substring(first + 1)
+                : line.substring(first + 1, second)).trim().toUpperCase();
+            if (op.equals("DELETE") || op.equals("D")) {
+                delete++;
+            } else if (op.startsWith("UPDATE") || op.equals("U")) {
+                update++;
+            } else {
+                insert++;
+            }
         }
         return new long[]{insert, update, delete, insert + update + delete};
     }

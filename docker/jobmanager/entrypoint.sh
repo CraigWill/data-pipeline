@@ -129,9 +129,15 @@ EOF
 
 # OSS 文件系统配置（将 checkpoint/savepoint 存储到阿里云 OSS 时启用）
 # 仅当提供了 OSS 凭证时才注入 fs.oss.* 配置；否则保持本地文件系统不变
+OSS_PROPS=""
 if [ -n "$OSS_ACCESS_KEY_ID" ] && [ -n "$OSS_ACCESS_KEY_SECRET" ]; then
     OSS_FS_ENDPOINT=$(echo "${OSS_ENDPOINT}" | sed -E 's#^https?://##')
     echo "  Configuring OSS filesystem (fs.oss.endpoint=${OSS_FS_ENDPOINT})"
+    # 供 k8s 只读 ConfigMap 分支通过 FLINK_PROPERTIES 注入
+    OSS_PROPS="
+fs.oss.endpoint: ${OSS_FS_ENDPOINT}
+fs.oss.accessKeyId: ${OSS_ACCESS_KEY_ID}
+fs.oss.accessKeySecret: ${OSS_ACCESS_KEY_SECRET}"
     cat >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
 
 # OSS 文件系统（用于 checkpoint/savepoint 直写 OSS）
@@ -150,22 +156,35 @@ fi
 # 在 Kubernetes 环境中，使用环境变量 FLINK_PROPERTIES 或直接使用现有配置
 # 检查是否在 Kubernetes 环境中（通过检查 ConfigMap 挂载）
 if [ -f /opt/flink/conf/flink-conf.yaml ] && [ ! -w /opt/flink/conf/flink-conf.yaml ]; then
-    echo "Running in Kubernetes with read-only ConfigMap, using existing configuration..."
-    echo "Environment variables will override configuration at runtime via FLINK_PROPERTIES"
-    # 不覆盖只读的 ConfigMap，而是通过环境变量传递配置
-    export FLINK_PROPERTIES="
+    # ConfigMap 挂载为只读，无法直接改写。
+    # 注意：jobmanager.sh start-foreground 不会处理 FLINK_PROPERTIES（那是官方
+    #       docker-entrypoint.sh 才有的行为），因此必须生成一份可写的完整配置，
+    #       通过 FLINK_CONF_DIR 指向它，才能让 fs.oss.* 等运行期配置真正生效。
+    echo "Running in Kubernetes with read-only ConfigMap, 生成可写配置目录..."
+    WRITABLE_CONF_DIR="/tmp/flink-conf-active"
+    mkdir -p "$WRITABLE_CONF_DIR"
+    # 1) 以只读 ConfigMap 的配置为基础
+    cp /opt/flink/conf/flink-conf.yaml "$WRITABLE_CONF_DIR/flink-conf.yaml"
+    cp /opt/flink/conf/log4j-console.properties "$WRITABLE_CONF_DIR/" 2>/dev/null || true
+    cp /opt/flink/conf/log4j.properties "$WRITABLE_CONF_DIR/" 2>/dev/null || true
+    # 2) 追加运行期覆盖项（置于末尾，确保覆盖 ConfigMap 中的同名默认值）
+    #    ${OSS_PROPS} 注入 fs.oss.*，使 checkpoint/savepoint/CSV 能直写 OSS
+    cat >> "$WRITABLE_CONF_DIR/flink-conf.yaml" << EOF
+
+# ── 运行期覆盖（entrypoint 注入）──
 jobmanager.rpc.address: ${JOB_MANAGER_RPC_ADDRESS}
 jobmanager.rpc.port: ${JOB_MANAGER_RPC_PORT}
-jobmanager.memory.process.size: ${JOB_MANAGER_HEAP_SIZE}
 rest.port: ${REST_PORT}
 parallelism.default: ${PARALLELISM_DEFAULT}
 execution.checkpointing.interval: ${CHECKPOINT_INTERVAL}
 state.checkpoints.dir: ${CHECKPOINT_DIR}
 state.savepoints.dir: ${SAVEPOINT_DIR}
 state.backend: ${STATE_BACKEND}
-heartbeat.interval: 10000
-heartbeat.timeout: 180000
-"
+${OSS_PROPS}
+EOF
+    export FLINK_CONF_DIR="$WRITABLE_CONF_DIR"
+    echo "  FLINK_CONF_DIR=$FLINK_CONF_DIR"
+    [ -n "$OSS_PROPS" ] && echo "  已注入 fs.oss.* 配置到生效 flink-conf.yaml"
 else
     # 非 Kubernetes 环境，可以直接覆盖配置文件
     echo "Using dynamic configuration..."

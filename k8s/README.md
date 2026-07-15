@@ -191,20 +191,39 @@ kubectl get pvc -n flink
 
 ## 访问服务
 
-### 方法 1: Port Forward（推荐用于测试）
+本地 KIND / Docker Desktop 下，**优先用 port-forward**。Service 虽配置了 NodePort（30888 / 30501 / 30081），但在本机经常无法直连，表现为 `http://localhost:5001` 打不开。
+
+| 服务 | port-forward 地址 | NodePort（备用） |
+|------|-------------------|------------------|
+| Monitor 前端 | http://localhost:8888 | http://localhost:30888 |
+| Monitor 后端 API | http://localhost:5001 | http://localhost:30501 |
+| Flink Web UI | http://localhost:8081 | http://localhost:30081 |
+
+### 方法 1: Port Forward（本地测试推荐）
+
+`./deploy.sh` 结束时会调用 `port-forward.sh start`。日常可直接用脚本：
 
 ```bash
-# Flink Web UI
-kubectl port-forward -n flink svc/flink-jobmanager-rest 8081:8081
-# 访问: http://localhost:8081
+cd k8s
+./port-forward.sh start     # 启动（先停旧进程）
+./port-forward.sh status    # 查看监听 + 后端 health
+./port-forward.sh restart   # 重启
+./port-forward.sh stop      # 停止
+```
 
-# Monitor Frontend
-kubectl port-forward -n flink svc/monitor-frontend 8888:80
-# 访问: http://localhost:8888
+映射日志在 `/tmp/pf-{frontend,backend,flink}.log`。
 
-# Monitor Backend API
-kubectl port-forward -n flink svc/monitor-backend 5001:5001
-# 访问: http://localhost:5001
+**排查 `localhost:5001` 不通：**
+
+```bash
+./port-forward.sh status
+
+# 集群内 Pod 是否健康
+kubectl -n flink get pods -l app=monitor-backend
+kubectl -n flink exec deploy/monitor-backend -- curl -sf http://127.0.0.1:5001/actuator/health
+
+# 无监听 → ./port-forward.sh restart
+# 有监听仍失败 → 看 /tmp/pf-backend.log
 ```
 
 ### 方法 2: LoadBalancer（推荐用于生产）
@@ -225,28 +244,15 @@ kubectl get svc -n flink
 
 ### 方法 3: NodePort
 
-如果使用 NodePort，编辑 Service 配置：
+当前仓库已配置：
 
-```yaml
-# flink-jobmanager-service.yaml
-spec:
-  type: NodePort
-  ports:
-  - name: rest
-    port: 8081
-    targetPort: 8081
-    nodePort: 30081  # 指定端口
+| Service | NodePort |
+|---------|----------|
+| `monitor-frontend` | 30888 |
+| `monitor-backend` | 30501 |
+| `flink-jobmanager-rest` | 30081 |
 
-# monitor-frontend-deployment.yaml
-spec:
-  type: NodePort
-  ports:
-  - port: 80
-    targetPort: 80
-    nodePort: 30888
-```
-
-访问: `http://<node-ip>:30081` 和 `http://<node-ip>:30888`
+KIND / Docker Desktop 上若 `http://localhost:30501` 不通，请改用方法 1 的 port-forward。
 
 ### 方法 4: Ingress（推荐用于生产）
 
@@ -368,7 +374,45 @@ kubectl top nodes
 
 ## 高可用验证
 
-### 测试 JobManager 故障转移
+推荐使用一键脚本（删除 Pod / OOM 压测 + 自动观察恢复）：
+
+```bash
+cd k8s
+chmod +x ha-failover-test.sh
+
+# 基线：副本、HPA、Flink 作业
+./ha-failover-test.sh status
+
+# Pod 删除 → Deployment 重建
+./ha-failover-test.sh kill-tm          # TaskManager
+./ha-failover-test.sh kill-jm          # JobManager（单副本时验证自愈+作业恢复）
+./ha-failover-test.sh kill-backend     # Backend（多副本时验证故障中仍可服务）
+
+# 内存加压 → OOMKilled → 容器/Pod 自愈（需本机 javac）
+# TM limits 约 4Gi，Backend limits 约 2Gi
+./ha-failover-test.sh mem-oom-tm 3500
+./ha-failover-test.sh mem-oom-backend 1800
+
+# 顺序跑完全部场景
+./ha-failover-test.sh full
+```
+
+内存压测原理：将 `tools/MemStress.java` 编译后 `kubectl cp` 进目标容器，持续申请堆内存直至触达 `resources.limits.memory`，由 kubelet OOMKill；随后观察 `restartCount` 或 Deployment 换新 Pod。
+
+### CDC 模拟数据 + 故障恢复（不丢数 / CP+SP）
+
+按 100 条步进调用模拟器 `auto-insert`，触发 Savepoint、删除 TaskManager，恢复后再插入并校验：
+
+```bash
+cd k8s
+./port-forward.sh start          # 确保 :5001 / :8081 可访问
+./cdc-failover-data-test.sh      # 完整场景
+./cdc-failover-data-test.sh insert-only   # 仅插入一批
+```
+
+校验点：故障后 Source 增量 ≈ STEP；Savepoint 两次 COMPLETED 且有 OSS 路径；Checkpoint `completed` 相对恢复后基线有增长。
+
+### 手动：JobManager 故障转移
 
 ```bash
 # 1. 查看当前 Leader
@@ -377,24 +421,19 @@ kubectl logs -n flink -l app=flink,component=jobmanager | grep "leader"
 # 2. 删除 Leader Pod
 kubectl delete pod -n flink <leader-pod-name>
 
-# 3. 观察新 Leader 选举
+# 3. 观察新 Leader 选举 / Pod 重建
 kubectl logs -n flink -l app=flink,component=jobmanager -f
 
-# 4. 验证任务继续运行
-# 访问 Flink Web UI，确认任务状态为 RUNNING
+# 4. 验证任务继续运行（Flink Web UI 或）
+./ha-failover-test.sh status
 ```
 
-### 测试 TaskManager 故障恢复
+### 手动：TaskManager 故障恢复
 
 ```bash
-# 1. 删除一个 TaskManager
 kubectl delete pod -n flink <taskmanager-pod-name>
-
-# 2. 观察自动重启
 kubectl get pods -n flink -w
-
-# 3. 验证任务恢复
-# 访问 Flink Web UI，确认任务从 checkpoint 恢复
+# Flink Web UI 确认任务从 checkpoint 恢复
 ```
 
 ## 监控和告警

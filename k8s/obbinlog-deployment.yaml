@@ -47,9 +47,9 @@ spec:
           env:
             # CDC sys 租户凭据（libobcdc 读元数据/拉 clog 使用）
             - name: OB_SYS_USERNAME
-              value: "root"
+              value: "cdc_reader"
             - name: OB_SYS_PASSWORD
-              value: "password"
+              value: "CdcReader#2026"
             - name: TZ
               value: "Asia/Shanghai"
           resources:

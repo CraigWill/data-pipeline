@@ -50,6 +50,8 @@ spec:
           value: "/app/output/cdc"
         - name: CONFIG_DIR
           value: "/app/config"
+        - name: LOG_FILE
+          value: "/app/out/monitor-backend.log"
         # ── CDC 管理库配置（OceanBase Oracle 租户，存储元数据表）──
         # 本地 Docker Desktop：通过 host.docker.internal 访问宿主机上
         # centos-ob 容器对外发布的 2881 端口
@@ -95,6 +97,9 @@ spec:
         - name: flink-data
           mountPath: /app/output
           subPath: output
+        - name: flink-data
+          mountPath: /app/out
+          subPath: out
         - name: config
           mountPath: /app/config
       volumes:

@@ -12,6 +12,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import org.springframework.stereotype.Service;
@@ -108,19 +109,17 @@ public class CdcSimulatorService {
 
         DataSourceConfig config = dataSourceService.loadDataSource(dsId);
         String type = dbType(config);
-        String qualified = qualifiedName(type, schema, table);
-
         String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
         List<String> columns = new ArrayList<>();
         List<Map<String, Object>> rows = new ArrayList<>();
         long total = 0;
 
-        // 分页 SQL 中的 LIMIT/OFFSET/FETCH 数值均使用 ? 占位符，
-        // 通过 bindPagingParams() 以 setInt 绑定，不做字符串拼接。
-        String dataSql = buildPagedQuery(type, qualified);
-        String countSql = "SELECT COUNT(*) FROM " + qualified;
-
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            // 不可信 schema/table 仅用于元数据解析；拼 SQL 只用元数据返回的可信限定名
+            String qualified = resolveTrustedQualifiedName(conn, type, schema, table);
+            String countSql = "SELECT COUNT(*) FROM " + qualified;
+            String dataSql = buildPagedQuery(type, qualified);
+
             try (PreparedStatement stmt = conn.prepareStatement(countSql);
                  ResultSet rs = stmt.executeQuery()) {
                 if (rs.next()) total = rs.getLong(1);
@@ -166,34 +165,37 @@ public class CdcSimulatorService {
         if (rows == null || rows.isEmpty()) throw new Exception("插入数据为空");
         if (rows.size() > MAX_BATCH_ROWS) throw new Exception("单次批量操作行数不能超过 " + MAX_BATCH_ROWS);
 
-        // 以第一行的列定义列顺序，并校验列名
-        List<String> cols = new ArrayList<>(rows.get(0).keySet());
+        // 列名：不可信输入 → 白名单净化后再拼 SQL；行取值仍用净化后的列名（与合法入参一致）
+        List<String> cols = new ArrayList<>();
+        for (String c : rows.get(0).keySet()) {
+            cols.add(sanitizeIdentifier(c, "column"));
+        }
         if (cols.isEmpty()) throw new Exception("插入数据列为空");
-        for (String c : cols) validateIdentifier(c, "column");
 
         DataSourceConfig config = dataSourceService.loadDataSource(dsId);
         String type = dbType(config);
-        String qualified = qualifiedName(type, schema, table);
-
-        StringBuilder sql = new StringBuilder("INSERT INTO ").append(qualified).append(" (");
-        for (int i = 0; i < cols.size(); i++) {
-            if (i > 0) sql.append(", ");
-            sql.append(quoteIdentifier(type, cols.get(i)));
-        }
-        sql.append(") VALUES (");
-        for (int i = 0; i < cols.size(); i++) {
-            if (i > 0) sql.append(", ");
-            sql.append("?");
-        }
-        sql.append(")");
-
         String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            String qualified = resolveTrustedQualifiedName(conn, type, schema, table);
+
+            StringBuilder sql = new StringBuilder("INSERT INTO ").append(qualified).append(" (");
+            for (int i = 0; i < cols.size(); i++) {
+                if (i > 0) sql.append(", ");
+                sql.append(quoteIdentifier(type, cols.get(i)));
+            }
+            sql.append(") VALUES (");
+            for (int i = 0; i < cols.size(); i++) {
+                if (i > 0) sql.append(", ");
+                sql.append("?");
+            }
+            sql.append(")");
+
             conn.setAutoCommit(false);
             try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
                 for (Map<String, Object> row : rows) {
                     for (int i = 0; i < cols.size(); i++) {
-                        bindValue(stmt, i + 1, row.get(cols.get(i)));
+                        bindValue(stmt, i + 1, rowValue(row, cols.get(i)));
                     }
                     stmt.addBatch();
                 }
@@ -301,19 +303,19 @@ public class CdcSimulatorService {
 
     /** 查询数值列的当前最大值（用于主键自增基准）；失败或空表返回一个安全随机基准。 */
     private long getMaxLong(DataSourceConfig config, String type, String schema, String table, String col) throws Exception {
-        // 验证列名，防止SQL注入
-        validateIdentifier(col, "column");
-        
+        String safeCol = sanitizeIdentifier(col, "column");
         String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
-        String sql = "SELECT MAX(" + quoteIdentifier(type, col) + ") FROM " + qualifiedName(type, schema, table);
-        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword());
-             PreparedStatement stmt = conn.prepareStatement(sql);
-             ResultSet rs = stmt.executeQuery()) {
-            if (rs.next()) {
-                java.math.BigDecimal v = rs.getBigDecimal(1);
-                if (v != null) return v.longValue();
+        try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            String qualified = resolveTrustedQualifiedName(conn, type, schema, table);
+            String sql = "SELECT MAX(" + quoteIdentifier(type, safeCol) + ") FROM " + qualified;
+            try (PreparedStatement stmt = conn.prepareStatement(sql);
+                 ResultSet rs = stmt.executeQuery()) {
+                if (rs.next()) {
+                    java.math.BigDecimal v = rs.getBigDecimal(1);
+                    if (v != null) return v.longValue();
+                }
+                return 0L;
             }
-            return 0L;
         } catch (SQLException e) {
             log.warn("获取主键最大值失败 [{}].{}.{}，改用随机基准: {}", schema, table, col, e.getMessage());
             return java.util.concurrent.ThreadLocalRandom.current().nextLong(1, 1_000_000L);
@@ -333,11 +335,19 @@ public class CdcSimulatorService {
         String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
         boolean oracle = isOracleLike(type);
 
+        // GET_DDL 的表名/Schema 是绑定值（非 FROM 标识符），仍须先净化
+        String safeTable = sanitizeIdentifier(table, "table");
+        String safeSchema = sanitizeIdentifier(schema, "schema");
+        if (oracle) {
+            safeTable = safeTable.toUpperCase();
+            safeSchema = safeSchema.toUpperCase();
+        }
+
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
             if (oracle) {
                 try (PreparedStatement st = conn.prepareStatement("SELECT DBMS_METADATA.GET_DDL('TABLE', ?, ?) FROM DUAL")) {
-                    st.setString(1, table.toUpperCase());
-                    st.setString(2, schema.toUpperCase());
+                    st.setString(1, safeTable);
+                    st.setString(2, safeSchema);
                     try (ResultSet rs = st.executeQuery()) {
                         if (rs.next()) {
                             String ddl = rs.getString(1);
@@ -348,10 +358,11 @@ public class CdcSimulatorService {
                     log.warn("DBMS_METADATA.GET_DDL 失败，改用列元数据拼装: {}", e.getMessage());
                 }
             } else {
-                try (java.sql.Statement st = conn.createStatement();
-                     ResultSet rs = st.executeQuery("SHOW CREATE TABLE " + qualifiedName(type, schema, table))) {
+                String qualified = resolveTrustedQualifiedName(conn, type, schema, table);
+                try (PreparedStatement st = conn.prepareStatement("SHOW CREATE TABLE " + qualified);
+                     ResultSet rs = st.executeQuery()) {
                     if (rs.next()) {
-                        String ddl = rs.getString(2); // 第二列为 Create Table 语句
+                        String ddl = rs.getString(2);
                         if (ddl != null && !ddl.trim().isEmpty()) return ddl.trim() + ";\n";
                     }
                 } catch (SQLException e) {
@@ -363,19 +374,19 @@ public class CdcSimulatorService {
             throw new Exception("获取表定义失败：" + e.getMessage());
         }
 
-        // 兜底：用列元数据拼近似 DDL
         return buildApproxDdl(type, schema, table, getColumns(dsId, schema, table));
     }
 
     /** 用列元数据拼一个近似 CREATE TABLE（无默认值/存储子句，仅结构参考）。 */
     private String buildApproxDdl(String type, String schema, String table, List<Map<String, Object>> cols) {
+        String safeQualified = qualifiedName(type, schema, table);
         StringBuilder sb = new StringBuilder();
         sb.append("-- 近似结构（由列元数据生成，非数据库原始 DDL）\n");
-        sb.append("CREATE TABLE ").append(qualifiedName(type, schema, table)).append(" (\n");
+        sb.append("CREATE TABLE ").append(safeQualified).append(" (\n");
         List<String> pks = new ArrayList<>();
         for (int i = 0; i < cols.size(); i++) {
             Map<String, Object> c = cols.get(i);
-            String name = (String) c.get("name");
+            String name = sanitizeIdentifier(String.valueOf(c.get("name")), "column");
             String typeName = String.valueOf(c.get("typeName"));
             int size = c.get("size") != null ? (Integer) c.get("size") : 0;
             boolean nullable = Boolean.TRUE.equals(c.get("nullable"));
@@ -414,40 +425,43 @@ public class CdcSimulatorService {
         if (rows == null || rows.isEmpty()) throw new Exception("更新数据为空");
         if (rows.size() > MAX_BATCH_ROWS) throw new Exception("单次批量操作行数不能超过 " + MAX_BATCH_ROWS);
         if (keyColumns == null || keyColumns.isEmpty()) throw new Exception("未指定主键列，无法更新");
-        for (String k : keyColumns) validateIdentifier(k, "keyColumn");
 
-        // 待更新列 = 第一行所有列 - 键列
-        List<String> allCols = new ArrayList<>(rows.get(0).keySet());
+        List<String> safeKeys = new ArrayList<>();
+        for (String k : keyColumns) {
+            safeKeys.add(sanitizeIdentifier(k, "keyColumn"));
+        }
+
         List<String> setCols = new ArrayList<>();
-        for (String c : allCols) {
-            validateIdentifier(c, "column");
-            if (!keyColumns.contains(c)) setCols.add(c);
+        for (String c : rows.get(0).keySet()) {
+            String safe = sanitizeIdentifier(c, "column");
+            if (!safeKeys.contains(safe)) setCols.add(safe);
         }
         if (setCols.isEmpty()) throw new Exception("没有可更新的非主键列");
 
         DataSourceConfig config = dataSourceService.loadDataSource(dsId);
         String type = dbType(config);
-        String qualified = qualifiedName(type, schema, table);
-
-        StringBuilder sql = new StringBuilder("UPDATE ").append(qualified).append(" SET ");
-        for (int i = 0; i < setCols.size(); i++) {
-            if (i > 0) sql.append(", ");
-            sql.append(quoteIdentifier(type, setCols.get(i))).append(" = ?");
-        }
-        sql.append(" WHERE ");
-        for (int i = 0; i < keyColumns.size(); i++) {
-            if (i > 0) sql.append(" AND ");
-            sql.append(quoteIdentifier(type, keyColumns.get(i))).append(" = ?");
-        }
-
         String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            String qualified = resolveTrustedQualifiedName(conn, type, schema, table);
+
+            StringBuilder sql = new StringBuilder("UPDATE ").append(qualified).append(" SET ");
+            for (int i = 0; i < setCols.size(); i++) {
+                if (i > 0) sql.append(", ");
+                sql.append(quoteIdentifier(type, setCols.get(i))).append(" = ?");
+            }
+            sql.append(" WHERE ");
+            for (int i = 0; i < safeKeys.size(); i++) {
+                if (i > 0) sql.append(" AND ");
+                sql.append(quoteIdentifier(type, safeKeys.get(i))).append(" = ?");
+            }
+
             conn.setAutoCommit(false);
             try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
                 for (Map<String, Object> row : rows) {
                     int idx = 1;
-                    for (String c : setCols) bindValue(stmt, idx++, row.get(c));
-                    for (String k : keyColumns) bindValue(stmt, idx++, row.get(k));
+                    for (String c : setCols) bindValue(stmt, idx++, rowValue(row, c));
+                    for (String k : safeKeys) bindValue(stmt, idx++, rowValue(row, k));
                     stmt.addBatch();
                 }
                 int[] result = stmt.executeBatch();
@@ -475,25 +489,30 @@ public class CdcSimulatorService {
         if (rows == null || rows.isEmpty()) throw new Exception("删除数据为空");
         if (rows.size() > MAX_BATCH_ROWS) throw new Exception("单次批量操作行数不能超过 " + MAX_BATCH_ROWS);
         if (keyColumns == null || keyColumns.isEmpty()) throw new Exception("未指定主键列，无法删除");
-        for (String k : keyColumns) validateIdentifier(k, "keyColumn");
+
+        List<String> safeKeys = new ArrayList<>();
+        for (String k : keyColumns) {
+            safeKeys.add(sanitizeIdentifier(k, "keyColumn"));
+        }
 
         DataSourceConfig config = dataSourceService.loadDataSource(dsId);
         String type = dbType(config);
-        String qualified = qualifiedName(type, schema, table);
-
-        StringBuilder sql = new StringBuilder("DELETE FROM ").append(qualified).append(" WHERE ");
-        for (int i = 0; i < keyColumns.size(); i++) {
-            if (i > 0) sql.append(" AND ");
-            sql.append(quoteIdentifier(type, keyColumns.get(i))).append(" = ?");
-        }
-
         String jdbcUrl = cdcTaskService.buildJdbcUrl(config);
+
         try (Connection conn = DriverManager.getConnection(jdbcUrl, config.getUsername(), config.getPassword())) {
+            String qualified = resolveTrustedQualifiedName(conn, type, schema, table);
+
+            StringBuilder sql = new StringBuilder("DELETE FROM ").append(qualified).append(" WHERE ");
+            for (int i = 0; i < safeKeys.size(); i++) {
+                if (i > 0) sql.append(" AND ");
+                sql.append(quoteIdentifier(type, safeKeys.get(i))).append(" = ?");
+            }
+
             conn.setAutoCommit(false);
             try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
                 for (Map<String, Object> row : rows) {
                     int idx = 1;
-                    for (String k : keyColumns) bindValue(stmt, idx++, row.get(k));
+                    for (String k : safeKeys) bindValue(stmt, idx++, rowValue(row, k));
                     stmt.addBatch();
                 }
                 int[] result = stmt.executeBatch();
@@ -521,39 +540,140 @@ public class CdcSimulatorService {
 
     /** 校验标识符合法性，防止 SQL 注入 */
     private void validateIdentifier(String name, String role) throws Exception {
-        if (name == null || !IDENTIFIER.matcher(name).matches()) {
-            throw new Exception("非法的" + role + "名称: " + name);
+        try {
+            sanitizeIdentifier(name, role);
+        } catch (IllegalArgumentException e) {
+            throw new Exception(e.getMessage());
         }
     }
 
     /**
+     * 将不可信标识符净化为可信字符串。
+     * <p>仅允许 {@link #IDENTIFIER} 白名单；通过 Matcher 捕获组重新构造返回值，
+     * 切断对原始请求参数的污点传播（schema/table 等不可信输入不得原样拼入 SQL）。
+     */
+    private String sanitizeIdentifier(String raw, String role) {
+        if (raw == null) {
+            throw new IllegalArgumentException("非法的" + role + "名称: null");
+        }
+        Matcher m = IDENTIFIER.matcher(raw);
+        if (!m.matches()) {
+            throw new IllegalArgumentException("非法的" + role + "名称: " + raw);
+        }
+        // 仅使用正则匹配到的安全片段构造新 String，不直接返回 raw
+        return new String(m.group().toCharArray());
+    }
+
+    /**
+     * 用不可信的 schema/table 去元数据中解析真实表名，再拼出可信限定名。
+     * <p>请求参数只参与查找，不直接进入 SQL；拼 SQL 的名字来自 {@link DatabaseMetaData#getTables}。
+     */
+    private String resolveTrustedQualifiedName(Connection conn, String type, String schema, String table)
+            throws SQLException {
+        String wantSchema = sanitizeIdentifier(schema, "schema");
+        String wantTable = sanitizeIdentifier(table, "table");
+        if (isOracleLike(type)) {
+            wantSchema = wantSchema.toUpperCase();
+            wantTable = wantTable.toUpperCase();
+        }
+
+        DatabaseMetaData meta = conn.getMetaData();
+        String foundSchema = null;
+        String foundTable = null;
+
+        switch (type) {
+            case "MYSQL":
+            case "OCEANBASE": {
+                try (ResultSet rs = meta.getTables(wantSchema, null, wantTable, new String[]{"TABLE", "VIEW"})) {
+                    if (rs.next()) {
+                        foundSchema = rs.getString("TABLE_CAT");
+                        if (foundSchema == null || foundSchema.isEmpty()) {
+                            foundSchema = rs.getString("TABLE_SCHEM");
+                        }
+                        foundTable = rs.getString("TABLE_NAME");
+                    }
+                }
+                break;
+            }
+            default: {
+                try (ResultSet rs = meta.getTables(null, wantSchema, wantTable, new String[]{"TABLE", "VIEW"})) {
+                    if (rs.next()) {
+                        foundSchema = rs.getString("TABLE_SCHEM");
+                        foundTable = rs.getString("TABLE_NAME");
+                    }
+                }
+                if (foundTable == null) {
+                    try (ResultSet rs = meta.getTables(null, wantSchema, "%", new String[]{"TABLE", "VIEW"})) {
+                        while (rs.next()) {
+                            String tn = rs.getString("TABLE_NAME");
+                            if (tn != null && tn.equalsIgnoreCase(wantTable)) {
+                                foundSchema = rs.getString("TABLE_SCHEM");
+                                foundTable = tn;
+                                break;
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+        }
+
+        if (foundTable == null || foundTable.isEmpty()) {
+            throw new SQLException("表不存在或无权访问: " + wantSchema + "." + wantTable);
+        }
+        if (foundSchema == null || foundSchema.isEmpty()) {
+            foundSchema = wantSchema;
+        }
+        // 元数据名称再经白名单净化后拼入 SQL
+        return quoteIdentifier(type, sanitizeIdentifier(foundSchema, "schema"))
+                + "." + quoteIdentifier(type, sanitizeIdentifier(foundTable, "table"));
+    }
+
+    /** 按净化后的列名取值（兼容请求里大小写不一致的 key）。 */
+    private Object rowValue(Map<String, Object> row, String safeCol) {
+        if (row.containsKey(safeCol)) {
+            return row.get(safeCol);
+        }
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            if (e.getKey() != null && e.getKey().equalsIgnoreCase(safeCol)) {
+                return e.getValue();
+            }
+        }
+        return null;
+    }
+
+    /**
      * 给标识符加引号（Oracle 用双引号，MySQL/OceanBase 用反引号，Postgres 用双引号）。
-     * 所有拼入 SQL 的标识符必须经过本方法，内部强制白名单校验，
-     * 无论标识符来自请求参数还是数据库元数据，均无法注入。
+     * 入参视为可能不可信，先经 {@link #sanitizeIdentifier} 净化再加引号。
      */
     private String quoteIdentifier(String type, String identifier) {
-        if (identifier == null || !IDENTIFIER.matcher(identifier).matches()) {
-            throw new IllegalArgumentException("非法的标识符: " + identifier);
-        }
-        // 白名单已排除引号/反引号等字符，加引号即可安全拼入 SQL
+        String safe = sanitizeIdentifier(identifier, "identifier");
         switch (type) {
             case "MYSQL":
             case "OCEANBASE":
-                return "`" + identifier + "`";
+                return "`" + safe + "`";
             case "ORACLE":
             case "OCEANBASE_ORACLE":
             case "POSTGRES":
             default:
-                return "\"" + identifier + "\"";
+                return "\"" + safe + "\"";
         }
     }
 
-    /** 构造 schema.table 限定名（标识符白名单校验由 quoteIdentifier 强制执行） */
+    /**
+     * 构造 schema.table 限定名。
+     * <p>{@code schema} / {@code table} 均为不可信输入（可来自请求路径），
+     * 必须先经 {@link #sanitizeIdentifier} 净化，再 quote 后返回；调用方得到的
+     * {@code qualified} 不再携带原始污点字符串。
+     */
     private String qualifiedName(String type, String schema, String table) {
-        boolean upper = isOracleLike(type);
-        String s = upper ? schema.toUpperCase() : schema;
-        String t = upper ? table.toUpperCase() : table;
-        return quoteIdentifier(type, s) + "." + quoteIdentifier(type, t);
+        String safeSchema = sanitizeIdentifier(schema, "schema");
+        String safeTable = sanitizeIdentifier(table, "table");
+        if (isOracleLike(type)) {
+            safeSchema = safeSchema.toUpperCase();
+            safeTable = safeTable.toUpperCase();
+        }
+        return quoteIdentifier(type, safeSchema) + "." + quoteIdentifier(type, safeTable);
     }
 
     /**

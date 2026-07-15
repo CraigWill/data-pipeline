@@ -325,6 +325,7 @@ services:
       - FLINK_REST_URLS=http://jobmanager:8081,http://jobmanager-standby:8081
       - OUTPUT_PATH=/app/output/cdc
       - CONFIG_DIR=/app/config
+      - LOG_FILE=/app/out/monitor-backend.log
       # Flink Checkpoint/Savepoint 存储目录（提交作业与触发 savepoint 时使用）
       # 与 Flink 容器保持一致：默认 file://，切换到 OSS 时改为 oss://<bucket>/<prefix>/...
       - FLINK_CHECKPOINT_DIR=${FLINK_CHECKPOINT_DIR:-file:///opt/flink/checkpoints}
@@ -358,6 +359,7 @@ services:
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:8888,http://localhost:3000,https://datapipeline.aimachine-tech.cn,http://machine.s7.tunnelfrp.com,https://machine.s7.tunnelfrp.com}
     volumes:
       - ./output:/app/output
+      - ./out:/app/out
       - ./monitor/config:/app/config
       - ./flink-jobs/target:/opt/flink/usrlib:ro
     networks:

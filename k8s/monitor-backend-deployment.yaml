@@ -87,6 +87,8 @@ spec:
           value: "oss://$(OSS_BUCKET_NAME)/$(OSS_PREFIX)flink/savepoints"
         - name: CONFIG_DIR
           value: "/app/config"
+        - name: LOG_FILE
+          value: "/app/out/monitor-backend.log"
         # ── CDC 管理库配置（OceanBase，MySQL 兼容协议，存储元数据表）──
         - name: CDC_ADMIN_TYPE
           valueFrom:
@@ -153,9 +155,13 @@ spec:
         volumeMounts:
         - name: config
           mountPath: /app/config
+        - name: out
+          mountPath: /app/out
       volumes:
       # 输出改为 OSS，不再挂载 flink-output-pvc
       - name: config
+        emptyDir: {}
+      - name: out
         emptyDir: {}
 ---
 apiVersion: v1

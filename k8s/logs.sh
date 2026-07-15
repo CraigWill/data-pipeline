@@ -6,10 +6,13 @@
 # 用法:
 #   ./logs.sh list                      # 列出所有 Pod 及状态
 #   ./logs.sh <组件> [选项]             # 查看某组件日志
-#   ./logs.sh backend                   # monitor-backend 日志（最近200行）
+#   ./logs.sh backend                   # monitor-backend 日志（最近200行，kubectl stdout）
 #   ./logs.sh backend -f                # 跟随（实时）
 #   ./logs.sh backend -p                # 上次崩溃前的日志（--previous）
 #   ./logs.sh backend -n 500            # 最近 500 行
+#   ./logs.sh backend-file              # 容器内 /app/out/monitor-backend.log
+#   ./logs.sh backend-file -f           # 跟随文件日志
+#   ./logs.sh backend-file -n 500
 #   ./logs.sh jobmanager -f             # Flink JobManager 实时日志
 #   ./logs.sh taskmanager               # 所有 TaskManager 聚合日志
 #   ./logs.sh pod <pod名> [选项]        # 按 Pod 名精确查看
@@ -128,8 +131,47 @@ dump_logs() {
             kubectl logs -n "$NAMESPACE" "$pod" --all-containers=true --previous > "${outdir}/${pod}.previous.log" 2>&1 || true
             echo -e "  ${GREEN}✓${NC} ${outdir}/${pod}.previous.log (崩溃前)"
         fi
+        if [[ "$pod" == *monitor-backend* ]]; then
+            kubectl exec -n "$NAMESPACE" "$pod" -- sh -c \
+                'test -f /app/out/monitor-backend.log && cat /app/out/monitor-backend.log' \
+                > "${outdir}/${pod}.file.log" 2>/dev/null \
+                && echo -e "  ${GREEN}✓${NC} ${outdir}/${pod}.file.log (/app/out)" || true
+        fi
     done
     echo -e "${GREEN}导出完成${NC}"
+}
+
+# 读取容器内 /app/out/monitor-backend.log
+logs_backend_file() {
+    local follow=false
+    local lines=200
+    shift  # 去掉 backend-file
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--follow) follow=true; shift ;;
+            -n|--tail)   lines="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+
+    local pod
+    pod=$(kubectl get pods -n "$NAMESPACE" -l app=monitor-backend \
+        --field-selector=status.phase=Running \
+        -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    if [ -z "$pod" ]; then
+        echo -e "${YELLOW}未找到 Running 的 monitor-backend Pod${NC}"
+        list_pods
+        exit 1
+    fi
+
+    local logfile="/app/out/monitor-backend.log"
+    echo -e "${BLUE}>>> ${pod}:${logfile}${NC}"
+    if [ "$follow" = true ]; then
+        kubectl exec -n "$NAMESPACE" "$pod" -- sh -c "tail -n ${lines} -F ${logfile}"
+    else
+        kubectl exec -n "$NAMESPACE" "$pod" -- sh -c \
+            "tail -n ${lines} ${logfile} 2>/dev/null || echo '(文件尚不存在，请确认已重建 backend 镜像并滚动重启)'"
+    fi
 }
 
 # 节点日志：KIND/Docker Desktop 节点是容器，通过 docker exec 读 kubelet/containerd 日志
@@ -162,6 +204,7 @@ case "${1:-}" in
         echo "  pod <名称> [选项]   按 Pod 名查看日志"
         echo "  dump [目录]         导出所有 Pod 日志（默认 ./pod-logs）"
         echo "  node                查看节点 kubelet 日志"
+        echo "  backend-file [选项] 容器文件日志 /app/out/monitor-backend.log"
         echo ""
         echo "组件 (可直接作为命令):"
         echo "  jobmanager(jm) | taskmanager(tm) | backend(be) | frontend(fe)"
@@ -172,7 +215,8 @@ case "${1:-}" in
         echo "  -n <行数>   显示最近 N 行（默认 200）"
         echo ""
         echo "示例:"
-        echo "  $0 backend -f          # 实时跟随后端日志"
+        echo "  $0 backend -f          # 实时跟随后端 stdout"
+        echo "  $0 backend-file -f     # 跟随 /app/out 文件日志"
         echo "  $0 jobmanager -n 500   # JobManager 最近 500 行"
         echo "  $0 taskmanager -p      # TaskManager 崩溃前日志"
         exit 0 ;;
@@ -180,5 +224,6 @@ case "${1:-}" in
     pod)   shift; logs_by_pod "$@" ;;
     dump)  dump_logs "$2" ;;
     node)  node_logs ;;
+    backend-file|be-file) logs_backend_file "$@" ;;
     *)     logs_by_component "$@" ;;
 esac

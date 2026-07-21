@@ -145,6 +145,44 @@ fs.oss.endpoint: ${OSS_FS_ENDPOINT}
 fs.oss.accessKeyId: ${OSS_ACCESS_KEY_ID}
 fs.oss.accessKeySecret: ${OSS_ACCESS_KEY_SECRET}
 EOF
+
+    # Java 11+ 无内置 JAXB；flink-oss-fs-hadoop 的阿里云 SDK 需要 javax.xml.bind。
+    # 须与插件同目录（隔离 ClassLoader）。镜像构建时可能已带上；此处按需 curl 补齐，便于旧镜像热修。
+    OSS_PLUGIN_DIR="/opt/flink/plugins/oss-fs-hadoop"
+    mkdir -p "$OSS_PLUGIN_DIR"
+    if [ -d /opt/flink/opt ] && ! ls "$OSS_PLUGIN_DIR"/flink-oss-fs-hadoop-*.jar >/dev/null 2>&1; then
+        cp /opt/flink/opt/flink-oss-fs-hadoop-*.jar "$OSS_PLUGIN_DIR/" 2>/dev/null || true
+    fi
+    MAVEN_CENTRAL="https://repo1.maven.org/maven2"
+    MAVEN_ALIYUN="https://maven.aliyun.com/repository/public"
+    download_oss_plugin_jar() {
+        local name="$1"
+        local path="$2"
+        local dest="${OSS_PLUGIN_DIR}/${name}"
+        if [ -s "$dest" ]; then
+            return 0
+        fi
+        echo "  Downloading ${name} -> ${dest}"
+        if curl -fsSL -o "$dest" "${MAVEN_CENTRAL}/${path}"; then
+            return 0
+        fi
+        echo "  Central failed, retry Aliyun mirror for ${name}"
+        if curl -fsSL -o "$dest" "${MAVEN_ALIYUN}/${path}"; then
+            return 0
+        fi
+        echo "WARNING: failed to download ${name} (OSS JAXB may still be missing)"
+        rm -f "$dest"
+        return 1
+    }
+    download_oss_plugin_jar "jaxb-api-2.3.1.jar" \
+        "javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar" || true
+    download_oss_plugin_jar "jaxb-impl-2.3.1.jar" \
+        "com/sun/xml/bind/jaxb-impl/2.3.1/jaxb-impl-2.3.1.jar" || true
+    download_oss_plugin_jar "jaxb-core-2.3.0.1.jar" \
+        "com/sun/xml/bind/jaxb-core/2.3.0.1/jaxb-core-2.3.0.1.jar" || true
+    download_oss_plugin_jar "activation-1.1.1.jar" \
+        "javax/activation/activation/1.1.1/activation-1.1.1.jar" || true
+    echo "  OSS plugin jars: $(ls -1 "$OSS_PLUGIN_DIR" 2>/dev/null | tr '\n' ' ')"
 fi
 
 # 如果存在原始配置文件，合并配置

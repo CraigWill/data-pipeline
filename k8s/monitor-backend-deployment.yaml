@@ -145,6 +145,11 @@ spec:
         # CORS 配置
         - name: ALLOWED_ORIGINS
           value: "http://monitor-frontend:80,http://localhost:3000,http://localhost:8888,https://datapipeline.aimachine-tech.cn"
+        # CDC 位点保护：禁止默认跳到 latest（会丢数）；紧急丢数恢复才设 true
+        - name: CDC_ALLOW_OFFSET_SKIP
+          value: "false"
+        - name: CDC_STALL_WARN_MINUTES
+          value: "30"
         resources:
           requests:
             memory: "512Mi"

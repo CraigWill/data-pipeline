@@ -56,9 +56,22 @@ RUN mkdir -p /opt/flink/checkpoints && \
     chown -R ${FLINK_USER}:${FLINK_USER} /opt/flink
 
 # 启用 OSS 文件系统插件（用于将 checkpoint/savepoint 直接写入阿里云 OSS）
-# flink-oss-fs-hadoop 已随 Flink 发行版内置于 /opt/flink/opt/，只需拷贝到 plugins 目录即可加载
-RUN mkdir -p /opt/flink/plugins/oss-fs-hadoop && \
+# flink-oss-fs-hadoop 已随 Flink 发行版内置于 /opt/flink/opt/，只需拷贝到 plugins 目录即可加载。
+# Java 11+ 不再内置 JAXB；OSS SDK 需要 javax.xml.bind，须与插件同目录（隔离 ClassLoader）。
+RUN set -ex && \
+    ALIYUN="https://maven.aliyun.com/repository/public" && \
+    CENTRAL="https://repo1.maven.org/maven2" && \
+    mkdir -p /opt/flink/plugins/oss-fs-hadoop && \
     cp /opt/flink/opt/flink-oss-fs-hadoop-*.jar /opt/flink/plugins/oss-fs-hadoop/ && \
+    for jar in \
+        "javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar" \
+        "com/sun/xml/bind/jaxb-impl/2.3.1/jaxb-impl-2.3.1.jar" \
+        "com/sun/xml/bind/jaxb-core/2.3.0.1/jaxb-core-2.3.0.1.jar" \
+        "javax/activation/activation/1.1.1/activation-1.1.1.jar"; do \
+      name="$(basename "$jar")" && \
+      curl -fSL "${ALIYUN}/${jar}" -o "/opt/flink/plugins/oss-fs-hadoop/${name}" || \
+      curl -fSL "${CENTRAL}/${jar}" -o "/opt/flink/plugins/oss-fs-hadoop/${name}"; \
+    done && \
     chown -R ${FLINK_USER}:${FLINK_USER} /opt/flink/plugins/oss-fs-hadoop
 
 # 下载 JDBC 驱动（使用阿里云 Maven 镜像加速，回退到 Maven Central）

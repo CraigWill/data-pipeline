@@ -27,7 +27,7 @@
 | `--pollWatermarkColumn` | 水位列，**建议唯一且单调递增**（自增主键最稳） | `ID` |
 | `--pollWatermarkType` | `numeric`（数值列）或 `timestamp`（时间戳列） | `numeric` |
 | `--pollIntervalMs` | 轮询间隔（毫秒） | `5000` |
-| `--pollStartValue` | 起点：数值起点，或时间戳的起始 epoch 毫秒。空则数值从 `0`、时间戳从当前时间 | 空 |
+| `--pollStartValue` | 起点：数值起点，或时间戳的起始 epoch 毫秒。空则 **numeric 从 `0`（会回填存量）**、**timestamp 从当前时间（只采之后）** | 空 |
 | `--pollOp` | CSV 中的操作标签（`c`/`u`） | `c` |
 | `--pollMaxBatch` | 单批最大行数 | `5000` |
 

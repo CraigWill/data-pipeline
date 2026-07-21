@@ -44,6 +44,19 @@ fi
 sed -i 's/"auth_user"[[:space:]]*:[[:space:]]*true/"auth_user": false/' ./conf/conf.json
 echo "auth_user set to false (required for Oracle-mode tenant CDC)"
 
+# 拉长 LogProxy 本地 reader/日志保留，降低短暂故障后 reader 状态过早 GC
+# （OceanBase 侧仍须 ARCHIVELOG + recovery_window，见 sql/ensure-oceanbase-cdc-log-retention.sql）
+if grep -q '"log_retention_h"' ./conf/conf.json; then
+    sed -i 's/"log_retention_h"[[:space:]]*:[[:space:]]*[0-9]*/"log_retention_h": 720/' ./conf/conf.json
+fi
+if grep -q '"oblogreader_path_retain_hour"' ./conf/conf.json; then
+    sed -i 's/"oblogreader_path_retain_hour"[[:space:]]*:[[:space:]]*[0-9]*/"oblogreader_path_retain_hour": 720/' ./conf/conf.json
+fi
+if grep -q '"log_quota_day"' ./conf/conf.json; then
+    sed -i 's/"log_quota_day"[[:space:]]*:[[:space:]]*[0-9]*/"log_quota_day": 30/' ./conf/conf.json
+fi
+echo "log retention tuned (log_retention_h/oblogreader_path_retain_hour=720h, log_quota_day=30)"
+
 # 创建运行目录
 mkdir -p ./run ./log
 

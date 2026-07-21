@@ -18,6 +18,20 @@
 未开启归档时，CDC 作业常见报错为日志位点不可达 / 拉取历史日志失败，表现与 Oracle 的
 `ORA-01325: archive log mode must be enabled` 类似。
 
+### 典型故障：插表后 CDC 无变化 / `resolvedTimestamp` 卡住
+
+故障恢复（删 TM、自愈重提）后作业仍 **RUNNING**、checkpoint 正常，但 Source
+`write-records` 与 `resolvedTimestamp` 长时间不变——常见原因是 **checkpoint 位点已超出
+在线 clog 保留窗口，且归档未覆盖该位点**。
+
+错误「修复」：用当前时间（latest）重提作业 → **中间变更永久丢失**。
+
+正确做法：
+
+1. 执行 [`sql/ensure-oceanbase-cdc-log-retention.sql`](sql/ensure-oceanbase-cdc-log-retention.sql)，保证 `ARCHIVELOG` + `recovery_window≥7d`
+2. monitor-backend 默认 `CDC_ALLOW_OFFSET_SKIP=false`，不会自动跳位点
+3. Source 停滞超过 `CDC_STALL_WARN_MINUTES`（默认 30）会打 ERROR 告警；应从 **savepoint/checkpoint** 恢复，而不是 latest
+
 ---
 
 ## 2. 前置条件

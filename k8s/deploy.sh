@@ -415,34 +415,10 @@ echo ""
 # Docker Desktop / Kind 下有时不通）
 # ==========================================
 echo -e "${BLUE}>>> 启动端口映射...${NC}"
-
-# 杀掉旧的 port-forward 进程
-pkill -f "kubectl port-forward.*flink" 2>/dev/null || true
-sleep 1
-
-# 后台启动三个 port-forward，日志写到 /tmp
-kubectl port-forward -n flink --address 0.0.0.0 svc/monitor-frontend    8888:80   > /tmp/pf-frontend.log 2>&1 &
-kubectl port-forward -n flink --address 0.0.0.0 svc/monitor-backend     5001:5001 > /tmp/pf-backend.log  2>&1 &
-kubectl port-forward -n flink --address 0.0.0.0 svc/flink-jobmanager-rest 8081:8081 > /tmp/pf-flink.log 2>&1 &
-
-sleep 2
-
-# 验证是否成功
-PF_OK=true
-for port in 8888 5001 8081; do
-    if ! lsof -iTCP:${port} -sTCP:LISTEN -t &>/dev/null; then
-        echo -e "  ${YELLOW}⚠ 端口 ${port} 未监听，请检查 /tmp/pf-*.log${NC}"
-        PF_OK=false
-    fi
-done
-
-if [ "$PF_OK" = true ]; then
-    echo -e "${GREEN}✓ 端口映射已就绪${NC}"
-    echo ""
-    echo "  前端:     http://localhost:8888"
-    echo "  后端 API: http://localhost:5001"
-    echo "  Flink UI: http://localhost:8081"
+if [ -x "$SCRIPT_DIR/port-forward.sh" ]; then
+    "$SCRIPT_DIR/port-forward.sh" start || true
 else
+    echo -e "${YELLOW}⚠ 缺少 port-forward.sh，跳过自动映射${NC}"
     echo -e "${YELLOW}  NodePort 直连: Frontend=30888  Backend=30501  Flink=30081${NC}"
 fi
 echo ""

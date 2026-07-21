@@ -54,9 +54,22 @@ RUN set -ex && \
     rm -rf "${TARBALL}" flink-${FLINK_VERSION} /tmp/flink-cache
 
 # 启用 OSS 文件系统插件（checkpoint/savepoint/CSV 直写阿里云 OSS 所需）
-# Flink 发行版已在 opt/ 目录内置该插件 jar，只需拷贝到 plugins/ 下即可加载
+# Flink 发行版已在 opt/ 目录内置该插件 jar，只需拷贝到 plugins/ 下即可加载。
+# Java 11+ 不再内置 JAXB；flink-oss-fs-hadoop → 阿里云 OSS SDK 需要 javax.xml.bind，
+# 必须与插件放同一目录（插件隔离 ClassLoader，lib/ 下的 jar 读不到）。
 RUN mkdir -p /opt/flink/plugins/oss-fs-hadoop && \
-    cp /opt/flink/opt/flink-oss-fs-hadoop-*.jar /opt/flink/plugins/oss-fs-hadoop/
+    cp /opt/flink/opt/flink-oss-fs-hadoop-*.jar /opt/flink/plugins/oss-fs-hadoop/ && \
+    set -ex && \
+    for i in 1 2 3; do \
+        curl -fSL https://repo1.maven.org/maven2/javax/xml/bind/jaxb-api/2.3.1/jaxb-api-2.3.1.jar \
+            -o /opt/flink/plugins/oss-fs-hadoop/jaxb-api-2.3.1.jar && \
+        curl -fSL https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-impl/2.3.1/jaxb-impl-2.3.1.jar \
+            -o /opt/flink/plugins/oss-fs-hadoop/jaxb-impl-2.3.1.jar && \
+        curl -fSL https://repo1.maven.org/maven2/com/sun/xml/bind/jaxb-core/2.3.0.1/jaxb-core-2.3.0.1.jar \
+            -o /opt/flink/plugins/oss-fs-hadoop/jaxb-core-2.3.0.1.jar && \
+        curl -fSL https://repo1.maven.org/maven2/javax/activation/activation/1.1.1/activation-1.1.1.jar \
+            -o /opt/flink/plugins/oss-fs-hadoop/activation-1.1.1.jar && break || sleep 10; \
+    done
 
 # 创建必要的目录
 RUN mkdir -p /opt/flink/checkpoints && \

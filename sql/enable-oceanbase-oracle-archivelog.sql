@@ -70,8 +70,8 @@ ALTER SYSTEM SET enable_rich_error_msg = true;
 -- 查看归档日志清理策略
 -- SELECT * FROM oceanbase.CDB_OB_BACKUP_DELETE_POLICY;
 
--- 设置归档保留时间（7天）
--- ALTER SYSTEM SET backup_dest_option = 'log_archive_piece_switch_interval=1d,recovery_window=7d' TENANT = oratenant;
+-- 设置归档保留时间（7天）—— CDC HA 恢复不丢数的关键配置
+ALTER SYSTEM SET backup_dest_option = 'log_archive_piece_switch_interval=1d,recovery_window=7d' TENANT = oratenant;
 
--- 手动清理过期归档
+-- 手动清理过期归档（慎用；保留窗口内不要清理）
 -- ALTER SYSTEM DELETE BACKUPPIECE ALL TENANT = oratenant;

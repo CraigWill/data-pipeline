@@ -34,8 +34,36 @@ public class RuntimeJobService {
 
     /** 作业连续 RESTARTING 计数器（自愈用） */
     private final java.util.concurrent.ConcurrentHashMap<String, Integer> restartCounter = new java.util.concurrent.ConcurrentHashMap<>();
-    /** 连续重启达到此阈值触发自愈（每次同步约 30s，6 次约 3 分钟） */
+    /** 连续重启达到此阈值触发自愈策略（每次同步约 30s，6 次约 3 分钟） */
     private static final int RESTART_THRESHOLD = 6;
+
+    /**
+     * Source 写入停滞检测：RUNNING 且 write-records 长时间不变，通常表示
+     * LogProxy/clog 位点卡住（而非作业崩溃）。只告警，默认不跳位点（避免丢数）。
+     */
+    private final java.util.concurrent.ConcurrentHashMap<String, SourceStallState> sourceStallTracker =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static final class SourceStallState {
+        long lastWriteRecords = -1;
+        long lastChangeAtMs = System.currentTimeMillis();
+        long lastWarnAtMs = 0;
+    }
+
+    /** 允许跳过过期位点用「当前时间」重提（会丢中间变更）。默认 false。 */
+    private static boolean allowOffsetSkip() {
+        String v = System.getenv("CDC_ALLOW_OFFSET_SKIP");
+        return v != null && ("true".equalsIgnoreCase(v) || "1".equals(v) || "yes".equalsIgnoreCase(v));
+    }
+
+    /** Source 停滞告警阈值（分钟），可用环境变量覆盖 */
+    private static long stallWarnMinutes() {
+        try {
+            String v = System.getenv("CDC_STALL_WARN_MINUTES");
+            if (v != null && !v.isBlank()) return Long.parseLong(v.trim());
+        } catch (NumberFormatException ignore) { }
+        return 30L;
+    }
 
     public RuntimeJobService(RuntimeJobRepository runtimeJobRepository, 
                             FlinkService flinkService,
@@ -327,18 +355,30 @@ public class RuntimeJobService {
                     runtimeJobRepository.updateStatus(job.getId(), newStatus, null);
                 }
 
-                // 自愈：检测作业是否卡在 RESTARTING（OceanBase CDC 位点过期会导致反复重启）
+                // 位点过期反复重启：默认只告警，保留 savepoint；仅当显式允许时才跳位点（会丢数）
                 if ("RESTARTING".equalsIgnoreCase(flinkState) || "FAILING".equalsIgnoreCase(flinkState)) {
                     int count = restartCounter.merge(job.getId(), 1, Integer::sum);
                     log.warn("作业 {} 处于 {} 状态，连续计数: {}/{}", job.getId(), flinkState, count, RESTART_THRESHOLD);
                     if (count >= RESTART_THRESHOLD) {
-                        log.warn("作业 {} 持续重启超过阈值，触发自愈：取消并用全新位点重提（丢弃过期 savepoint）", job.getId());
-                        autoHealStuckJob(job);
+                        if (allowOffsetSkip()) {
+                            log.warn("作业 {} 持续重启且 CDC_ALLOW_OFFSET_SKIP=true，执行跳位点自愈（会丢失中间变更）", job.getId());
+                            autoHealStuckJob(job, true);
+                        } else {
+                            log.error("作业 {} 持续重启（疑似 clog/归档位点过期）。"
+                                            + "为避免丢数，默认不跳位点。请先保证 OceanBase ARCHIVELOG 且归档保留窗口覆盖位点，"
+                                            + "再从 savepoint/checkpoint 恢复。紧急跳位点需设置 CDC_ALLOW_OFFSET_SKIP=true。"
+                                            + " lastSavepoint={}",
+                                    job.getId(), job.getLastSavepointPath());
+                            runtimeJobRepository.updateStatus(job.getId(), "FAILED",
+                                    "CDC位点可能过期(clog/归档不足)；已保留savepoint，未跳位点。参见 ensure-oceanbase-cdc-log-retention.sql");
+                        }
                         restartCounter.remove(job.getId());
                     }
                 } else {
-                    // 状态恢复正常，清除计数
                     restartCounter.remove(job.getId());
+                    if ("RUNNING".equalsIgnoreCase(flinkState)) {
+                        checkSourceStall(job, flinkJob);
+                    }
                 }
             }
         } catch (Exception e) {
@@ -504,21 +544,64 @@ public class RuntimeJobService {
     }
 
     /**
-     * 自愈卡死的作业：取消当前 Flink 作业，清除过期 savepoint，用全新位点重新提交。
-     *
-     * <p>适用场景：OceanBase CDC 从过期 savepoint 恢复时，因 clog 已被回收
-     * 导致 {@code OB_ERR_OUT_OF_LOWER_BOUND (-4233)} 反复重启。
-     * 此时丢弃 savepoint、用当前时间戳作为起始位点是唯一可行的恢复方式。
+     * 检测 RUNNING 作业 Source 是否长时间无新记录（clog 过期后的静默卡住形态）。
+     * 只告警，不自动跳位点。
      */
-    private void autoHealStuckJob(RuntimeJob job) {
+    @SuppressWarnings("unchecked")
+    private void checkSourceStall(RuntimeJob job, Map<String, Object> flinkJob) {
+        long writeRecords = -1;
+        Object verticesObj = flinkJob.get("vertices");
+        if (verticesObj instanceof List<?> vertices) {
+            for (Object item : vertices) {
+                if (!(item instanceof Map)) continue;
+                Map<String, Object> v = (Map<String, Object>) item;
+                String name = String.valueOf(v.get("name"));
+                if (name == null || !name.contains("Source")) continue;
+                Object metricsObj = v.get("metrics");
+                if (!(metricsObj instanceof Map)) continue;
+                Object wr = ((Map<?, ?>) metricsObj).get("write-records");
+                if (wr instanceof Number) {
+                    writeRecords = ((Number) wr).longValue();
+                    break;
+                }
+            }
+        }
+        if (writeRecords < 0) return;
+
+        long now = System.currentTimeMillis();
+        SourceStallState st = sourceStallTracker.computeIfAbsent(job.getId(), k -> new SourceStallState());
+        if (st.lastWriteRecords != writeRecords) {
+            st.lastWriteRecords = writeRecords;
+            st.lastChangeAtMs = now;
+            return;
+        }
+        long stalledMin = (now - st.lastChangeAtMs) / 60_000L;
+        long warnEveryMin = Math.max(10L, stallWarnMinutes());
+        if (stalledMin >= stallWarnMinutes() && (now - st.lastWarnAtMs) >= warnEveryMin * 60_000L) {
+            st.lastWarnAtMs = now;
+            log.error("CDC Source 疑似停滞: job={} flinkJobId={} source_write_records={} 已 {} 分钟无增长。"
+                            + "请检查 OceanBase ARCHIVELOG/归档保留与 LogProxy；"
+                            + "切勿用 latest 重提（会丢数）。保留 savepoint={}。"
+                            + "参见 sql/ensure-oceanbase-cdc-log-retention.sql",
+                    job.getId(), job.getFlinkJobId(), writeRecords, stalledMin, job.getLastSavepointPath());
+        }
+    }
+
+    /**
+     * 自愈卡死的作业。
+     *
+     * <p>{@code skipOffset=true} 时会清除 savepoint，用当前时间作 CDC 起始位点（会丢失中间变更），
+     * 仅应在归档无法覆盖位点且运维明确接受丢数时使用（{@code CDC_ALLOW_OFFSET_SKIP=true}）。
+     *
+     * <p>{@code skipOffset=false} 时：取消后仍尝试从已有 savepoint 恢复（依赖归档可读）。
+     */
+    private void autoHealStuckJob(RuntimeJob job, boolean skipOffset) {
         try {
-            // 0. 多副本并发防护：原子认领，只有一个实例执行自愈重提，避免重复提交。
             if (!runtimeJobRepository.tryClaimForResubmit(job.getId())) {
                 log.info("作业 {} 已被其他实例认领自愈，本实例跳过", job.getId());
                 return;
             }
 
-            // 1. 取消当前卡死的 Flink 作业
             if (job.getFlinkJobId() != null && !job.getFlinkJobId().isEmpty()) {
                 try {
                     flinkService.cancelJob(job.getFlinkJobId());
@@ -528,21 +611,27 @@ public class RuntimeJobService {
                 }
             }
 
-            // 2. 清除数据库中的过期 savepoint 记录，避免下次又从它恢复
-            runtimeJobRepository.clearSavepoint(job.getId());
+            if (skipOffset) {
+                runtimeJobRepository.clearSavepoint(job.getId());
+                log.warn("自愈：已清除 savepoint（跳位点模式，可能丢数）job={}", job.getId());
+            }
 
-            Thread.sleep(3000); // 等待 slot 释放
+            Thread.sleep(3000);
 
-            // 3. 加载任务配置，不带 savepoint 全新提交（使用当前时间作为 CDC 起始位点）
             TaskConfig taskConfig = cdcTaskService.loadTaskConfig(job.getTaskId());
-            taskConfig.setSavepointPath(null);
-            Map<String, Object> result = embeddedCdcService.submitTask(taskConfig);
+            if (skipOffset) {
+                taskConfig.setSavepointPath(null);
+            } else if (job.getLastSavepointPath() != null && !job.getLastSavepointPath().isEmpty()) {
+                taskConfig.setSavepointPath(job.getLastSavepointPath());
+                log.info("自愈：从 savepoint 恢复（不跳位点）: {}", job.getLastSavepointPath());
+            }
 
+            Map<String, Object> result = embeddedCdcService.submitTask(taskConfig);
             if (result.get("success") == Boolean.TRUE && result.containsKey("job_id")) {
                 String newFlinkJobId = (String) result.get("job_id");
                 runtimeJobRepository.updateFlinkJobId(job.getId(), newFlinkJobId);
                 runtimeJobRepository.updateStatus(job.getId(), "RUNNING", null);
-                log.info("自愈成功：作业 {} 已用全新位点重提，新 FlinkJobId={}", job.getId(), newFlinkJobId);
+                log.info("自愈完成：作业 {} 新 FlinkJobId={} skipOffset={}", job.getId(), newFlinkJobId, skipOffset);
             } else {
                 String error = result.containsKey("error") ? (String) result.get("error") : "未知错误";
                 log.error("自愈失败：作业 {} 重提失败: {}", job.getId(), error);

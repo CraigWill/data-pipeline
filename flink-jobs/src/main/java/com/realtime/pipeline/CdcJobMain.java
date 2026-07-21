@@ -103,7 +103,8 @@ public class CdcJobMain {
                 jdbcDriverClass = "com.mysql.cj.jdbc.Driver";
                 break;
             case "OCEANBASE_ORACLE":
-                jdbcDriverClass = "com.alipay.oceanbase.jdbc.Driver";
+                // 与镜像 /opt/flink/lib/oceanbase-client.jar、CDC connector 一致
+                jdbcDriverClass = "com.oceanbase.jdbc.Driver";
                 break;
             default: // ORACLE
                 jdbcDriverClass = "oracle.jdbc.OracleDriver";
@@ -281,7 +282,10 @@ public class CdcJobMain {
                         .reduce((a, b) -> a + "|" + b)
                         .orElse(".*");
 
-                // OceanBase CDC 要求 start_timestamp 不能为 0，使用当前时间戳（秒）
+                // OceanBase CDC 要求 start_timestamp 不能为 0。
+                // 仅「全新提交」使用当前时间；从 checkpoint/savepoint 恢复时由 Flink 状态覆盖，不会走该值。
+                // 切勿在位点过期时清 savepoint 后重提（等于 latest，会丢中间变更）——
+                // 应保证 ARCHIVELOG + 归档保留窗口，见 sql/ensure-oceanbase-cdc-log-retention.sql
                 long startTimestampSec = System.currentTimeMillis() / 1000L;
                 LOG.info("  OceanBase CDC startTimestamp: {} (current time)", startTimestampSec);
 

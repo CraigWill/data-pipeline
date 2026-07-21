@@ -230,8 +230,8 @@
             <div class="form-row">
               <div class="form-group">
                 <label>起始水位值 <span class="label-hint">可空</span></label>
-                <input v-model="taskConfig.pollStartValue" type="text" placeholder="空 = 从当前开始">
-                <small class="field-tip">空 = 从当前开始（只采新增变更）；填数值/时间则从该位点开始。</small>
+                <input v-model="taskConfig.pollStartValue" type="text" placeholder="numeric空=0；timestamp空=现在">
+                <small class="field-tip">numeric 空=从 0 回填；timestamp 空=从「现在」只采之后的行。只采新增数值主键时请填当前最大 ID。</small>
               </div>
             </div>
           </div>

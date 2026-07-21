@@ -77,3 +77,4 @@ aliyunk8s
 
 # K8s secrets（含真实密钥，勿提交；参考 flink-secrets.yaml.example）
 k8s/flink-secrets.yaml
+META-INF/services/

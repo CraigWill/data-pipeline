@@ -83,6 +83,10 @@ spec:
         # CORS 配置
         - name: ALLOWED_ORIGINS
           value: "http://monitor-frontend,http://localhost:3000,http://localhost:8888,https://datapipeline.aimachine-tech.cn"
+        - name: CDC_ALLOW_OFFSET_SKIP
+          value: "false"
+        - name: CDC_STALL_WARN_MINUTES
+          value: "30"
         # Oracle 容器配置（用于主机名解析）
         - name: ORACLE_CONTAINER
           value: ""

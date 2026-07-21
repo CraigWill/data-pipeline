@@ -135,7 +135,7 @@ public class PollingCdcSource implements SourceFunction<String>, CheckpointedFun
                         more = (fetched >= maxBatch);
                     }
                 } catch (Exception e) {
-                    LOG.error("[polling] 表 {} 轮询失败（下轮重试）: {}", table, e.getMessage());
+                    LOG.error("[polling] 表 {} 轮询失败（下轮重试）: {}", table, e.toString(), e);
                     // 连接可能失效，重建
                     reconnectQuietly();
                 }
@@ -194,11 +194,13 @@ public class PollingCdcSource implements SourceFunction<String>, CheckpointedFun
     }
 
     private String readWatermark(ResultSet rs) throws Exception {
+        // Oracle/OB Oracle 结果集列名多为大写；配置里可能是混合大小写
+        String col = oracleMode ? watermarkColumn.toUpperCase() : watermarkColumn;
         if ("timestamp".equals(watermarkType)) {
-            Timestamp ts = rs.getTimestamp(watermarkColumn);
+            Timestamp ts = rs.getTimestamp(col);
             return ts != null ? String.valueOf(ts.getTime()) : null;
         } else {
-            BigDecimal v = rs.getBigDecimal(watermarkColumn);
+            BigDecimal v = rs.getBigDecimal(col);
             return v != null ? v.toPlainString() : null;
         }
     }

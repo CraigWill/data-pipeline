@@ -118,7 +118,9 @@
             <artifactId>aliyun-sdk-oss</artifactId>
             <version>3.17.4</version>
         </dependency>
-        <!-- Java 11+ 已移除 JAXB；aliyun-sdk-oss 仍依赖 javax.xml.bind -->
+        <!-- Java 11+ 无内置 JAXB；aliyun-sdk-oss 仍依赖 javax.xml.bind（2.x）。
+             Spring Boot 3 BOM 将 com.sun.xml.bind:jaxb-impl 管到 4.x（Jakarta），
+             此处在下方 dependencyManagement 锁定 2.3.1，勿改用 BOM 的 4.0.6。 -->
         <dependency>
             <groupId>javax.xml.bind</groupId>
             <artifactId>jaxb-api</artifactId>
@@ -127,7 +129,6 @@
         <dependency>
             <groupId>com.sun.xml.bind</groupId>
             <artifactId>jaxb-impl</artifactId>
-            <version>2.3.1</version>
             <scope>runtime</scope>
         </dependency>
         <dependency>
@@ -158,6 +159,17 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
+
+    <!-- 覆盖 Spring Boot BOM 对 jaxb-impl 的 4.x 管理，保持 javax 2.3.x 供阿里云 OSS SDK -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>com.sun.xml.bind</groupId>
+                <artifactId>jaxb-impl</artifactId>
+                <version>2.3.1</version>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
 
     <build>
         <plugins>

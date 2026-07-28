@@ -14,8 +14,14 @@ LOCAL_JAR="$SCRIPT_DIR/target/flink-oss-probe.jar"
 REMOTE_JAR="/opt/flink/usrlib/${JAR_NAME}"
 ACTION="${1:-build}"
 
-echo ">>> mvn package ($SCRIPT_DIR)"
-mvn -f "$SCRIPT_DIR/pom.xml" -q -DskipTests package
+echo ">>> mvn package (module flink-oss)"
+# 优先走父工程 reactor；也可单独 -f flink-oss/pom.xml
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+if [ -f "$ROOT/pom.xml" ]; then
+  mvn -f "$ROOT/pom.xml" -pl flink-oss -am -q -DskipTests package
+else
+  mvn -f "$SCRIPT_DIR/pom.xml" -q -DskipTests package
+fi
 ls -lh "$LOCAL_JAR"
 
 if [ "$ACTION" = "build" ]; then

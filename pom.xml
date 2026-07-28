@@ -15,6 +15,7 @@
     <modules>
         <module>flink-jobs</module>
         <module>monitor-backend</module>
+        <module>flink-oss</module>
     </modules>
 
     <properties>

@@ -78,3 +78,7 @@ aliyunk8s
 # K8s secrets（含真实密钥，勿提交；参考 flink-secrets.yaml.example）
 k8s/flink-secrets.yaml
 META-INF/services/
+
+# localosstest 本地 OSS 联调（密钥与运行时目录）
+localosstest/env.sh
+localosstest/runtime/

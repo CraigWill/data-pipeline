@@ -4,6 +4,14 @@
 
 set -e
 
+# YAML 双引号转义：避免 AK/SK 中的 $ # : " \ 等破坏 flink-conf 或被 shell 二次展开
+yaml_quote() {
+    local s=${1-}
+    s=${s//\\/\\\\}
+    s=${s//\"/\\\"}
+    printf '"%s"' "$s"
+}
+
 echo "=========================================="
 echo "Starting Flink TaskManager"
 echo "Timestamp: $(date)"
@@ -97,20 +105,25 @@ EOF
 # OSS 文件系统配置（将 checkpoint/savepoint/CSV 存储到阿里云 OSS 时启用）
 # 仅当提供了 OSS 凭证时才注入 fs.oss.* 配置；否则保持本地文件系统不变
 OSS_PROPS=""
-if [ -n "$OSS_ACCESS_KEY_ID" ] && [ -n "$OSS_ACCESS_KEY_SECRET" ]; then
+if [ -n "${OSS_ACCESS_KEY_ID:-}" ] && [ -n "${OSS_ACCESS_KEY_SECRET:-}" ]; then
+    OSS_ACCESS_KEY_ID=$(printf '%s' "$OSS_ACCESS_KEY_ID" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    OSS_ACCESS_KEY_SECRET=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    OSS_ENDPOINT=$(printf '%s' "${OSS_ENDPOINT:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
     OSS_FS_ENDPOINT=$(echo "${OSS_ENDPOINT}" | sed -E 's#^https?://##')
     echo "  Configuring OSS filesystem (fs.oss.endpoint=${OSS_FS_ENDPOINT})"
-    # 供 k8s 只读 ConfigMap 分支通过 FLINK_PROPERTIES 注入
+    OSS_EP_Q=$(yaml_quote "$OSS_FS_ENDPOINT")
+    OSS_AK_Q=$(yaml_quote "$OSS_ACCESS_KEY_ID")
+    OSS_SK_Q=$(yaml_quote "$OSS_ACCESS_KEY_SECRET")
     OSS_PROPS="
-fs.oss.endpoint: ${OSS_FS_ENDPOINT}
-fs.oss.accessKeyId: ${OSS_ACCESS_KEY_ID}
-fs.oss.accessKeySecret: ${OSS_ACCESS_KEY_SECRET}"
+fs.oss.endpoint: ${OSS_EP_Q}
+fs.oss.accessKeyId: ${OSS_AK_Q}
+fs.oss.accessKeySecret: ${OSS_SK_Q}"
     cat >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
 
 # OSS 文件系统（用于 checkpoint/savepoint 直写 OSS）
-fs.oss.endpoint: ${OSS_FS_ENDPOINT}
-fs.oss.accessKeyId: ${OSS_ACCESS_KEY_ID}
-fs.oss.accessKeySecret: ${OSS_ACCESS_KEY_SECRET}
+fs.oss.endpoint: ${OSS_EP_Q}
+fs.oss.accessKeyId: ${OSS_AK_Q}
+fs.oss.accessKeySecret: ${OSS_SK_Q}
 EOF
 
     # Java 11+ 无内置 JAXB；flink-oss-fs-hadoop 的阿里云 SDK 需要 javax.xml.bind。

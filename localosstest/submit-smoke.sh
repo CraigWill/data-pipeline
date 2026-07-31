@@ -21,8 +21,8 @@ source "$SCRIPT_DIR/env.sh"
 REST_PORT="${REST_PORT:-18081}"
 CHECKPOINT_INTERVAL_MS="${CHECKPOINT_INTERVAL_MS:-10000}"
 
-if ! curl -sf "http://localhost:${REST_PORT}/overview" >/dev/null 2>&1; then
-    echo -e "${RED}Flink 未就绪: http://localhost:${REST_PORT}${NC}"
+if ! curl -sf "http://127.0.0.1:${REST_PORT}/overview" >/dev/null 2>&1; then
+    echo -e "${RED}Flink 未就绪: http://127.0.0.1:${REST_PORT}${NC}"
     echo "  先运行: $SCRIPT_DIR/start.sh"
     exit 1
 fi

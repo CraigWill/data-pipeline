@@ -97,7 +97,11 @@ public class RuntimeJobRepository {
 
             if (startTime != null) { cols.append(", start_time"); vals.append(", ?"); params.add(startTime); }
             if (endTime != null)   { cols.append(", end_time");   vals.append(", ?"); params.add(endTime); }
-            if (job.getErrorMessage() != null) { cols.append(", error_message"); vals.append(", ?"); params.add(job.getErrorMessage()); }
+            if (job.getErrorMessage() != null) {
+                String errMsg = job.getErrorMessage();
+                if (errMsg.length() > 1900) errMsg = errMsg.substring(0, 1900) + "...(truncated)";
+                cols.append(", error_message"); vals.append(", ?"); params.add(errMsg);
+            }
             if (job.getLastSavepointPath() != null) { cols.append(", last_savepoint_path"); vals.append(", ?"); params.add(job.getLastSavepointPath()); }
             if (spTime != null) { cols.append(", last_savepoint_time"); vals.append(", ?"); params.add(spTime); }
 
@@ -158,9 +162,10 @@ public class RuntimeJobRepository {
     }
 
     public void updateStatus(String id, String status, String errorMessage) {
+        // Oracle/OB VARCHAR2(2000) 常按字节计；多字节字符或长 REST 体需更保守截断
         String truncatedError = errorMessage;
-        if (truncatedError != null && truncatedError.length() > 4000) {
-            truncatedError = truncatedError.substring(0, 4000) + "...(truncated)";
+        if (truncatedError != null && truncatedError.length() > 800) {
+            truncatedError = truncatedError.substring(0, 800) + "...(truncated)";
         }
         if ("RUNNING".equals(status)) {
             // 不设置 end_time（避免传 null）

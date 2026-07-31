@@ -4,13 +4,23 @@
 
 set -e
 
-# YAML 双引号转义：避免 AK/SK 中的 $ # : " \ 等破坏 flink-conf 或被 shell 二次展开
-# （探针直接读环境变量能通，但 entrypoint 写入 yaml 后 Flink 签名失败，常见根因）
+# YAML 双引号转义（供标准 YAML / config.yaml 使用；SnakeYAML 会去掉引号）。
+# 注意：不要把带引号的值写入 flink-conf.yaml —— Flink 1.20 legacy 解析器会把
+# 引号算进配置值，导致 endpoint 变成 https://"oss-cn-xxx" 从而提交失败。
 yaml_quote() {
     local s=${1-}
     s=${s//\\/\\\\}
     s=${s//\"/\\\"}
     printf '"%s"' "$s"
+}
+
+# 向配置文件追加 fs.oss.*（无引号，兼容 flink-conf.yaml legacy 解析）
+append_oss_props_legacy() {
+    local f=$1
+    printf '\n# OSS 文件系统（entrypoint 注入，legacy 无引号）\n' >> "$f"
+    printf 'fs.oss.endpoint: %s\n' "$OSS_FS_ENDPOINT" >> "$f"
+    printf 'fs.oss.accessKeyId: %s\n' "$OSS_ACCESS_KEY_ID" >> "$f"
+    printf 'fs.oss.accessKeySecret: %s\n' "$OSS_ACCESS_KEY_SECRET" >> "$f"
 }
 
 echo "=========================================="
@@ -140,27 +150,15 @@ EOF
 # 仅当提供了 OSS 凭证时才注入 fs.oss.* 配置；否则保持本地文件系统不变
 OSS_PROPS=""
 if [ -n "${OSS_ACCESS_KEY_ID:-}" ] && [ -n "${OSS_ACCESS_KEY_SECRET:-}" ]; then
-    # trim 首尾空白（Secret/粘贴常见问题）
-    OSS_ACCESS_KEY_ID=$(printf '%s' "$OSS_ACCESS_KEY_ID" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    OSS_ACCESS_KEY_SECRET=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    OSS_ENDPOINT=$(printf '%s' "${OSS_ENDPOINT:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    # trim 首尾空白和多余引号（Secret/粘贴常见问题）
+    OSS_ACCESS_KEY_ID=$(printf '%s' "$OSS_ACCESS_KEY_ID" | sed -e 's/^[[:space:]"]*//;s/[[:space:]"]*$//')
+    OSS_ACCESS_KEY_SECRET=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | sed -e 's/^[[:space:]"]*//;s/[[:space:]"]*$//')
+    OSS_ENDPOINT=$(printf '%s' "${OSS_ENDPOINT:-}" | sed -e 's/^[[:space:]"]*//;s/[[:space:]"]*$//')
     OSS_FS_ENDPOINT=$(echo "${OSS_ENDPOINT}" | sed -E 's#^https?://##')
     echo "  Configuring OSS filesystem (fs.oss.endpoint=${OSS_FS_ENDPOINT})"
-    OSS_EP_Q=$(yaml_quote "$OSS_FS_ENDPOINT")
-    OSS_AK_Q=$(yaml_quote "$OSS_ACCESS_KEY_ID")
-    OSS_SK_Q=$(yaml_quote "$OSS_ACCESS_KEY_SECRET")
-    # 供 k8s 只读 ConfigMap 分支追加；值已是带引号的 YAML 标量
-    OSS_PROPS="
-fs.oss.endpoint: ${OSS_EP_Q}
-fs.oss.accessKeyId: ${OSS_AK_Q}
-fs.oss.accessKeySecret: ${OSS_SK_Q}"
-    cat >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
-
-# OSS 文件系统（用于 checkpoint/savepoint 直写 OSS）
-fs.oss.endpoint: ${OSS_EP_Q}
-fs.oss.accessKeyId: ${OSS_AK_Q}
-fs.oss.accessKeySecret: ${OSS_SK_Q}
-EOF
+    # 动态 conf / 可写 conf 均走 legacy 无引号写入（见 append_oss_props_legacy）
+    OSS_PROPS="legacy"
+    append_oss_props_legacy "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic"
 
     # Java 11+ 无内置 JAXB；flink-oss-fs-hadoop 的阿里云 SDK 需要 javax.xml.bind。
     # 须与插件同目录（隔离 ClassLoader）。镜像构建时可能已带上；此处按需 curl 补齐，便于旧镜像热修。
@@ -222,7 +220,6 @@ if [ -f /opt/flink/conf/flink-conf.yaml ] && [ ! -w /opt/flink/conf/flink-conf.y
     cp /opt/flink/conf/log4j-console.properties "$WRITABLE_CONF_DIR/" 2>/dev/null || true
     cp /opt/flink/conf/log4j.properties "$WRITABLE_CONF_DIR/" 2>/dev/null || true
     # 2) 追加运行期覆盖项（置于末尾，确保覆盖 ConfigMap 中的同名默认值）
-    #    ${OSS_PROPS} 注入 fs.oss.*，使 checkpoint/savepoint/CSV 能直写 OSS
     cat >> "$WRITABLE_CONF_DIR/flink-conf.yaml" << EOF
 
 # ── 运行期覆盖（entrypoint 注入）──
@@ -234,11 +231,14 @@ execution.checkpointing.interval: ${CHECKPOINT_INTERVAL}
 state.checkpoints.dir: ${CHECKPOINT_DIR}
 state.savepoints.dir: ${SAVEPOINT_DIR}
 state.backend: ${STATE_BACKEND}
-${OSS_PROPS}
 EOF
+    # 3) fs.oss.* 必须无引号写入（legacy 解析）；勿用 yaml_quote
+    if [ "$OSS_PROPS" = "legacy" ]; then
+        append_oss_props_legacy "$WRITABLE_CONF_DIR/flink-conf.yaml"
+    fi
     export FLINK_CONF_DIR="$WRITABLE_CONF_DIR"
     echo "  FLINK_CONF_DIR=$FLINK_CONF_DIR"
-    [ -n "$OSS_PROPS" ] && echo "  已注入 fs.oss.* 配置到生效 flink-conf.yaml"
+    [ "$OSS_PROPS" = "legacy" ] && echo "  已注入 fs.oss.*（无引号）到生效 flink-conf.yaml"
 else
     # 非 Kubernetes 环境，可以直接覆盖配置文件
     echo "Using dynamic configuration..."

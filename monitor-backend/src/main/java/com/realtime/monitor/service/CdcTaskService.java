@@ -445,7 +445,7 @@ public class CdcTaskService {
 
             return result;
         } catch (Exception e) {
-            runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", e.getMessage());
+            runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", summarizeSubmitError(e));
             throw e;
         }
     }
@@ -517,9 +517,56 @@ public class CdcTaskService {
 
             return result;
         } catch (Exception e) {
-            runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", e.getMessage());
+            runtimeJobService.updateJobStatus(runtimeJob.getId(), "FAILED", summarizeSubmitError(e));
             throw e;
         }
+    }
+
+    /**
+     * 压缩提交异常，避免把完整 Flink REST/堆栈写入 RUNTIME_JOBS.ERROR_MESSAGE（上限 2000）。
+     */
+    static String summarizeSubmitError(Throwable e) {
+        if (e == null) {
+            return "提交失败";
+        }
+        String msg = e.getMessage();
+        if (e instanceof org.springframework.web.client.RestClientResponseException restEx) {
+            String body = restEx.getResponseBodyAsString();
+            if (body != null && !body.isBlank()) {
+                String root = extractRootCauseSnippet(body);
+                if (root != null) {
+                    msg = "Flink 提交失败: " + root;
+                } else {
+                    msg = "Flink 提交失败 HTTP " + restEx.getStatusCode().value();
+                }
+            }
+        }
+        if (msg == null || msg.isBlank()) {
+            msg = e.getClass().getSimpleName();
+        }
+        msg = msg.replace('\n', ' ').replace('\r', ' ');
+        return msg.length() > 800 ? msg.substring(0, 800) + "...(truncated)" : msg;
+    }
+
+    private static String extractRootCauseSnippet(String body) {
+        // 优先抓最内层业务异常（如 URISyntaxException / SignatureDoesNotMatch）
+        String[] markers = {
+                "Caused by: java.net.URISyntaxException:",
+                "Caused by: java.lang.IllegalArgumentException:",
+                "SignatureDoesNotMatch",
+                "Could not execute application"
+        };
+        for (String marker : markers) {
+            int idx = body.indexOf(marker);
+            if (idx >= 0) {
+                int end = body.indexOf("\\n", idx);
+                if (end < 0) {
+                    end = Math.min(body.length(), idx + 240);
+                }
+                return body.substring(idx, end).replace("\\n", " ").trim();
+            }
+        }
+        return null;
     }
 
 }

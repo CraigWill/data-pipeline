@@ -4,12 +4,20 @@
 
 set -e
 
-# YAML 双引号转义：避免 AK/SK 中的 $ # : " \ 等破坏 flink-conf 或被 shell 二次展开
+# YAML 双引号转义（仅用于标准 YAML）。flink-conf.yaml 走 legacy，勿写入带引号的值。
 yaml_quote() {
     local s=${1-}
     s=${s//\\/\\\\}
     s=${s//\"/\\\"}
     printf '"%s"' "$s"
+}
+
+append_oss_props_legacy() {
+    local f=$1
+    printf '\n# OSS 文件系统（entrypoint 注入，legacy 无引号）\n' >> "$f"
+    printf 'fs.oss.endpoint: %s\n' "$OSS_FS_ENDPOINT" >> "$f"
+    printf 'fs.oss.accessKeyId: %s\n' "$OSS_ACCESS_KEY_ID" >> "$f"
+    printf 'fs.oss.accessKeySecret: %s\n' "$OSS_ACCESS_KEY_SECRET" >> "$f"
 }
 
 echo "=========================================="
@@ -106,25 +114,13 @@ EOF
 # 仅当提供了 OSS 凭证时才注入 fs.oss.* 配置；否则保持本地文件系统不变
 OSS_PROPS=""
 if [ -n "${OSS_ACCESS_KEY_ID:-}" ] && [ -n "${OSS_ACCESS_KEY_SECRET:-}" ]; then
-    OSS_ACCESS_KEY_ID=$(printf '%s' "$OSS_ACCESS_KEY_ID" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    OSS_ACCESS_KEY_SECRET=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
-    OSS_ENDPOINT=$(printf '%s' "${OSS_ENDPOINT:-}" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+    OSS_ACCESS_KEY_ID=$(printf '%s' "$OSS_ACCESS_KEY_ID" | sed -e 's/^[[:space:]"]*//;s/[[:space:]"]*$//')
+    OSS_ACCESS_KEY_SECRET=$(printf '%s' "$OSS_ACCESS_KEY_SECRET" | sed -e 's/^[[:space:]"]*//;s/[[:space:]"]*$//')
+    OSS_ENDPOINT=$(printf '%s' "${OSS_ENDPOINT:-}" | sed -e 's/^[[:space:]"]*//;s/[[:space:]"]*$//')
     OSS_FS_ENDPOINT=$(echo "${OSS_ENDPOINT}" | sed -E 's#^https?://##')
     echo "  Configuring OSS filesystem (fs.oss.endpoint=${OSS_FS_ENDPOINT})"
-    OSS_EP_Q=$(yaml_quote "$OSS_FS_ENDPOINT")
-    OSS_AK_Q=$(yaml_quote "$OSS_ACCESS_KEY_ID")
-    OSS_SK_Q=$(yaml_quote "$OSS_ACCESS_KEY_SECRET")
-    OSS_PROPS="
-fs.oss.endpoint: ${OSS_EP_Q}
-fs.oss.accessKeyId: ${OSS_AK_Q}
-fs.oss.accessKeySecret: ${OSS_SK_Q}"
-    cat >> "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" << EOF
-
-# OSS 文件系统（用于 checkpoint/savepoint 直写 OSS）
-fs.oss.endpoint: ${OSS_EP_Q}
-fs.oss.accessKeyId: ${OSS_AK_Q}
-fs.oss.accessKeySecret: ${OSS_SK_Q}
-EOF
+    OSS_PROPS="legacy"
+    append_oss_props_legacy "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic"
 
     # Java 11+ 无内置 JAXB；flink-oss-fs-hadoop 的阿里云 SDK 需要 javax.xml.bind。
     # 须与插件同目录（隔离 ClassLoader）。镜像构建时可能已带上；此处按需 curl 补齐，便于旧镜像热修。
@@ -236,11 +232,13 @@ taskmanager.memory.network.fraction: 0.1
 taskmanager.memory.network.min: 64mb
 taskmanager.memory.network.max: 256mb
 taskmanager.memory.managed.fraction: 0.3
-${OSS_PROPS}
 EOF
+    if [ "$OSS_PROPS" = "legacy" ]; then
+        append_oss_props_legacy "$WRITABLE_CONF_DIR/flink-conf.yaml"
+    fi
     export FLINK_CONF_DIR="$WRITABLE_CONF_DIR"
     echo "  FLINK_CONF_DIR=$FLINK_CONF_DIR"
-    [ -n "$OSS_PROPS" ] && echo "  已注入 fs.oss.* 配置到生效 flink-conf.yaml"
+    [ "$OSS_PROPS" = "legacy" ] && echo "  已注入 fs.oss.*（无引号）到生效 flink-conf.yaml"
 else
     echo "Using dynamic configuration..."
     mv "$DYNAMIC_CONF_DIR/flink-conf.yaml.dynamic" /opt/flink/conf/flink-conf.yaml

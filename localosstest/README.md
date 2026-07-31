@@ -44,8 +44,9 @@ chmod +x start.sh stop.sh submit-smoke.sh
 | 项 | 说明 |
 |----|------|
 | 配置隔离 | `FLINK_CONF_DIR=localosstest/runtime/conf`，不改 `$FLINK_HOME/conf` |
+| 配置文件 | **只写 `config.yaml`**（标准 YAML）。不要写 `flink-conf.yaml`：1.20 legacy 解析会把 `"AK"` 的引号算进值里 |
 | OSS 插件 | jar + JAXB 放 `runtime/plugins/oss-fs-hadoop`，软链到 `$FLINK_HOME/plugins/oss-fs-hadoop` |
-| 密钥写入 | `fs.oss.*` 经 YAML 双引号转义，避免 `$`/`#` 等截断 SK |
+| 密钥写入 | `fs.oss.*` 经 YAML 双引号转义（由 SnakeYAML 去掉引号） |
 | SDK 版本 | 由本机发行版 `flink-oss-fs-hadoop-*.jar` 决定（1.20.0 → SDK 3.13.x 一带） |
 
 ## 只生成配置

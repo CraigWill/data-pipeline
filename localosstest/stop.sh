@@ -13,25 +13,30 @@ CONF_DIR="$RUNTIME_DIR/conf"
 LOG_DIR="$RUNTIME_DIR/logs"
 PID_DIR="$RUNTIME_DIR/pids"
 
+# shellcheck disable=SC1091
+source "$SCRIPT_DIR/_lib.sh"
+
 if [ -f "$SCRIPT_DIR/env.sh" ]; then
     # shellcheck disable=SC1091
     source "$SCRIPT_DIR/env.sh"
 fi
 
 FLINK_HOME="${FLINK_HOME:-/usr/local/flink-1.20.0}"
+normalize_flink_home 2>/dev/null || true
 REST_PORT="${REST_PORT:-18081}"
 
-export FLINK_CONF_DIR="$CONF_DIR"
-export FLINK_LOG_DIR="$LOG_DIR"
-export FLINK_PID_DIR="$PID_DIR"
+export FLINK_CONF_DIR="$(to_flink_path "$CONF_DIR")"
+export FLINK_LOG_DIR="$(to_flink_path "$LOG_DIR")"
+export FLINK_PID_DIR="$(to_flink_path "$PID_DIR")"
 
 echo -e "${BLUE}>>> 停止 localosstest Flink${NC}"
 
-if [ -x "$FLINK_HOME/bin/stop-cluster.sh" ]; then
-    "$FLINK_HOME/bin/stop-cluster.sh" 2>/dev/null || true
+stopper="$(stop_cluster_script)"
+if [ -f "$stopper" ]; then
+    run_flink_script "$stopper" 2>/dev/null || true
 fi
 
-# 兜底：按本目录 pid / 进程名清理（避免误杀 Kind 容器内进程——容器不在本机进程树）
+# 兜底：按本目录 pid 清理
 if [ -d "$PID_DIR" ]; then
     for f in "$PID_DIR"/*.pid; do
         [ -f "$f" ] || continue
@@ -44,11 +49,14 @@ if [ -d "$PID_DIR" ]; then
     done
 fi
 
-# 仅匹配本机 Standalone（带本 REST 端口的 JM 更安全，但进程参数里不一定有端口）
-# 若全局还有其它裸机 Flink，请先确认再手动 kill
+# Unix 兜底按进程名；Windows 上 pgrep 可能不存在
 if curl -sf "http://localhost:${REST_PORT}/overview" >/dev/null 2>&1; then
     echo -e "${YELLOW}⚠ REST ${REST_PORT} 仍可达，尝试按进程名停止${NC}"
-    pgrep -f "StandaloneSessionClusterEntrypoint|TaskManagerRunner" 2>/dev/null | xargs kill 2>/dev/null || true
+    if command -v pgrep >/dev/null 2>&1; then
+        pgrep -f "StandaloneSessionClusterEntrypoint|TaskManagerRunner" 2>/dev/null | xargs kill 2>/dev/null || true
+    elif is_windows; then
+        echo -e "${YELLOW}  Windows 上请再执行一次 stop-cluster.bat，或在任务管理器结束 StandaloneSession / TaskManagerRunner${NC}"
+    fi
     sleep 1
 fi
 

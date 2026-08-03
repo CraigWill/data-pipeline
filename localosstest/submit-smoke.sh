@@ -14,9 +14,12 @@ LOG_DIR="$RUNTIME_DIR/logs"
 PID_DIR="$RUNTIME_DIR/pids"
 
 # shellcheck disable=SC1091
+source "$SCRIPT_DIR/_lib.sh"
+# shellcheck disable=SC1091
 source "$SCRIPT_DIR/env.sh"
 
 : "${FLINK_HOME:?}"
+normalize_flink_home
 : "${OUTPUT_PATH:?}"
 REST_PORT="${REST_PORT:-18081}"
 CHECKPOINT_INTERVAL_MS="${CHECKPOINT_INTERVAL_MS:-10000}"
@@ -35,17 +38,20 @@ if [ ! -f "$JAR" ]; then
     exit 1
 fi
 
-export FLINK_CONF_DIR="$CONF_DIR"
-export FLINK_LOG_DIR="$LOG_DIR"
-export FLINK_PID_DIR="$PID_DIR"
+export FLINK_CONF_DIR="$(to_flink_path "$CONF_DIR")"
+export FLINK_LOG_DIR="$(to_flink_path "$LOG_DIR")"
+export FLINK_PID_DIR="$(to_flink_path "$PID_DIR")"
+
+JAR_ARG="$(to_flink_path "$JAR")"
 
 echo -e "${BLUE}>>> 提交作业${NC}"
 echo "  output=$OUTPUT_PATH"
 echo "  ui=http://localhost:${REST_PORT}"
+echo "  cli=$(flink_cli)"
 
-"$FLINK_HOME/bin/flink" run -d \
+run_flink_cli run -d \
     -c com.realtime.pipeline.localosstest.OssLocalSmokeJob \
-    "$JAR" \
+    "$JAR_ARG" \
     --output "$OUTPUT_PATH" \
     --checkpoint-interval-ms "$CHECKPOINT_INTERVAL_MS" \
     --sleep-ms 500 \
@@ -56,4 +62,3 @@ echo "  UI: http://localhost:${REST_PORT}/#/job/running"
 echo "  观察 OSS:"
 echo "    - checkpoint: $CHECKPOINT_DIR"
 echo "    - 输出文件 : $OUTPUT_PATH"
-echo "  探针（可选）: mvn -pl flink-oss -am -DskipTests package && java -jar flink-oss/target/flink-oss-probe.jar"
